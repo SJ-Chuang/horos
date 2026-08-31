@@ -8,7 +8,7 @@
 ```bash
 horos init ./demo_project
 horos import <資料集目錄或 zip 解壓後路徑> --project ./demo_project
-horos ui --project ./demo_project
+horos ui ./demo_project
 # 瀏覽器開 http://localhost:5000 → 右上「Open annotator →」，或直接開 /annotate
 ```
 

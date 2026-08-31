@@ -4,7 +4,7 @@
 
 ```bash
 horos init ./demo_project
-horos ui --project ./demo_project
+horos ui ./demo_project
 # 瀏覽器開 http://localhost:5000
 ```
 
