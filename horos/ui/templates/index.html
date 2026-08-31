@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>horos — dataset</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #1a2129; --line: #2a333e;
+    --text: #e6edf3; --dim: #8b98a5; --accent: #4dabf7; --ok: #51cf66; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: baseline; gap: 14px; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
+  header .project { color: var(--dim); }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 10px; padding: 18px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
+              text-transform: uppercase; letter-spacing: .08em; }
+  #dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 36px;
+              text-align: center; color: var(--dim); cursor: pointer;
+              transition: border-color .15s, color .15s; }
+  #dropzone.hover, #dropzone:hover { border-color: var(--accent); color: var(--text); }
+  #dropzone input { display: none; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+          padding: 14px; }
+  .card .num { font-size: 26px; font-weight: 600; }
+  .card .label { color: var(--dim); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+            margin-right: 8px; vertical-align: baseline; }
+  .bar { background: var(--line); border-radius: 4px; height: 8px; overflow: hidden; }
+  .bar > div { background: var(--accent); height: 100%; }
+  #status { min-height: 20px; color: var(--dim); }
+  #status.error { color: var(--err); }
+  #status.ok { color: var(--ok); }
+  .issues li { color: var(--err); margin-bottom: 4px; }
+  .issues li.warning { color: #fcc419; }
+  .license { color: var(--ok); font-size: 12px; border: 1px solid var(--ok);
+             border-radius: 4px; padding: 1px 6px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>horos</h1>
+  <span class="project" id="project-name">—</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>Upload dataset</h2>
+    <div id="dropzone">
+      <input type="file" id="file-input" accept=".zip">
+      <p><strong>Drop a dataset .zip here</strong> or click to choose a file</p>
+      <p>COCO (<code>_annotations.coco.json</code>) or YOLO (<code>data.yaml</code>) —
+         format is detected automatically</p>
+    </div>
+    <p id="status"></p>
+  </section>
+
+  <section class="panel hidden" id="summary-panel">
+    <h2>Dataset summary</h2>
+    <div class="cards">
+      <div class="card"><div class="num" id="n-images">0</div><div class="label">images</div></div>
+      <div class="card"><div class="num" id="n-annotations">0</div><div class="label">annotations</div></div>
+      <div class="card"><div class="num" id="n-categories">0</div><div class="label">classes</div></div>
+      <div class="card"><div class="num" id="n-splits">—</div><div class="label">train / valid / test</div></div>
+    </div>
+    <h2 style="margin-top:18px">Instances per class</h2>
+    <table id="class-table">
+      <thead><tr><th>class</th><th>instances</th><th>images</th><th style="width:40%"></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel hidden" id="issues-panel">
+    <h2>Validation</h2>
+    <ul class="issues" id="issues-list"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>Available models</h2>
+    <table id="models-table">
+      <thead><tr><th>model</th><th>input</th><th>params</th><th>latency</th><th>license</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((data.error && data.error.message) || r.statusText);
+  return data;
+});
+
+async function refreshProject() {
+  try {
+    const p = await api("/project");
+    $("project-name").textContent = p.name + " — " + p.root;
+    if (p.num_images > 0) await refreshStats();
+  } catch (e) {
+    $("project-name").textContent = "(no project bound)";
+  }
+}
+
+async function refreshStats() {
+  const s = await api("/dataset/stats");
+  $("summary-panel").classList.remove("hidden");
+  $("n-images").textContent = s.num_images;
+  $("n-annotations").textContent = s.num_annotations;
+  $("n-categories").textContent = s.num_categories;
+  const sc = s.split_counts || {};
+  $("n-splits").textContent =
+    (sc.train || 0) + " / " + (sc.valid || 0) + " / " + (sc.test || 0);
+  const max = Math.max(1, ...s.per_class.map((c) => c.instances));
+  $("class-table").querySelector("tbody").innerHTML = s.per_class
+    .map((c) => `<tr><td>${c.name}</td><td>${c.instances}</td><td>${c.images}</td>
+      <td><div class="bar"><div style="width:${(100 * c.instances) / max}%"></div></div></td></tr>`)
+    .join("");
+  const v = await api("/dataset/validation");
+  const list = $("issues-list");
+  if (v.issues.length === 0) {
+    list.innerHTML = '<li style="color:var(--ok)">No issues found</li>';
+  } else {
+    list.innerHTML = v.issues
+      .map((i) => `<li class="${i.level}">[${i.kind}] ${i.message}</li>`)
+      .join("");
+  }
+  $("issues-panel").classList.remove("hidden");
+}
+
+async function upload(file) {
+  const status = $("status");
+  status.className = "";
+  status.textContent = "Uploading and parsing " + file.name + "…";
+  const body = new FormData();
+  body.append("file", file);
+  try {
+    const summary = await api("/dataset/upload", { method: "POST", body });
+    status.className = "ok";
+    status.textContent =
+      `Imported ${summary.num_images} images, ${summary.num_annotations} annotations, ` +
+      `${summary.num_categories} classes (${summary.format.toUpperCase()})` +
+      (summary.warnings.length ? ` — ${summary.warnings.length} warning(s)` : "");
+    await refreshStats();
+    await refreshProject();
+  } catch (e) {
+    status.className = "error";
+    status.textContent = "Import failed: " + e.message;
+  }
+}
+
+const zone = $("dropzone");
+zone.addEventListener("click", () => $("file-input").click());
+$("file-input").addEventListener("change", (e) => {
+  if (e.target.files[0]) upload(e.target.files[0]);
+});
+["dragover", "dragenter"].forEach((t) =>
+  zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add("hover"); }));
+["dragleave", "drop"].forEach((t) =>
+  zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove("hover"); }));
+zone.addEventListener("drop", (e) => {
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+});
+
+api("/models").then((models) => {
+  $("models-table").querySelector("tbody").innerHTML = models
+    .map((m) => `<tr><td>${m.display_name}</td><td>${m.input_resolution}px</td>
+      <td>${m.params_millions}M</td><td>${m.latency_hint}</td>
+      <td><span class="license">${m.weights_license}</span></td></tr>`)
+    .join("");
+});
+
+refreshProject();
+</script>
+</body>
+</html>
