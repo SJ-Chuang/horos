@@ -140,13 +140,15 @@ def import_dataset(
     if not source.exists():
         raise DatasetFormatError(f"Dataset source does not exist: {source}")
     detected, dataset, image_paths = _read_any(source, format, class_names=class_names)
-    pre_warnings: list[str] = []
+    pre_warnings: list[str] = list(dataset.reader_warnings)
     if (
         detected == "darknet"
         and class_names is None
         and darknet_format.find_labels_file(source) is None
     ):
         if require_class_names:
+            # raised before the empty-category drop below: the name list is
+            # positional (index -> name), so it must cover every index
             raise ClassNamesRequiredError(
                 "This Darknet dataset has no _darknet.labels file — provide "
                 "class names to import it.",
@@ -155,6 +157,22 @@ def import_dataset(
         pre_warnings.append(
             f"No _darknet.labels found — class indices 0..{len(dataset.categories) - 1} "
             f"used as class names; rename them later or re-import with class_names"
+        )
+
+    # drop categories nothing references (e.g. Roboflow's auto-added empty
+    # supercategory) — they would pollute the class list and stats forever
+    used_category_ids = {ann.category_id for ann in dataset.annotations}
+    empty_categories = [c for c in dataset.categories if c.id not in used_category_ids]
+    if empty_categories:
+        dataset.categories = [
+            c for c in dataset.categories if c.id in used_category_ids
+        ]
+        kept_names = {c.name for c in dataset.categories}
+        gone = sorted({c.name for c in empty_categories} - kept_names)
+        label = f"categor{'y' if len(empty_categories) == 1 else 'ies'}"
+        pre_warnings.append(
+            f"Dropped {len(empty_categories)} empty {label} with no annotations"
+            + (f": {', '.join(gone)}" if gone else " (same-named supercategory)")
         )
     if boundary is not None:
         bound = boundary.resolve()

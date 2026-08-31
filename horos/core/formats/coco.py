@@ -87,6 +87,7 @@ def read_coco(source: Path | str) -> tuple[Dataset, dict[int, Path]]:
     dataset = Dataset()
     image_paths: dict[int, Path] = {}
     cat_id_by_name: dict[str, int] = {}
+    with_keypoints = 0
 
     for split, json_path in files:
         data = _load_json(json_path)
@@ -126,6 +127,8 @@ def read_coco(source: Path | str) -> tuple[Dataset, dict[int, Path]]:
             image_paths[new_id] = (json_path.parent / str(img["file_name"])).resolve()
 
         for ann in data["annotations"]:
+            if ann.get("keypoints"):
+                with_keypoints += 1
             try:
                 bbox = tuple(float(v) for v in ann["bbox"])
                 if len(bbox) != 4:
@@ -150,6 +153,13 @@ def read_coco(source: Path | str) -> tuple[Dataset, dict[int, Path]]:
                 raise DatasetFormatError(
                     f"{json_path}: invalid annotation entry (id={ann.get('id')}): {exc}"
                 ) from exc
+
+    if with_keypoints:
+        dataset.reader_warnings.append(
+            f"{with_keypoints} annotation(s) carry COCO keypoints — keypoint tasks "
+            f"are not supported yet, so the keypoints were NOT imported (boxes and "
+            f"polygons were)"
+        )
 
     return dataset, image_paths
 

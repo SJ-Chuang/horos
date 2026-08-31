@@ -194,7 +194,43 @@ def test_import_zip_darknet_without_labels_requires_names(tmp_path):
     with pytest.raises(ClassNamesRequiredError) as exc:
         import_zip(project, zip_path, require_class_names=True)
     assert exc.value.default_names == ["0", "1"]
-    # supplying names resolves it
+    # supplying names resolves it; the unused index-0 class is dropped as empty
     summary = import_zip(project, zip_path, class_names=["helmet", "vest"])
     assert summary.instances_per_category == {"vest": 1}
-    assert summary.warnings == []
+    assert summary.num_categories == 1
+    assert any("empty categor" in w and "helmet" in w for w in summary.warnings)
+
+
+def test_import_drops_empty_categories_with_warning(tmp_path):
+    import json
+
+    coco_dir = write_sample_coco_dir(tmp_path / "coco")
+    for ann_file in coco_dir.rglob("_annotations.coco.json"):
+        data = json.loads(ann_file.read_text(encoding="utf-8"))
+        data["categories"].append(
+            {"id": 99, "name": "roboflow-superclass", "supercategory": "none"}
+        )
+        ann_file.write_text(json.dumps(data), encoding="utf-8")
+    project = create_project(tmp_path / "proj")
+    summary = import_dataset(project, coco_dir)
+    assert summary.num_categories == 2
+    assert {c.name for c in project.categories} == {"forklift", "pallet"}
+    assert any(
+        "empty categor" in w and "roboflow-superclass" in w for w in summary.warnings
+    )
+
+
+def test_import_coco_keypoints_warns_not_silent(tmp_path):
+    import json
+
+    coco_dir = write_sample_coco_dir(tmp_path / "coco")
+    for ann_file in coco_dir.rglob("_annotations.coco.json"):
+        data = json.loads(ann_file.read_text(encoding="utf-8"))
+        for ann in data["annotations"]:
+            ann["keypoints"] = [1.0, 2.0, 2, 3.0, 4.0, 1]
+        ann_file.write_text(json.dumps(data), encoding="utf-8")
+    project = create_project(tmp_path / "proj")
+    summary = import_dataset(project, coco_dir)
+    # boxes still imported, keypoints explicitly reported as not imported
+    assert summary.num_annotations == 4
+    assert any("keypoint" in w and "NOT imported" in w for w in summary.warnings)

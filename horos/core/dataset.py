@@ -77,6 +77,10 @@ class Dataset(BaseModel):
     categories: list[Category] = Field(default_factory=list)
     images: list[ImageRecord] = Field(default_factory=list)
     annotations: list[Annotation] = Field(default_factory=list)
+    #: Non-fatal notes a format reader wants surfaced to the user (e.g. data a
+    #: format carries that horos does not import). Import copies these into
+    #: ImportSummary.warnings — nothing is dropped silently.
+    reader_warnings: list[str] = Field(default_factory=list)
 
     # -- lookups ---------------------------------------------------------------
     def category_by_id(self, category_id: int) -> Category | None:

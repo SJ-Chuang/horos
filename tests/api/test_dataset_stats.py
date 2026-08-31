@@ -64,3 +64,15 @@ def test_empty_dataset_does_not_crash():
 def test_stats_serialize_for_web():
     payload = compute_stats(sample_dataset()).model_dump()
     assert payload["num_images"] == 3
+
+
+def test_empty_categories_are_not_listed():
+    from horos.core.dataset import Category, default_color
+
+    dataset = sample_dataset()
+    dataset.categories.append(
+        Category(id=99, name="never_annotated", color=default_color(9))
+    )
+    stats = compute_stats(dataset)
+    assert "never_annotated" not in [c.name for c in stats.per_class]
+    assert stats.num_categories == len(stats.per_class) == 2

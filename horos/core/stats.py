@@ -43,6 +43,7 @@ class RelativeAreaStats(BaseModel):
 class DatasetStats(BaseModel):
     num_images: int
     num_annotations: int
+    #: categories with at least one annotation — empty classes are not listed
     num_categories: int
     per_class: list[ClassStats]
     split_counts: dict[str, int]
@@ -73,6 +74,8 @@ def compute_stats(dataset: Dataset) -> DatasetStats:
             if image_area > 0:
                 relative_areas.append(min(max(ann.area / image_area, 0.0), 1.0))
 
+    # classes with no annotations (and hence no images) stay off the list —
+    # they are noise in the summary and in hyperparameter derivation (E5)
     per_class = [
         ClassStats(
             category_id=c.id,
@@ -81,6 +84,7 @@ def compute_stats(dataset: Dataset) -> DatasetStats:
             images=len(image_sets[c.id]),
         )
         for c in dataset.categories
+        if instances[c.id] > 0
     ]
 
     split_counts: dict[str, int] = {}
@@ -111,7 +115,7 @@ def compute_stats(dataset: Dataset) -> DatasetStats:
     return DatasetStats(
         num_images=len(dataset.images),
         num_annotations=len(dataset.annotations),
-        num_categories=len(dataset.categories),
+        num_categories=len(per_class),
         per_class=per_class,
         split_counts=split_counts,
         image_sizes=[
