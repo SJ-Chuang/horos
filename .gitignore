@@ -24,3 +24,7 @@ demo_project/
 .DS_Store
 .idea/
 .vscode/
+
+# Local-only: project instructions for Claude Code and sample datasets (§10)
+CLAUDE.md
+samples/
