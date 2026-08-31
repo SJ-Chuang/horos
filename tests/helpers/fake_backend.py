@@ -70,3 +70,40 @@ class ExplodingBackend(FakeBackend):
     def train(self, spec: TrainSpec) -> Iterator[Event]:
         with translate_backend_errors(self.family):
             raise RuntimeError("CUDA error: out of memory (simulated)")
+
+
+class FakeOpenVocabBackend(FakeBackend):
+    """Deterministic open-vocabulary backend for the autolabel tests (E3).
+
+    Default behavior: one detection per configured prompt, boxes spread along
+    x, scores 0.9, 0.8, ... per prompt index. `score_by_name` overrides the
+    base score per image file name so ranking tests can control uncertainty.
+    """
+
+    family = "fake-openvocab"
+
+    def __init__(self, info=None, *, device=None, score_by_name=None):
+        if info is not None:
+            super().__init__(info, device=device)
+        else:
+            self.info = None
+            self.device = device
+        self.prompts: list[str] = []
+        self.score_by_name = score_by_name or {}
+        self.calls: list[str] = []
+
+    def configure_prompts(self, prompts):
+        self.prompts = list(prompts)
+
+    def infer_one(self, image: Path, *, threshold: float = 0.5) -> ImagePrediction:
+        self.calls.append(Path(image).name)
+        base = self.score_by_name.get(Path(image).name, 0.9)
+        instances = [
+            PredictedInstance(
+                bbox=(10.0 + 30.0 * i, 10.0, 20.0, 20.0),
+                score=max(base - 0.1 * i, 0.01),
+                category_id=i,
+            )
+            for i in range(len(self.prompts))
+        ]
+        return ImagePrediction(image=str(image), instances=instances)

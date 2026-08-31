@@ -40,7 +40,7 @@ __all__ = [
     "image_file_path",
 ]
 
-QUEUE_MODES = ("unannotated_first", "file_name", "annotated", "unannotated")
+QUEUE_MODES = ("unannotated_first", "file_name", "annotated", "unannotated", "pending")
 CLAIM_TTL_SECONDS = 300.0
 _CLAIMS_FILE = "claims.json"
 
@@ -57,6 +57,10 @@ class QueueItem(BaseModel):
     annotated: bool
     #: session id of an unexpired claim held by someone else; None otherwise
     claimed_by: str | None = None
+    #: auto pre-labels awaiting review (E3-T5); mean score drives the
+    #: uncertainty-first review ordering (E3-T6)
+    num_pending: int = 0
+    mean_pending_score: float | None = None
 
 
 class AnnotationProgress(BaseModel):
@@ -193,14 +197,24 @@ def image_queue(
             continue
         stored = project.load_annotations(record.id)
         holder = claims.get(record.id)
+        pending_scores = [
+            a.score or 0.0 for a in stored.annotations if a.status == "pending"
+        ]
+        confirmed = [a for a in stored.annotations if a.status == "confirmed"]
         items.append(
             QueueItem(
                 image=record,
-                num_annotations=len(stored.annotations),
-                annotated=bool(stored.annotations),
+                num_annotations=len(confirmed),
+                annotated=bool(confirmed),
                 claimed_by=(
                     holder["session"]
                     if holder and holder["session"] != session_id
+                    else None
+                ),
+                num_pending=len(pending_scores),
+                mean_pending_score=(
+                    sum(pending_scores) / len(pending_scores)
+                    if pending_scores
                     else None
                 ),
             )
@@ -209,6 +223,11 @@ def image_queue(
         items = [i for i in items if i.annotated]
     elif mode == "unannotated":
         items = [i for i in items if not i.annotated]
+    elif mode == "pending":
+        # review queue: least-confident pre-labels first (E3-S3)
+        items = [i for i in items if i.num_pending]
+        items.sort(key=lambda i: (i.mean_pending_score or 0.0, i.image.file_name))
+        return items
     if mode == "unannotated_first":
         items.sort(key=lambda i: (i.annotated, i.image.file_name))
     else:
@@ -229,9 +248,10 @@ def annotation_progress(project: Project) -> AnnotationProgress:
     for record in project.list_images():
         total += 1
         stored = project.load_annotations(record.id)
-        if stored.annotations:
+        confirmed = [a for a in stored.annotations if a.status == "confirmed"]
+        if confirmed:
             annotated += 1
-            annotations += len(stored.annotations)
+            annotations += len(confirmed)
     return AnnotationProgress(
         total_images=total,
         annotated_images=annotated,

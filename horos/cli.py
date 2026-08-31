@@ -75,6 +75,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test", type=float, default=0.1)
     p.add_argument("--seed", type=int, default=42)
 
+    p = sub.add_parser(
+        "autolabel", help="Zero-shot pre-labels from text prompts (runs in foreground)"
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--prompt",
+        action="append",
+        required=True,
+        dest="prompts",
+        metavar="CLASS=P1[,P2...]",
+        help="Class and its prompt(s), repeatable: --prompt forklift=forklift,lift truck",
+    )
+    p.add_argument("--model", default="owlv2-base")
+    p.add_argument("--threshold", type=float, default=0.1)
+    p.add_argument("--nms-iou", type=float, default=0.5)
+    p.add_argument("--split", choices=["train", "valid", "test"])
+    p.add_argument(
+        "--include-annotated",
+        action="store_true",
+        help="Also pre-label images that already have confirmed annotations",
+    )
+
     sub.add_parser("models", help="List available models (with licenses)")
     sub.add_parser("capabilities", help="Show what this platform supports")
 
@@ -133,6 +155,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 train=args.train, valid=args.valid, test=args.test, seed=args.seed,
             )
             _emit(counts)
+        elif args.command == "autolabel":
+            from horos.api.autolabel import autolabel_events
+            from horos.backends.base import dump_event
+
+            prompts: dict[str, list[str]] = {}
+            for entry in args.prompts:
+                cls, _, plist = entry.partition("=")
+                prompts[cls.strip()] = (
+                    [p.strip() for p in plist.split(",")] if plist else [cls.strip()]
+                )
+            failed = False
+            for event in autolabel_events(
+                api.open_project(args.project),
+                api.PromptSpec(prompts=prompts),
+                model=args.model,
+                threshold=args.threshold,
+                nms_iou=args.nms_iou,
+                split=args.split,
+                only_unannotated=not args.include_annotated,
+            ):
+                sys.stdout.write(dump_event(event) + "\n")  # JSONL stream (E3-T3)
+                sys.stdout.flush()
+                failed = failed or event.type == "failed"
+            if failed:
+                return 2
         elif args.command == "models":
             _emit([m.model_dump() for m in api.list_models()])
         elif args.command == "capabilities":

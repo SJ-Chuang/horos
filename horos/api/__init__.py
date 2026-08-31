@@ -17,6 +17,14 @@ from horos.api.annotate import (
     release_claim,
     save_annotations,
 )
+from horos.api.autolabel import (
+    AssistResult,
+    PromptSpec,
+    assist_image,
+    pending_summary,
+    review_pending,
+    start_autolabel,
+)
 from horos.api.dataset import (
     ImportSummary,
     convert_dataset,
@@ -28,6 +36,7 @@ from horos.api.dataset import (
     resplit,
     validate_project,
 )
+from horos.api.jobs import JobStatus, cancel_job, job_status
 from horos.api.labels import add_category, delete_category, update_category
 from horos.api.manifest import Capability, get_capability, list_capabilities
 from horos.api.project import create_project, open_project
@@ -41,13 +50,18 @@ from horos.api.system import (
 __all__ = [
     "AnnotationProgress",
     "AnnotationSetView",
+    "AssistResult",
     "Capability",
     "ClaimResult",
     "ImportSummary",
+    "JobStatus",
     "PlatformCapabilities",
+    "PromptSpec",
     "QueueItem",
     "add_category",
     "annotation_progress",
+    "assist_image",
+    "cancel_job",
     "claim_image",
     "convert_dataset",
     "create_project",
@@ -61,14 +75,18 @@ __all__ = [
     "image_queue",
     "import_dataset",
     "import_zip",
+    "job_status",
     "list_capabilities",
     "list_images",
     "list_models",
     "open_project",
+    "pending_summary",
     "platform_capabilities",
     "release_claim",
     "resplit",
+    "review_pending",
     "save_annotations",
+    "start_autolabel",
     "update_category",
     "validate_project",
 ]
