@@ -61,10 +61,12 @@ def create_app(project_root: str | Path | None = None) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024**3
 
     from horos.web.routes.annotate import bp as annotate_bp
+    from horos.web.routes.autolabel import bp as autolabel_bp
     from horos.web.routes.data import bp as data_bp
     from horos.web.routes.meta import bp as meta_bp
 
     app.register_blueprint(annotate_bp)
+    app.register_blueprint(autolabel_bp)
     app.register_blueprint(data_bp)
     app.register_blueprint(meta_bp)
 
