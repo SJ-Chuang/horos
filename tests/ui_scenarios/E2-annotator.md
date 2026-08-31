@@ -66,6 +66,11 @@ horos ui --project ./demo_project
    「⚠ someone else is annotating this image」
 2. 兩邊同時改同一張：後儲存者收到紅色 toast 並自動載入對方版本
 
+### G. 空類別
+1. 專案裡沒有任何標註的舊類別不出現在 Object Class chips
+2. 本次 session 新建或使用過的類別立即出現在 chips（即使還沒存檔）
+3. Manage Classes 彈窗仍列出全部類別（含空的），供改名/刪除清理
+
 ## 預期結果
 
 從網格挑圖 → 全鍵盤畫框改框換類別換頁 → 返回網格，進度與角標即時反映；
@@ -76,8 +81,3 @@ horos ui --project ./demo_project
 - polygon 不支援插入新頂點（僅拖曳既有頂點）；無 redo（僅 undo 50 步）
 - 縮圖直接載原圖（lazy loading），數千張以上首屏較慢，縮圖端點留待後續
 - 矩形以兩角點編輯（exVision 模式），無邊中點控制
-
-### G. 空類別
-1. 專案裡沒有任何標註的舊類別不出現在 Object Class chips
-2. 本次 session 新建或使用過的類別立即出現在 chips（即使還沒存檔）
-3. Manage Classes 彈窗仍列出全部類別（含空的），供改名/刪除清理
