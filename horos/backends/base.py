@@ -189,6 +189,17 @@ class ModelBackend(ABC):
         """Export a trained checkpoint. RunCompleted carries result["artifact"]."""
 
 
+class OpenVocabularyBackend(ModelBackend):
+    """Zero-shot detectors driven by text prompts (OWLv2 and successors).
+
+    `category_id` in predictions indexes into the prompt list passed to
+    `configure_prompts` — the caller owns the prompt→class mapping (E3-T2)."""
+
+    @abstractmethod
+    def configure_prompts(self, prompts: list[str]) -> None:
+        """Set the text prompts used by subsequent infer_one/infer_batch calls."""
+
+
 # ------------------------------------------------------------------ error bridge
 
 

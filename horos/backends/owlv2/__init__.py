@@ -1,7 +1,9 @@
-"""OWLv2 backend — the only place allowed to import `transformers` (R1).
+"""OWLv2 backend (E3-T1) — the only place allowed to import `transformers` (R1).
 
-P0 status: adapter skeleton. The real zero-shot autolabel implementation is
-E3-T1 and lands with P1.
+Zero-shot open-vocabulary detection driven by text prompts. Inference-only:
+train/export raise explicit errors. transformers/torch are imported lazily on
+first inference (R1b); weights are fetched by transformers into horos's cache
+(`weights.hf_cache_dir()`), never bundled.
 """
 
 from __future__ import annotations
@@ -10,30 +12,103 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from horos.backends import weights
 from horos.backends.base import (
     Event,
     ExportSpec,
     ImagePrediction,
-    ModelBackend,
+    OpenVocabularyBackend,
+    PredictedInstance,
+    PredictionReady,
+    ProgressUpdated,
+    RunCompleted,
+    RunStarted,
     TrainSpec,
+    translate_backend_errors,
 )
 from horos.errors import BackendError
 
 if TYPE_CHECKING:
     from horos.core.registry import ModelInfo
 
-_NOT_YET = (
-    "OWLv2 {op} is not implemented yet (E3-T1 lands with the autolabel phase P1)."
-)
 
-
-class OWLv2Backend(ModelBackend):
+class OWLv2Backend(OpenVocabularyBackend):
     family = "owlv2"
 
     def __init__(self, info: ModelInfo, *, device: str | None = None):
         super().__init__(info, device=device)
         self._model = None
+        self._processor = None
+        self._prompts: list[str] = []
 
+    def configure_prompts(self, prompts: list[str]) -> None:
+        if not prompts or not all(p.strip() for p in prompts):
+            raise BackendError(
+                "OWLv2 needs at least one non-empty text prompt", backend=self.family
+            )
+        self._prompts = [p.strip() for p in prompts]
+
+    # ------------------------------------------------------------------ model
+    def _ensure_model(self):
+        if self._model is not None:
+            return
+        with translate_backend_errors(self.family):
+            import torch  # noqa: F401 — resolved lazily on first use (R1b)
+            from transformers import Owlv2ForObjectDetection, Owlv2Processor
+
+            from horos.backends.device import select_device
+
+            self.device = select_device(self.device).torch_device
+            cache = str(weights.hf_cache_dir())
+            self._processor = Owlv2Processor.from_pretrained(
+                self.info.hf_id, cache_dir=cache
+            )
+            self._model = Owlv2ForObjectDetection.from_pretrained(
+                self.info.hf_id, cache_dir=cache
+            ).to(self.device)
+            self._model.eval()
+
+    def _predict(self, image_path: Path, threshold: float) -> ImagePrediction:
+        if not self._prompts:
+            raise BackendError(
+                "No prompts configured — call configure_prompts() first",
+                backend=self.family,
+            )
+        self._ensure_model()
+        with translate_backend_errors(self.family):
+            import torch
+            from PIL import Image
+
+            with Image.open(image_path) as im:
+                image = im.convert("RGB")
+                width, height = image.size
+                inputs = self._processor(
+                    text=[self._prompts], images=image, return_tensors="pt"
+                ).to(self.device)
+                with torch.no_grad():
+                    outputs = self._model(**inputs)
+                results = self._processor.post_process_grounded_object_detection(
+                    outputs,
+                    threshold=threshold,
+                    target_sizes=torch.tensor([[height, width]]).to(self.device),
+                )[0]
+            instances = []
+            for box, score, label in zip(
+                results["boxes"], results["scores"], results["labels"], strict=True
+            ):
+                x1, y1, x2, y2 = (float(v) for v in box)
+                instances.append(
+                    PredictedInstance(
+                        bbox=(x1, y1, max(x2 - x1, 0.0), max(y2 - y1, 0.0)),
+                        score=float(score),
+                        category_id=int(label),
+                    )
+                )
+            return ImagePrediction(
+                image=str(image_path), width=width, height=height, instances=instances
+            )
+
+    # -------------------------------------------------------------- interface
     def train(self, spec: TrainSpec) -> Iterator[Event]:
         raise BackendError(
             "OWLv2 is a zero-shot autolabeling model; it is not trainable in horos.",
@@ -41,12 +116,20 @@ class OWLv2Backend(ModelBackend):
         )
 
     def infer_one(self, image: Path, *, threshold: float = 0.5) -> ImagePrediction:
-        raise BackendError(_NOT_YET.format(op="inference"), backend=self.family)
+        return self._predict(Path(image), threshold)
 
     def infer_batch(
         self, images: Iterable[Path], *, threshold: float = 0.5
     ) -> Iterator[Event]:
-        raise BackendError(_NOT_YET.format(op="batch inference"), backend=self.family)
+        paths = [Path(p) for p in images]
+        yield RunStarted(total=len(paths), config={"prompts": self._prompts})
+        for index, path in enumerate(paths):
+            prediction = self._predict(path, threshold)
+            yield PredictionReady(index=index, prediction=prediction)
+            yield ProgressUpdated(
+                current=index + 1, total=len(paths), phase="autolabel"
+            )
+        yield RunCompleted(result={"images": len(paths)})
 
     def export(self, checkpoint: Path, spec: ExportSpec) -> Iterator[Event]:
         raise BackendError(
