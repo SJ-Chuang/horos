@@ -1359,8 +1359,17 @@ const Page = {
         return;
       }
       if (body.state === "completed") {
-        const done = body.events.find((e) => e.type === "completed");
-        toast(`Auto-label finished: ${done && done.result ? done.result.annotations : 0} pre-label(s) — review them in "Needs review" mode.`, "warn", 5000);
+        const all = (await api(`/jobs/${this._jobId}`)).events;
+        const done = all.find((e) => e.type === "completed");
+        const result = (done && done.result) || {};
+        if (!result.images) {
+          // nothing was even attempted — surface the reason, don't pretend success
+          const why = all.find((e) => e.type === "warning");
+          toast(why ? why.message : "Auto-label matched no images.", "err", 8000);
+          this.closeAutolabelModal();
+          return;
+        }
+        toast(`Auto-label finished: ${result.annotations || 0} pre-label(s) — review them in "Needs review" mode.`, "warn", 5000);
         this.closeAutolabelModal();
         $("queue-mode").value = "pending";
         await this.loadImages(1);

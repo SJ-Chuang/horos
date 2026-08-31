@@ -211,6 +211,7 @@ def autolabel_events(
         RunCompleted,
         RunFailed,
         RunStarted,
+        WarningRaised,
     )
 
     texts, class_by_prompt = spec.flat()
@@ -232,6 +233,21 @@ def autolabel_events(
             **({"split": split} if split else {}),
         },
     )
+    if not targets:
+        # finishing silently with 0 pre-labels reads like a failure — say why
+        reasons = []
+        if only_unannotated:
+            reasons.append(
+                "every image already has confirmed annotations "
+                "(uncheck 'only unannotated' to pre-label them anyway)"
+            )
+        if split:
+            reasons.append(f"the split filter '{split}' matched nothing")
+        yield WarningRaised(
+            message="No target images: " + (" and ".join(reasons) or "the project has no images")
+        )
+        yield RunCompleted(result={"images": 0, "annotations": 0})
+        return
     try:
         if backend is None:
             from horos.backends import get_backend

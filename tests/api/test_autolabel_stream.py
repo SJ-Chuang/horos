@@ -131,3 +131,27 @@ def test_cancel_running_job(project):
     status = _wait_done(project, job_id)
     assert status.state == "cancelled"
     assert jobs.cancel_job(project, job_id) is False  # already finished
+
+
+def test_zero_targets_explains_itself(tmp_path):
+    # Every image already annotated + only_unannotated -> the run must say WHY
+    # it did nothing, not silently complete with 0 (the "0 pre-label(s)" trap)
+    proj = create_project(tmp_path / "proj")
+    import_dataset(proj, write_sample_coco_dir(tmp_path / "coco"))
+    events = list(autolabel_events(proj, SPEC, backend=FakeOpenVocabBackend()))
+    assert [e.type for e in events] == ["started", "warning", "completed"]
+    assert events[0].total == 0
+    assert "uncheck 'only unannotated'" in events[1].message
+    assert events[-1].result == {"images": 0, "annotations": 0}
+
+
+def test_zero_targets_mentions_split_filter(tmp_path):
+    from helpers.data import make_image
+
+    proj = create_project(tmp_path / "proj")
+    proj.add_image(make_image(tmp_path / "a.png", 64, 48), width=64, height=48)
+    events = list(
+        autolabel_events(proj, SPEC, backend=FakeOpenVocabBackend(), split="test")
+    )
+    assert events[1].type == "warning"
+    assert "'test'" in events[1].message
