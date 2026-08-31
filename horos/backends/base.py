@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
@@ -96,15 +96,13 @@ class RunFailed(_EventBase):
 
 
 Event = Annotated[
-    Union[
-        RunStarted,
-        ProgressUpdated,
-        MetricsUpdated,
-        WarningRaised,
-        PredictionReady,
-        RunCompleted,
-        RunFailed,
-    ],
+    RunStarted
+    | ProgressUpdated
+    | MetricsUpdated
+    | WarningRaised
+    | PredictionReady
+    | RunCompleted
+    | RunFailed,
     Field(discriminator="type"),
 ]
 
@@ -163,7 +161,7 @@ class ModelBackend(ABC):
 
     family: ClassVar[str]
 
-    def __init__(self, info: "ModelInfo", *, device: str | None = None):
+    def __init__(self, info: ModelInfo, *, device: str | None = None):
         self.info = info
         self.device = device
 

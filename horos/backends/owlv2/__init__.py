@@ -30,7 +30,7 @@ _NOT_YET = (
 class OWLv2Backend(ModelBackend):
     family = "owlv2"
 
-    def __init__(self, info: "ModelInfo", *, device: str | None = None):
+    def __init__(self, info: ModelInfo, *, device: str | None = None):
         super().__init__(info, device=device)
         self._model = None
 

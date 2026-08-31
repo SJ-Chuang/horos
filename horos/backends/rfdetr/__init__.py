@@ -35,7 +35,7 @@ _NOT_YET = (
 class RFDETRBackend(ModelBackend):
     family = "rfdetr"
 
-    def __init__(self, info: "ModelInfo", *, device: str | None = None):
+    def __init__(self, info: ModelInfo, *, device: str | None = None):
         super().__init__(info, device=device)
         self._model = None  # loaded lazily on first real use
 

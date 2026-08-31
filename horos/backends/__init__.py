@@ -22,7 +22,7 @@ def get_backend(
     *,
     acknowledge_non_apache: bool = False,
     device: str | None = None,
-) -> "ModelBackend":
+) -> ModelBackend:
     """Resolve a model key to a constructed backend instance.
 
     Non-Apache models (RF-DETR XL / 2XL, PML 1.0) are refused unless the caller
