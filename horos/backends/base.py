@@ -161,9 +161,18 @@ class ModelBackend(ABC):
 
     family: ClassVar[str]
 
-    def __init__(self, info: ModelInfo, *, device: str | None = None):
+    def __init__(
+        self,
+        info: ModelInfo,
+        *,
+        device: str | None = None,
+        checkpoint: Path | None = None,
+    ):
         self.info = info
         self.device = device
+        # When set, inference loads these trained weights instead of the
+        # model's pretrained defaults. Ignored by backends that never train.
+        self.checkpoint = checkpoint
 
     # -- training ------------------------------------------------------------
     @abstractmethod

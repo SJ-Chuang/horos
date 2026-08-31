@@ -14,6 +14,8 @@ from horos.core import registry
 from horos.errors import BackendError, LicenseError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from horos.backends.base import ModelBackend
 
 
@@ -22,6 +24,7 @@ def get_backend(
     *,
     acknowledge_non_apache: bool = False,
     device: str | None = None,
+    checkpoint: Path | None = None,
 ) -> ModelBackend:
     """Resolve a model key to a constructed backend instance.
 
@@ -56,4 +59,4 @@ def get_backend(
             f"Backend module '{module_name}' has no class '{class_name}'",
             backend=info.family,
         )
-    return backend_cls(info, device=device)
+    return backend_cls(info, device=device, checkpoint=checkpoint)

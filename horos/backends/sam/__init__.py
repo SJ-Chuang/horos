@@ -36,8 +36,14 @@ _NOT_A_DETECTOR = (
 class SAMBackend(BoxToMaskBackend):
     family = "sam"
 
-    def __init__(self, info: ModelInfo, *, device: str | None = None):
-        super().__init__(info, device=device)
+    def __init__(
+        self,
+        info: ModelInfo,
+        *,
+        device: str | None = None,
+        checkpoint: Path | None = None,
+    ):
+        super().__init__(info, device=device, checkpoint=checkpoint)
         self._model = None
         self._processor = None
 
