@@ -12,7 +12,7 @@ horos ui --project ./demo_project
 # 瀏覽器開 http://localhost:5000 → 右上「Open annotator →」，或直接開 /annotate
 ```
 
-## 快捷鍵對照表（頁面內按右上 ?⌨ 亦可查看）
+## 快捷鍵對照表（頁面內按右上 ⓘ 資訊圖示亦可查看）
 
 | 鍵 | 動作 |
 |---|---|
@@ -35,17 +35,18 @@ horos ui --project ./demo_project
 1. 開 /annotate：縮圖網格顯示、頂欄有進度（N/M images annotated）
 2. 佇列模式切「Only unannotated」、split 切「valid」：網格即時過濾
 3. 每頁數量切 20：分頁按鈕出現；縮圖角標 ✓ 已標、🔒 他人標註中
-4. 點任一縮圖進入編輯器；「← Back to Grid」返回且網格刷新
+4. 點任一縮圖進入編輯器，影像自動縮放至符合畫面（小圖也放大適配）；「← Back to Grid」返回且網格刷新
 
 ### B. 編輯器 — 矩形（E2-T2）
-1. 按 `2`（或點 ▭），拖曳畫框：畫完自動選取、右上顯示 saved · vN（Auto Save 預設開）
-2. 按 `1` 回 Select：hover 形狀會加亮、游標變 move；點選後兩個角點變實心
+1. 按 `2`（或點 ▭），拖曳畫框：畫完自動選取、右上顯示綠色 saved（Auto Save 預設開）
+2. 按 `1` 回 Select：hover 形狀會加亮、游標變 move；hover 任一控制點（不需先選取）該點放大變白、游標變 pointer，可直接拖曳
 3. 拖曳角點改大小、拖曳內部移動（拖不出影像邊界）；放開後自動儲存
 4. `Ctrl+C` → `Ctrl+V`：複製出偏移 20px 的新框
 
 ### C. 編輯器 — 多邊形（E2-T3）
 1. 按 `3`，逐點點擊；游標移近起點時起點放大變白，點下即閉合；或雙擊閉合
-2. Select 模式下拖曳任一頂點改形狀
+2. Select 模式下 hover 任一頂點即可直接拖曳改形狀（不需先點選該形狀）
+3. 繪製中（矩形拖曳、多邊形逐點）控制點即時顯示，不是完成後才出現
 
 ### D. 類別（自由輸入 + chips）
 1. 在 Object Class 輸入框輸入新名稱（如 `crane`）再畫框：儲存後自動建立新類別，
@@ -75,3 +76,8 @@ horos ui --project ./demo_project
 - polygon 不支援插入新頂點（僅拖曳既有頂點）；無 redo（僅 undo 50 步）
 - 縮圖直接載原圖（lazy loading），數千張以上首屏較慢，縮圖端點留待後續
 - 矩形以兩角點編輯（exVision 模式），無邊中點控制
+
+### G. 空類別
+1. 專案裡沒有任何標註的舊類別不出現在 Object Class chips
+2. 本次 session 新建或使用過的類別立即出現在 chips（即使還沒存檔）
+3. Manage Classes 彈窗仍列出全部類別（含空的），供改名/刪除清理
