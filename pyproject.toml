@@ -24,6 +24,9 @@ dependencies = [
     "transformers>=5.1.0,<6",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.4"]
+
 [project.scripts]
 horos = "horos.cli:main"
 
