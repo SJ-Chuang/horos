@@ -11,138 +11,222 @@
     --warn: #fcc419;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); overflow: hidden;
+  body { margin: 0; background: var(--bg); color: var(--text);
          font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  #app { display: grid; grid-template-columns: 240px 1fr; grid-template-rows: 44px 1fr;
-         height: 100vh; }
-  header { grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
-           padding: 0 14px; border-bottom: 1px solid var(--line); }
-  header a { color: var(--dim); text-decoration: none; }
-  header a:hover { color: var(--accent); }
-  header .name { font-weight: 600; }
-  header .pos, header .zoom { color: var(--dim); }
-  .modes { display: flex; gap: 4px; margin-left: 8px; }
-  .modes button { background: var(--panel); color: var(--dim); border: 1px solid var(--line);
-                  border-radius: 6px; padding: 4px 10px; cursor: pointer; }
-  .modes button.active { color: var(--accent); border-color: var(--accent); }
-  #save-state { margin-left: auto; color: var(--dim); }
+  a { color: var(--dim); text-decoration: none; }
+  a:hover { color: var(--accent); }
+  .btn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+         border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  .btn.danger { border-color: var(--err); color: var(--err); }
+  select, input[type=text] { background: var(--panel); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px; }
+  h4 { margin: 0 0 8px; font-size: 11px; color: var(--dim); text-transform: uppercase;
+       letter-spacing: .08em; }
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+            border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+
+  /* ---- grid view ---- */
+  #grid-view { padding: 0 16px 16px; }
+  #progress-line { color: var(--dim); font-size: 12px; margin: 10px 2px; }
+  #progress-line b { color: var(--ok); }
+  .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 10px; }
+  .thumb { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+           overflow: hidden; cursor: pointer; }
+  .thumb:hover { border-color: var(--accent); }
+  .thumb img { width: 100%; height: 100px; object-fit: cover; display: block;
+               background: #000; }
+  .thumb .meta { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+                 font-size: 11px; color: var(--dim); }
+  .thumb .meta .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumb .badge { flex: none; }
+  .pagination { display: flex; gap: 4px; justify-content: center; margin-top: 14px; }
+  .pagination button { min-width: 30px; }
+  .pagination button.on { border-color: var(--accent); color: var(--accent); }
+
+  /* ---- editor view ---- */
+  #editor-view { display: none; }
+  .editor-body { display: grid; grid-template-columns: 1fr 280px; gap: 12px;
+                 padding: 0 16px 16px; height: calc(100vh - 56px); }
+  .canvas-wrap { background: var(--panel); border: 1px solid var(--line);
+                 border-radius: 10px; overflow: hidden; position: relative;
+                 display: flex; align-items: center; justify-content: center; }
+  #anno-canvas { display: block; }
+  .sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0;
+             overflow-y: auto; }
+  .tools { display: flex; gap: 6px; }
+  .tool-btn { width: 40px; height: 36px; font-size: 16px; background: var(--bg);
+              color: var(--dim); border: 1px solid var(--line); border-radius: 6px;
+              cursor: pointer; }
+  .tool-btn:hover { border-color: var(--accent); }
+  .tool-btn.active { color: var(--accent); border-color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+          border: 1px solid var(--line); border-radius: 20px; cursor: pointer;
+          font-size: 11px; color: var(--dim); background: var(--bg); }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .zoom-hint { color: var(--dim); font-size: 11px; margin-top: 10px; }
+  .shapes-card { flex: 1; display: flex; flex-direction: column; min-height: 120px; }
+  #shapes-list { flex: 1; overflow-y: auto; margin-bottom: 10px; }
+  .shape-item { display: flex; align-items: center; justify-content: space-between;
+                padding: 4px 7px; margin-bottom: 2px; border-radius: 5px;
+                cursor: pointer; font-size: 12px; }
+  .shape-item:hover { background: var(--bg); }
+  .shape-item.on { background: rgba(77, 171, 247, .14); color: var(--accent); }
+  .shape-item .dot { display: inline-block; width: 10px; height: 10px;
+                     border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .shape-item small { color: var(--dim); }
+  .shape-item .del { background: none; border: none; color: var(--err);
+                     cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .switch-row { display: flex; align-items: center; justify-content: space-between;
+                margin-bottom: 8px; }
+  .switch-row label { font-size: 11px; color: var(--dim); display: flex;
+                      align-items: center; gap: 6px; cursor: pointer; }
+  #save-state { color: var(--dim); font-size: 12px; }
   #save-state.saving { color: var(--warn); }
   #save-state.saved { color: var(--ok); }
   #save-state.conflict { color: var(--err); }
-  aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 10px;
-          display: flex; flex-direction: column; gap: 12px; }
-  aside h2 { font-size: 11px; color: var(--dim); text-transform: uppercase;
-             letter-spacing: .08em; margin: 0 0 6px; }
-  .cls { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-         border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
-  .cls.active { border-color: var(--accent); background: var(--panel); }
-  .cls .chip { width: 12px; height: 12px; border-radius: 3px; flex: none; }
-  .cls .key { color: var(--dim); font-size: 11px; margin-left: auto; }
-  .cls .cnt { color: var(--dim); font-size: 11px; min-width: 16px; text-align: right; }
-  #add-class { background: none; border: 1px dashed var(--line); color: var(--dim);
-               border-radius: 6px; padding: 5px; cursor: pointer; width: 100%; }
-  #add-class:hover { color: var(--accent); border-color: var(--accent); }
-  select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
-           border-radius: 6px; padding: 4px 6px; width: 100%; }
-  #progress-bar { background: var(--line); height: 6px; border-radius: 3px; overflow: hidden; }
-  #progress-bar > div { background: var(--ok); height: 100%; width: 0; }
-  #progress-text { color: var(--dim); font-size: 11px; margin-top: 4px; }
-  #image-list { display: flex; flex-direction: column; gap: 2px; }
-  #image-list .img { padding: 4px 8px; border-radius: 5px; cursor: pointer;
-                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-                     color: var(--dim); }
-  #image-list .img.current { background: var(--panel); color: var(--text); }
-  #image-list .img .mark { margin-right: 6px; }
-  main { position: relative; overflow: hidden; }
-  canvas { display: block; cursor: crosshair; }
-  canvas.mode-select { cursor: default; }
-  canvas.panning { cursor: grabbing; }
-  #toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+
+  /* ---- shared ---- */
+  #toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
            background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-           padding: 8px 16px; display: none; }
+           padding: 8px 16px; display: none; z-index: 1200; }
   #toast.warn { border-color: var(--warn); color: var(--warn); }
   #toast.err { border-color: var(--err); color: var(--err); }
-  #help { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: none;
-          align-items: center; justify-content: center; }
-  #help .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-                padding: 20px 26px; max-height: 80vh; overflow-y: auto; }
-  #help table { border-collapse: collapse; }
-  #help td { padding: 3px 14px 3px 0; color: var(--dim); }
-  #help td:first-child { color: var(--text); font-family: ui-monospace, monospace; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none;
+           align-items: center; justify-content: center; z-index: 1000; }
+  .modal .card { width: 460px; max-height: 80vh; overflow-y: auto; }
+  .modal table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .modal th, .modal td { text-align: left; padding: 6px 8px;
+                         border-bottom: 1px solid var(--line); }
+  .modal th { color: var(--dim); font-weight: 500; }
+  #help-modal td { padding: 3px 14px 3px 0; color: var(--dim); border: none; }
+  #help-modal td:first-child { color: var(--text); font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
-<div id="app">
-  <header>
+
+<!-- ============================== grid view ============================== -->
+<div id="grid-view">
+  <div class="topbar">
     <a href="/">← horos</a>
-    <span class="name" id="image-name">—</span>
-    <span class="pos" id="image-pos"></span>
-    <div class="modes">
-      <button id="mode-select" title="Select / edit (V)">Select</button>
-      <button id="mode-box" title="Draw box (W)">Box</button>
-      <button id="mode-polygon" title="Draw polygon (P)">Polygon</button>
-    </div>
-    <span class="zoom" id="zoom-label"></span>
-    <span class="pos" id="claim-note"></span>
-    <span id="save-state">—</span>
-    <a href="#" id="help-link" title="Shortcuts (?)">?⌨</a>
-  </header>
-  <aside>
-    <div>
-      <h2>Classes</h2>
-      <div id="class-list"></div>
-      <button id="add-class">+ add class</button>
-    </div>
-    <div>
-      <h2>Queue</h2>
-      <select id="queue-mode">
-        <option value="unannotated_first">Unannotated first</option>
-        <option value="file_name">File name order</option>
-        <option value="unannotated">Only unannotated</option>
-        <option value="annotated">Only annotated</option>
-      </select>
-      <div style="height:6px"></div>
-      <select id="split-filter">
-        <option value="">All splits</option>
-        <option value="train">train</option>
-        <option value="valid">valid</option>
-        <option value="test">test</option>
-      </select>
-    </div>
-    <div>
-      <h2>Progress</h2>
-      <div id="progress-bar"><div></div></div>
-      <div id="progress-text"></div>
-    </div>
-    <div>
-      <h2>Images</h2>
-      <div id="image-list"></div>
-    </div>
-  </aside>
-  <main>
-    <canvas id="canvas"></canvas>
-    <div id="toast"></div>
-    <div id="help"><div class="card">
-      <h3 style="margin-top:0">Keyboard shortcuts</h3>
-      <table>
-        <tr><td>1–9</td><td>select class / reassign selected annotation</td></tr>
-        <tr><td>V</td><td>select &amp; edit mode</td></tr>
-        <tr><td>W</td><td>box mode — drag to draw</td></tr>
-        <tr><td>P</td><td>polygon mode — click points, Enter or click first point to close</td></tr>
-        <tr><td>Esc</td><td>cancel drawing / deselect</td></tr>
-        <tr><td>Backspace</td><td>remove last polygon point (while drawing)</td></tr>
-        <tr><td>Delete / Backspace</td><td>delete selected annotation</td></tr>
-        <tr><td>D / A</td><td>next / previous image</td></tr>
-        <tr><td>Ctrl+Z</td><td>undo (per image)</td></tr>
-        <tr><td>Space+drag</td><td>pan</td></tr>
-        <tr><td>Wheel</td><td>zoom to cursor</td></tr>
-        <tr><td>0</td><td>fit image to view</td></tr>
-        <tr><td>?</td><td>toggle this help</td></tr>
-      </table>
-      <p style="color:var(--dim)">Every action saves immediately. Click anywhere to close.</p>
-    </div></div>
-  </main>
+    <span style="font-weight:600">Annotate</span>
+    <span id="progress-line"></span>
+    <span style="margin-left:auto"></span>
+    <select id="queue-mode">
+      <option value="unannotated_first">Unannotated first</option>
+      <option value="file_name">File name order</option>
+      <option value="unannotated">Only unannotated</option>
+      <option value="annotated">Only annotated</option>
+    </select>
+    <select id="split-filter">
+      <option value="">All splits</option>
+      <option value="train">train</option>
+      <option value="valid">valid</option>
+      <option value="test">test</option>
+    </select>
+    <select id="per-page">
+      <option value="20">20 / page</option>
+      <option value="50" selected>50 / page</option>
+      <option value="100">100 / page</option>
+    </select>
+    <button class="btn" id="btn-classes">Manage Classes</button>
+  </div>
+  <div class="image-grid" id="image-grid"></div>
+  <div class="pagination" id="pagination"></div>
 </div>
+
+<!-- ============================= editor view ============================= -->
+<div id="editor-view">
+  <div class="topbar">
+    <button class="btn" id="btn-back">← Back to Grid</button>
+    <span id="editor-filename" style="color:var(--dim);font-size:12px"></span>
+    <span id="claim-note" style="color:var(--warn);font-size:12px"></span>
+    <span style="margin-left:auto"></span>
+    <span id="save-state">—</span>
+    <button class="btn" id="btn-manage-2">Manage Classes</button>
+    <button class="btn" id="btn-prev">Prev</button>
+    <button class="btn" id="btn-next">Next</button>
+    <a href="#" id="help-link" title="Shortcuts">?⌨</a>
+  </div>
+  <div class="editor-body">
+    <div class="canvas-wrap"><canvas id="anno-canvas"></canvas></div>
+    <div class="sidebar">
+      <div class="card">
+        <h4>Tools</h4>
+        <div class="tools">
+          <button class="tool-btn active" data-tool="select"
+            title="Select & edit — click a shape to select, drag to move, drag a vertex to reshape, Delete to remove. (shortcut 1)">✎</button>
+          <button class="tool-btn" data-tool="rect"
+            title="Rectangle — drag from one corner to the opposite corner. (shortcut 2)">▭</button>
+          <button class="tool-btn" data-tool="poly"
+            title="Polygon — click to add each vertex; double-click or click the first point to finish. (shortcut 3)">⬠</button>
+        </div>
+        <h4 style="margin-top:14px">Object Class</h4>
+        <input type="text" id="class-input" placeholder="e.g. car, person" style="width:100%">
+        <div class="chips" id="class-chips"></div>
+        <div class="zoom-hint">Use the mouse wheel to zoom and the right mouse button
+          to drag zoomed images.</div>
+      </div>
+      <div class="card shapes-card">
+        <div class="switch-row">
+          <h4 style="margin:0">Shapes</h4>
+          <label><input type="checkbox" id="auto-save" checked> Auto Save</label>
+        </div>
+        <div id="shapes-list"><p style="color:var(--dim);font-size:12px">No shapes</p></div>
+        <button class="btn primary" id="btn-save" style="width:100%">Save Annotations</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- class manager modal -->
+<div class="modal" id="class-modal">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h4 style="margin:0">Manage Classes</h4>
+      <button class="btn" id="class-modal-close">✕</button>
+    </div>
+    <table>
+      <thead><tr><th></th><th>Class Name</th><th>Count</th><th style="width:130px">Actions</th></tr></thead>
+      <tbody id="class-tbody"></tbody>
+    </table>
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <input type="text" id="new-class-name" placeholder="New class name" style="flex:1">
+      <button class="btn" id="btn-add-class">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- shortcuts modal -->
+<div class="modal" id="help-modal">
+  <div class="card">
+    <h4>Keyboard shortcuts</h4>
+    <table>
+      <tr><td>1 / 2 / 3</td><td>Select ✎ / Rectangle ▭ / Polygon ⬠ tool</td></tr>
+      <tr><td>A / D</td><td>previous / next image</td></tr>
+      <tr><td>Ctrl+S</td><td>save annotations</td></tr>
+      <tr><td>Ctrl+Z</td><td>undo</td></tr>
+      <tr><td>Ctrl+C / Ctrl+V</td><td>copy / paste selected shape</td></tr>
+      <tr><td>Delete / Backspace</td><td>delete selected shape</td></tr>
+      <tr><td>Esc</td><td>cancel drawing / deselect</td></tr>
+      <tr><td>double-click</td><td>finish polygon (or click its first point)</td></tr>
+      <tr><td>wheel</td><td>zoom to cursor</td></tr>
+      <tr><td>right-drag</td><td>pan a zoomed image</td></tr>
+    </table>
+    <p style="color:var(--dim)">Click anywhere to close.</p>
+  </div>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
@@ -151,7 +235,6 @@ const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
     const err = new Error((data.error && data.error.message) || r.statusText);
     err.code = data.error && data.error.code;
     err.status = r.status;
-    err.data = data;
     throw err;
   }
   return data;
@@ -159,7 +242,6 @@ const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
 const json = (method, body) => ({
   method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
-
 const session = (() => {
   let s = null;
   try { s = localStorage.getItem("horos_session"); } catch (e) {}
@@ -169,542 +251,851 @@ const session = (() => {
   }
   return s;
 })();
-
-const state = {
-  categories: [], queue: [], index: -1,
-  image: null, bitmap: null, anns: [], version: 0,
-  mode: "select", currentClass: null, selected: -1,
-  scale: 1, tx: 0, ty: 0,
-  drawing: null,        // {x0, y0, x1, y1} while dragging a box
-  polyPoints: [],       // [x, y, ...] while drawing a polygon
-  drag: null,           // {kind: move|handle|vertex, ...}
-  panning: false, spaceHeld: false,
-  undoStack: [], saving: 0,
-};
-
-const canvas = $("canvas");
-const ctx = canvas.getContext("2d");
-
-// ------------------------------------------------------------------ helpers
-function toast(msg, cls = "warn", ms = 2600) {
+function toast(msg, cls = "warn", ms = 2400) {
   const el = $("toast");
   el.textContent = msg; el.className = cls; el.style.display = "block";
   clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = "none"; }, ms);
 }
-function setSaveState(cls, text) { const el = $("save-state"); el.className = cls; el.textContent = text; }
-function imgCoords(e) {
-  const r = canvas.getBoundingClientRect();
-  return [(e.clientX - r.left - state.tx) / state.scale,
-          (e.clientY - r.top - state.ty) / state.scale];
-}
-function clampToImage(x, y) {
-  return [Math.min(Math.max(x, 0), state.image.width),
-          Math.min(Math.max(y, 0), state.image.height)];
-}
-function catById(id) { return state.categories.find((c) => c.id === id); }
-function polyBbox(pts) {
-  const xs = pts.filter((_, i) => i % 2 === 0), ys = pts.filter((_, i) => i % 2 === 1);
-  const x = Math.min(...xs), y = Math.min(...ys);
-  return [x, y, Math.max(...xs) - x, Math.max(...ys) - y];
-}
 
-// ------------------------------------------------------------------ loading
-async function boot() {
-  const project = await api("/project");
-  state.categories = project.categories;
-  if (state.categories.length) state.currentClass = state.categories[0].id;
-  await refreshQueue(true);
-  bindEvents();
-}
+const Page = {
+  categories: [], queue: [], page: 1, perPage: 50,
+  currentIdx: -1, version: 0,
+  editorImage: null, editorShapes: [], selectedShapeIdx: -1,
+  hoverShapeIdx: -1, hoverVertexIdx: -1,
+  activeTool: "select", isDrawing: false, currentPoints: [], mousePos: [0, 0],
+  dragMode: null, dragStart: null,
+  panX: 0, panY: 0, zoom: 1, baseScale: 1,
+  panDragging: false, panDragStart: null, panOrigin: null,
+  history: [], clipboardShape: null,
+  autoSave: true, isDirty: false, _saveTimer: null, _claimTimer: null,
 
-async function refreshQueue(openFirst = false) {
-  const mode = $("queue-mode").value;
-  const split = $("split-filter").value;
-  const q = new URLSearchParams({ mode, session });
-  if (split) q.set("split", split);
-  state.queue = await api("/queue?" + q);
-  renderImageList();
-  await refreshProgress();
-  if (openFirst && state.queue.length) openImage(0);
-  else if (state.image) {
-    const i = state.queue.findIndex((it) => it.image.id === state.image.id);
-    state.index = i; renderImageList();
-  }
-}
+  // ------------------------------------------------------------------ boot
+  async init() {
+    const project = await api("/project");
+    this.categories = project.categories;
+    $("queue-mode").onchange = () => this.loadImages(1);
+    $("split-filter").onchange = () => this.loadImages(1);
+    $("per-page").onchange = (e) => { this.perPage = Number(e.target.value); this.loadImages(1); };
+    $("btn-classes").onclick = () => this.openClassManager();
+    $("btn-manage-2").onclick = () => this.openClassManager();
+    $("class-modal-close").onclick = () => { $("class-modal").style.display = "none"; };
+    $("btn-add-class").onclick = () => this.addClassFromManager();
+    $("btn-back").onclick = () => this.closeEditor();
+    $("btn-prev").onclick = () => this.prevImage();
+    $("btn-next").onclick = () => this.nextImage();
+    $("btn-save").onclick = () => this.saveAnnotations();
+    $("auto-save").onchange = (e) => this.toggleAutoSave(e.target.checked);
+    $("help-link").onclick = (e) => { e.preventDefault(); $("help-modal").style.display = "flex"; };
+    $("help-modal").onclick = () => { $("help-modal").style.display = "none"; };
+    const saved = (() => { try { return localStorage.getItem("horos_autosave"); } catch (e) { return null; } })();
+    if (saved !== null) { this.autoSave = saved === "true"; $("auto-save").checked = this.autoSave; }
+    this._updateSaveButtonState();
+    this._initCanvasEvents();
+    this._bindClassInput();
+    window.addEventListener("resize", () => {
+      if ($("editor-view").style.display === "block") this._resizeCanvas();
+    });
+    window.addEventListener("beforeunload", (e) => {
+      if (this.currentIdx >= 0) this._releaseClaim();
+      if (this.isDirty && !this.autoSave && $("editor-view").style.display === "block") {
+        e.preventDefault(); e.returnValue = "";
+      }
+    });
+    await this.loadImages(1);
+  },
 
-async function refreshProgress() {
-  const p = await api("/progress");
-  $("progress-bar").firstElementChild.style.width =
-    p.total_images ? (100 * p.annotated_images / p.total_images) + "%" : "0";
-  $("progress-text").textContent =
-    `${p.annotated_images} / ${p.total_images} images annotated · ${p.total_annotations} annotations`;
-}
+  async loadImages(page) {
+    const q = new URLSearchParams({ mode: $("queue-mode").value, session });
+    if ($("split-filter").value) q.set("split", $("split-filter").value);
+    this.queue = await api("/queue?" + q);
+    this.page = page;
+    this.renderGrid();
+    const p = await api("/progress");
+    $("progress-line").innerHTML =
+      `<b>${p.annotated_images}</b> / ${p.total_images} images annotated · ` +
+      `${p.total_annotations} annotations`;
+  },
 
-async function openImage(index) {
-  if (index < 0 || index >= state.queue.length) return;
-  if (state.image) releaseClaim(state.image.id);
-  const item = state.queue[index];
-  state.index = index;
-  state.image = item.image;
-  state.selected = -1; state.drawing = null; state.polyPoints = [];
-  state.undoStack = [];
-  $("image-name").textContent = item.image.file_name;
-  $("image-pos").textContent = `${index + 1}/${state.queue.length} · ${item.image.split}`;
-  const [view, blob] = await Promise.all([
-    api(`/images/${item.image.id}/annotations`),
-    fetch(`/api/v1/images/${item.image.id}/file`).then((r) => r.blob()),
-  ]);
-  state.anns = view.annotations; state.version = view.version;
-  state.bitmap = await createImageBitmap(blob);
-  fitToView();
-  claim(item.image.id);
-  renderImageList(); renderClasses(); setSaveState("", `v${state.version}`);
-}
+  renderGrid() {
+    const start = (this.page - 1) * this.perPage;
+    const items = this.queue.slice(start, start + this.perPage);
+    $("image-grid").innerHTML = items.map((item, i) => `
+      <div class="thumb" data-i="${start + i}">
+        <img loading="lazy" src="/api/v1/images/${item.image.id}/file" alt="">
+        <div class="meta">
+          <span class="badge">${item.claimed_by ? "🔒" : item.annotated ? "✓" : "·"}</span>
+          <span class="fname" title="${item.image.file_name}">${item.image.file_name}</span>
+        </div>
+      </div>`).join("");
+    [...$("image-grid").children].forEach((el) => {
+      el.onclick = () => this.openEditor(Number(el.dataset.i));
+    });
+    const pages = Math.max(1, Math.ceil(this.queue.length / this.perPage));
+    $("pagination").innerHTML = Array.from({ length: pages }, (_, i) =>
+      `<button class="btn ${i + 1 === this.page ? "on" : ""}" data-p="${i + 1}">${i + 1}</button>`
+    ).join("");
+    [...$("pagination").children].forEach((el) => {
+      el.onclick = () => { this.page = Number(el.dataset.p); this.renderGrid(); };
+    });
+  },
 
-async function claim(imageId) {
-  try {
-    await api(`/images/${imageId}/claim`, json("POST", { session }));
-    $("claim-note").textContent = "";
-  } catch (e) {
-    if (e.status === 409) {
-      $("claim-note").textContent = "⚠ someone else is annotating this image";
-      toast("Another session is annotating this image — your saves may conflict.", "warn");
+  // ---------------------------------------------------------------- editor
+  async openEditor(idx) {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+    if (this.currentIdx >= 0) this._releaseClaim();
+    this.currentIdx = idx;
+    $("grid-view").style.display = "none";
+    $("editor-view").style.display = "block";
+    this.zoom = 1; this.history = []; this.isDirty = false;
+    this.editorShapes = []; this.selectedShapeIdx = -1;
+    this.hoverShapeIdx = -1; this.hoverVertexIdx = -1;
+    this.setTool(this.activeTool || "select");
+    this._updateNavButtons();
+    const item = this.queue[idx];
+    $("editor-filename").textContent =
+      `${item.image.file_name} · ${item.image.split} · ${idx + 1}/${this.queue.length}`;
+    this._setSaveState("", "…");
+    const [view] = await Promise.all([
+      api(`/images/${item.image.id}/annotations`), this._claim(item.image.id),
+    ]);
+    this.version = view.version;
+    this.editorImage = new Image();
+    this.editorImage.onload = () => {
+      this.zoom = 1;
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      this.isDirty = false;
+      this._resizeCanvas();
+      this._setSaveState("", `v${this.version}`);
+      this.renderChips();
+    };
+    this.editorImage.src = `/api/v1/images/${item.image.id}/file`;
+  },
+
+  async closeEditor() {
+    if (!await this._checkUnsaved()) return;
+    if (this.currentIdx >= 0) this._releaseClaim();
+    this.currentIdx = -1;
+    $("editor-view").style.display = "none";
+    $("grid-view").style.display = "block";
+    this.editorShapes = []; this.editorImage = null; this.history = [];
+    this.loadImages(this.page);
+  },
+
+  async prevImage() {
+    if (this.currentIdx > 0) {
+      if (!await this._checkUnsaved()) return;
+      this.openEditor(this.currentIdx - 1);
     }
-  }
-  clearInterval(state._claimTimer);
-  state._claimTimer = setInterval(() => {
-    if (state.image && state.image.id === imageId)
+  },
+  async nextImage() {
+    if (this.currentIdx < this.queue.length - 1) {
+      if (!await this._checkUnsaved()) return;
+      this.openEditor(this.currentIdx + 1);
+    }
+  },
+  _updateNavButtons() {
+    $("btn-prev").disabled = this.currentIdx <= 0;
+    $("btn-next").disabled = this.currentIdx >= this.queue.length - 1;
+  },
+
+  // shapes {label, shape_type, points[[x,y],..]} <-> horos annotations
+  _toShape(a) {
+    const cat = this.categories.find((c) => c.id === a.category_id);
+    const label = cat ? cat.name : String(a.category_id);
+    if (a.segmentation && a.segmentation.length) {
+      const pts = [];
+      for (let k = 0; k < a.segmentation[0].length; k += 2)
+        pts.push([a.segmentation[0][k], a.segmentation[0][k + 1]]);
+      return { label, shape_type: "polygon", points: pts };
+    }
+    const [x, y, w, h] = a.bbox;
+    return { label, shape_type: "rectangle", points: [[x, y], [x + w, y + h]] };
+  },
+  async _toAnnotations() {
+    const anns = [];
+    for (const s of this.editorShapes) {
+      const cat = await this._resolveCategory(s.label);
+      if (s.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = s.points;
+        anns.push({ category_id: cat.id,
+          bbox: [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)],
+          segmentation: [] });
+      } else {
+        anns.push({ category_id: cat.id, segmentation: [s.points.flat()] });
+      }
+    }
+    return anns;
+  },
+  async _resolveCategory(name) {
+    name = (name || "object").trim() || "object";
+    let cat = this.categories.find((c) => c.name === name);
+    if (!cat) {
+      cat = await api("/categories", json("POST", { name }));
+      this.categories.push(cat);
+      this.renderChips();
+    }
+    return cat;
+  },
+  _getColor(label) {
+    const cat = this.categories.find((c) => c.name === label);
+    if (cat && cat.color) return cat.color;
+    let hash = 0;
+    for (let i = 0; i < label.length; i++) hash = label.charCodeAt(i) + ((hash << 5) - hash);
+    return `hsl(${Math.abs(hash) % 360}, 75%, 55%)`;
+  },
+
+  // ---------------------------------------------------------------- saving
+  _pushHistory() {
+    this.history.push(JSON.stringify(this.editorShapes));
+    if (this.history.length > 50) this.history.shift();
+  },
+  _undo() {
+    if (!this.history.length) return;
+    this.editorShapes = JSON.parse(this.history.pop());
+    this.selectedShapeIdx = -1;
+    this._triggerChange();
+    this._drawCanvas();
+  },
+  _triggerChange() {
+    this.isDirty = true;
+    this._setSaveState("saving", "unsaved");
+    if (this.autoSave) {
+      if (this._saveTimer) clearTimeout(this._saveTimer);
+      this._saveTimer = setTimeout(() => this.saveAnnotations(true), 500);
+    }
+  },
+  toggleAutoSave(checked) {
+    this.autoSave = checked;
+    try { localStorage.setItem("horos_autosave", checked); } catch (e) {}
+    this._updateSaveButtonState();
+    if (checked && this.isDirty) this.saveAnnotations();
+  },
+  _updateSaveButtonState() {
+    $("btn-save").disabled = !!this.autoSave;
+    $("btn-save").title = this.autoSave ? "Auto Save is on" : "";
+  },
+  async _flushPendingSave() {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+    if (this.isDirty && this.autoSave) await this.saveAnnotations(true);
+  },
+  async _checkUnsaved() {
+    if (!this.isDirty) return true;
+    if (this.autoSave) { await this._flushPendingSave(); return true; }
+    return confirm("You have unsaved changes. Continue without saving?");
+  },
+  async saveAnnotations(isAuto = false) {
+    if (this.currentIdx < 0) return;
+    const item = this.queue[this.currentIdx];
+    this._setSaveState("saving", "saving…");
+    try {
+      const annotations = await this._toAnnotations();
+      const view = await api(`/images/${item.image.id}/annotations`,
+        json("PUT", { expected_version: this.version, annotations }));
+      this.version = view.version;
+      this.isDirty = false;
+      item.num_annotations = view.annotations.length;
+      item.annotated = view.annotations.length > 0;
+      this._setSaveState("saved", `saved · v${this.version}`);
+    } catch (e) {
+      if (e.code === "annotation_conflict") {
+        const view = await api(`/images/${item.image.id}/annotations`);
+        this.editorShapes = view.annotations.map((a) => this._toShape(a));
+        this.version = view.version;
+        this.selectedShapeIdx = -1; this.history = []; this.isDirty = false;
+        this._setSaveState("conflict", "conflict — reloaded");
+        toast("Someone else saved this image first. Reloaded their version; redo your change.", "err", 4200);
+        this._drawCanvas();
+      } else {
+        this._setSaveState("conflict", "save failed");
+        if (!isAuto) toast("Save failed: " + e.message, "err", 4200);
+      }
+    }
+  },
+  _setSaveState(cls, text) { const el = $("save-state"); el.className = cls; el.textContent = text; },
+
+  // ---------------------------------------------------------------- claims
+  async _claim(imageId) {
+    try {
+      await api(`/images/${imageId}/claim`, json("POST", { session }));
+      $("claim-note").textContent = "";
+    } catch (e) {
+      if (e.status === 409) {
+        $("claim-note").textContent = "⚠ someone else is annotating this image";
+        toast("Another session is annotating this image — your saves may conflict.", "warn");
+      }
+    }
+    clearInterval(this._claimTimer);
+    this._claimTimer = setInterval(() => {
       api(`/images/${imageId}/claim`, json("POST", { session })).catch(() => {});
-  }, 120000);
-}
-function releaseClaim(imageId) {
-  clearInterval(state._claimTimer);
-  fetch(`/api/v1/images/${imageId}/claim`, {
-    ...json("DELETE", { session }), keepalive: true,
-  }).catch(() => {});
-}
-window.addEventListener("beforeunload", () => { if (state.image) releaseClaim(state.image.id); });
+    }, 120000);
+  },
+  _releaseClaim() {
+    clearInterval(this._claimTimer);
+    const item = this.queue[this.currentIdx];
+    if (!item) return;
+    fetch(`/api/v1/images/${item.image.id}/claim`,
+      { ...json("DELETE", { session }), keepalive: true }).catch(() => {});
+  },
 
-// ------------------------------------------------------------------- saving
-function pushUndo() {
-  state.undoStack.push(JSON.stringify(state.anns));
-  if (state.undoStack.length > 50) state.undoStack.shift();
-}
-async function save() {
-  state.saving++;
-  setSaveState("saving", "saving…");
-  const payload = state.anns.map((a) => ({
-    id: a.id, category_id: a.category_id, bbox: a.bbox,
-    segmentation: a.segmentation || [], source: a.source || "manual",
-    status: a.status || "confirmed", score: a.score ?? null,
-  }));
-  try {
-    const view = await api(`/images/${state.image.id}/annotations`,
-      json("PUT", { expected_version: state.version, annotations: payload }));
-    state.version = view.version; state.anns = view.annotations;
-    setSaveState("saved", `saved · v${state.version}`);
-    updateQueueItem();
-  } catch (e) {
-    if (e.code === "annotation_conflict") {
-      const view = await api(`/images/${state.image.id}/annotations`);
-      state.anns = view.annotations; state.version = view.version;
-      state.selected = -1; state.undoStack = [];
-      setSaveState("conflict", "conflict — reloaded");
-      toast("Someone else saved this image first. Reloaded their version; redo your change.", "err", 4200);
-    } else {
-      setSaveState("conflict", "save failed");
-      toast("Save failed: " + e.message, "err", 4200);
-    }
-  } finally {
-    state.saving--; draw(); renderClasses(); refreshProgress();
-  }
-}
-function updateQueueItem() {
-  const item = state.queue[state.index];
-  if (!item) return;
-  item.num_annotations = state.anns.length;
-  item.annotated = state.anns.length > 0;
-  renderImageList();
-}
-function mutate(fn) { pushUndo(); fn(); save(); }
-function undo() {
-  const prev = state.undoStack.pop();
-  if (prev === undefined) return;
-  state.anns = JSON.parse(prev); state.selected = -1; save();
-}
-
-// ---------------------------------------------------------------- rendering
-function fitToView() {
-  resizeCanvas();
-  const pad = 24;
-  const sx = (canvas.width - 2 * pad) / state.image.width;
-  const sy = (canvas.height - 2 * pad) / state.image.height;
-  state.scale = Math.min(sx, sy, 4);
-  state.tx = (canvas.width - state.image.width * state.scale) / 2;
-  state.ty = (canvas.height - state.image.height * state.scale) / 2;
-  draw();
-}
-function resizeCanvas() {
-  const main = canvas.parentElement;
-  canvas.width = main.clientWidth; canvas.height = main.clientHeight;
-}
-window.addEventListener("resize", () => { if (state.bitmap) { resizeCanvas(); draw(); } });
-
-function draw() {
-  if (!state.bitmap) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.setTransform(state.scale, 0, 0, state.scale, state.tx, state.ty);
-  ctx.imageSmoothingEnabled = state.scale < 3;
-  ctx.drawImage(state.bitmap, 0, 0);
-  const lw = 1.6 / state.scale;
-  state.anns.forEach((a, i) => {
-    const cat = catById(a.category_id);
-    const color = (cat && cat.color) || "#4dabf7";
-    ctx.lineWidth = i === state.selected ? lw * 2 : lw;
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color + "2e";
-    if (a.segmentation && a.segmentation.length) {
-      const pts = a.segmentation[0];
-      ctx.beginPath();
-      ctx.moveTo(pts[0], pts[1]);
-      for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      if (i === state.selected) pts.forEach((_, k) => {
-        if (k % 2) return;
-        drawHandle(pts[k], pts[k + 1], color);
-      });
-    } else {
-      const [x, y, w, h] = a.bbox;
-      ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
-      if (i === state.selected) boxHandles(a.bbox).forEach(([hx, hy]) => drawHandle(hx, hy, color));
-    }
-    if (cat) {
-      ctx.font = `${11 / state.scale}px system-ui`;
-      const [x, y] = a.segmentation && a.segmentation.length
-        ? [a.segmentation[0][0], a.segmentation[0][1]] : [a.bbox[0], a.bbox[1]];
-      ctx.fillStyle = color;
-      ctx.fillText(cat.name, x + 2 / state.scale, y - 3 / state.scale);
-    }
-  });
-  const cat = catById(state.currentClass);
-  const liveColor = (cat && cat.color) || "#4dabf7";
-  ctx.lineWidth = lw; ctx.strokeStyle = liveColor; ctx.setLineDash([4 / state.scale]);
-  if (state.drawing) {
-    const d = state.drawing;
-    ctx.strokeRect(Math.min(d.x0, d.x1), Math.min(d.y0, d.y1),
-                   Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0));
-  }
-  if (state.polyPoints.length) {
-    const pts = state.polyPoints;
-    ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
-    for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
-    ctx.stroke();
-    pts.forEach((_, k) => { if (!(k % 2)) drawHandle(pts[k], pts[k + 1], liveColor); });
-  }
-  ctx.setLineDash([]);
-  $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
-}
-function drawHandle(x, y, color) {
-  const r = 4 / state.scale;
-  ctx.fillStyle = "#101418"; ctx.strokeStyle = color; ctx.lineWidth = 1.4 / state.scale;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
-}
-function boxHandles([x, y, w, h]) {
-  return [[x, y], [x + w / 2, y], [x + w, y], [x + w, y + h / 2], [x + w, y + h],
-          [x + w / 2, y + h], [x, y + h], [x, y + h / 2]];
-}
-
-// -------------------------------------------------------------- hit testing
-function hitHandle(ix, iy) {
-  if (state.selected < 0) return null;
-  const a = state.anns[state.selected];
-  const r = 7 / state.scale;
-  if (a.segmentation && a.segmentation.length) {
-    const pts = a.segmentation[0];
-    for (let k = 0; k < pts.length; k += 2)
-      if (Math.hypot(pts[k] - ix, pts[k + 1] - iy) < r)
-        return { kind: "vertex", index: k };
-    return null;
-  }
-  const handles = boxHandles(a.bbox);
-  for (let k = 0; k < handles.length; k++)
-    if (Math.hypot(handles[k][0] - ix, handles[k][1] - iy) < r)
-      return { kind: "handle", index: k };
-  return null;
-}
-function hitAnnotation(ix, iy) {
-  for (let i = state.anns.length - 1; i >= 0; i--) {
-    const a = state.anns[i];
-    if (a.segmentation && a.segmentation.length) {
-      if (pointInPolygon(ix, iy, a.segmentation[0])) return i;
-    } else {
-      const [x, y, w, h] = a.bbox;
-      if (ix >= x && ix <= x + w && iy >= y && iy <= y + h) return i;
-    }
-  }
-  return -1;
-}
-function pointInPolygon(px, py, pts) {
-  let inside = false;
-  for (let i = 0, j = pts.length - 2; i < pts.length; j = i, i += 2) {
-    const xi = pts[i], yi = pts[i + 1], xj = pts[j], yj = pts[j + 1];
-    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)
-      inside = true;
-  }
-  return inside;
-}
-
-// ------------------------------------------------------------------- events
-function setMode(mode) {
-  state.mode = mode;
-  state.drawing = null; state.polyPoints = [];
-  ["select", "box", "polygon"].forEach((m) =>
-    $("mode-" + m).classList.toggle("active", m === mode));
-  canvas.className = mode === "select" ? "mode-select" : "";
-  draw();
-}
-
-function bindEvents() {
-  setMode("select");
-  $("mode-select").onclick = () => setMode("select");
-  $("mode-box").onclick = () => setMode("box");
-  $("mode-polygon").onclick = () => setMode("polygon");
-  $("queue-mode").onchange = () => refreshQueue(true);
-  $("split-filter").onchange = () => refreshQueue(true);
-  $("help-link").onclick = (e) => { e.preventDefault(); toggleHelp(); };
-  $("help").onclick = toggleHelp;
-  $("add-class").onclick = addClassFlow;
-
-  canvas.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const [ix, iy] = imgCoords(e);
-    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    state.scale = Math.min(Math.max(state.scale * factor, 0.05), 24);
-    const r = canvas.getBoundingClientRect();
-    state.tx = e.clientX - r.left - ix * state.scale;
-    state.ty = e.clientY - r.top - iy * state.scale;
-    draw();
-  }, { passive: false });
-
-  canvas.addEventListener("mousedown", (e) => {
-    if (!state.bitmap) return;
-    if (e.button === 1 || state.spaceHeld || e.button === 2) {
-      state.panning = true; state._px = e.clientX; state._py = e.clientY;
-      canvas.classList.add("panning"); return;
-    }
-    const [ix, iy] = imgCoords(e);
-    if (state.mode === "box") {
-      const [cx, cy] = clampToImage(ix, iy);
-      state.drawing = { x0: cx, y0: cy, x1: cx, y1: cy };
-    } else if (state.mode === "polygon") {
-      const [cx, cy] = clampToImage(ix, iy);
-      const pts = state.polyPoints;
-      if (pts.length >= 6 && Math.hypot(pts[0] - cx, pts[1] - cy) < 8 / state.scale) {
-        closePolygon(); return;
+  // ------------------------------------------------------------- shortcuts
+  // Matched on e.code (the PHYSICAL key), not e.key — e.key changes with the
+  // keyboard layout / IME, which breaks shortcuts under a Chinese IME.
+  _bindKeys() {
+    window.addEventListener("keydown", (e) => {
+      if ($("editor-view").style.display !== "block") return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.isComposing) return;
+      const code = e.code;
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl) {
+        if (code === "KeyS") { e.preventDefault(); this.saveAnnotations(); }
+        else if (code === "KeyZ") { e.preventDefault(); this._undo(); }
+        else if (code === "KeyC") {
+          if (this.selectedShapeIdx !== -1) {
+            this.clipboardShape = JSON.parse(JSON.stringify(this.editorShapes[this.selectedShapeIdx]));
+            toast("Copied", "warn", 900);
+          }
+        } else if (code === "KeyV") {
+          if (this.clipboardShape) {
+            this._pushHistory();
+            const s = JSON.parse(JSON.stringify(this.clipboardShape));
+            const off = 20 / (this.baseScale * this.zoom);
+            s.points = s.points.map((p) => [p[0] + off, p[1] + off]);
+            this._clampShapePoints(s);
+            this.editorShapes.push(s);
+            this._triggerChange();
+            this.selectShape(this.editorShapes.length - 1);
+          }
+        }
+        return;
       }
-      pts.push(cx, cy); draw();
-    } else {
-      const handle = hitHandle(ix, iy);
-      if (handle) {
-        state.drag = { ...handle, startAnns: JSON.stringify(state.anns) };
-      } else {
-        const hit = hitAnnotation(ix, iy);
-        state.selected = hit;
-        if (hit >= 0)
-          state.drag = { kind: "move", ix, iy, startAnns: JSON.stringify(state.anns) };
-        draw();
+      switch (code) {
+        case "KeyA": this.prevImage(); break;
+        case "KeyD": this.nextImage(); break;
+        case "Digit1": case "Numpad1": this.setTool("select"); break;
+        case "Digit2": case "Numpad2": this.setTool("rect"); break;
+        case "Digit3": case "Numpad3": this.setTool("poly"); break;
+        case "Delete": case "Backspace":
+          if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
+          break;
+        case "Escape":
+          if (this.isDrawing) { this.isDrawing = false; this.currentPoints = []; }
+          else this.selectShape(-1);
+          this._drawCanvas();
+          break;
+      }
+    });
+  },
+
+  // ---------------------------------------------------------------- tools
+  setTool(tool) {
+    this.activeTool = tool;
+    document.querySelectorAll(".tool-btn").forEach((b) =>
+      b.classList.toggle("active", b.dataset.tool === tool));
+    this.isDrawing = false;
+    this.currentPoints = [];
+    if (tool !== "select") this.selectedShapeIdx = -1;
+    this._updateCursor();
+    this._drawCanvas();
+  },
+  _updateCursor() {
+    const canvas = $("anno-canvas");
+    if (this.panDragging) canvas.style.cursor = "grabbing";
+    else if (this.activeTool !== "select") canvas.style.cursor = "crosshair";
+    else if (this.hoverVertexIdx !== -1) canvas.style.cursor = "pointer";
+    else if (this.hoverShapeIdx !== -1) canvas.style.cursor = "move";
+    else canvas.style.cursor = "default";
+  },
+  selectShape(idx) {
+    this.selectedShapeIdx = idx;
+    this._labelEditBase = null;
+    if (idx !== -1) {
+      this.setTool("select");
+      $("class-input").value = this.editorShapes[idx].label;
+      this.renderChips();
+    }
+    this._drawCanvas();
+  },
+  deleteShape(idx) {
+    this._pushHistory();
+    this.editorShapes.splice(idx, 1);
+    if (this.selectedShapeIdx === idx) this.selectedShapeIdx = -1;
+    else if (this.selectedShapeIdx > idx) this.selectedShapeIdx--;
+    this._triggerChange();
+    this._drawCanvas();
+  },
+
+  _bindClassInput() {
+    // Typing while a shape is selected relabels it live on canvas (exVision
+    // behavior), but the change is only committed (saved, category created)
+    // on blur/Enter — otherwise a 500ms typing pause would autosave a
+    // half-typed name and create a junk category.
+    const input = $("class-input");
+    input.addEventListener("input", (e) => {
+      if (this.selectedShapeIdx !== -1) {
+        if (!this._labelEditBase) {
+          this._labelEditBase = JSON.stringify(this.editorShapes);
+        }
+        this.editorShapes[this.selectedShapeIdx].label = e.target.value.trim() || "object";
+        this._drawCanvas();
+      }
+      this.renderChips();
+    });
+    const commit = () => {
+      if (this._labelEditBase) {
+        this.history.push(this._labelEditBase);
+        if (this.history.length > 50) this.history.shift();
+        this._labelEditBase = null;
+        this._triggerChange();
+      }
+    };
+    input.addEventListener("change", commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { input.blur(); }
+    });
+  },
+  renderChips() {
+    const current = $("class-input").value.trim();
+    $("class-chips").innerHTML = this.categories.map((c) => `
+      <span class="chip ${c.name === current ? "on" : ""}" data-name="${c.name}">
+        <span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
+    [...$("class-chips").children].forEach((el) => {
+      el.onclick = () => {
+        $("class-input").value = el.dataset.name;
+        $("class-input").dispatchEvent(new Event("input"));
+        $("class-input").dispatchEvent(new Event("change"));
+      };
+    });
+  },
+
+  // ------------------------------------------------------------ geometry
+  _clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); },
+  _clampPoint([x, y]) {
+    return [this._clamp(x, 0, this.editorImage.naturalWidth),
+            this._clamp(y, 0, this.editorImage.naturalHeight)];
+  },
+  _clampShapePoints(shape) {
+    shape.points = shape.points.map((p) => this._clampPoint(p));
+    if (shape.shape_type === "rectangle" && shape.points.length >= 2) {
+      const [x1, y1] = shape.points[0], [x2, y2] = shape.points[1];
+      shape.points = [[Math.min(x1, x2), Math.min(y1, y2)],
+                      [Math.max(x1, x2), Math.max(y1, y2)]];
+    }
+  },
+  _clampShapeDelta(shape, dx, dy) {
+    const xs = shape.points.map((p) => p[0]), ys = shape.points.map((p) => p[1]);
+    return [
+      this._clamp(dx, -Math.min(...xs), this.editorImage.naturalWidth - Math.max(...xs)),
+      this._clamp(dy, -Math.min(...ys), this.editorImage.naturalHeight - Math.max(...ys)),
+    ];
+  },
+  _getPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const scale = this.baseScale * this.zoom;
+    return [(cx - this.panX) / scale, (cy - this.panY) / scale, cx, cy];
+  },
+  _hitTestVertex(x, y, shape) {
+    const thresh = 8 / (this.baseScale * this.zoom);
+    for (let i = 0; i < shape.points.length; i++)
+      if (Math.hypot(shape.points[i][0] - x, shape.points[i][1] - y) < thresh) return i;
+    return -1;
+  },
+  _hitTestShape(x, y) {
+    for (let i = this.editorShapes.length - 1; i >= 0; i--) {
+      const s = this.editorShapes[i];
+      if (s.shape_type === "rectangle" && s.points.length === 2) {
+        const [x1, y1] = s.points[0], [x2, y2] = s.points[1];
+        if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) &&
+            y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return i;
+      } else if (s.shape_type === "polygon" && s.points.length > 2) {
+        let inside = false;
+        for (let j = 0, k = s.points.length - 1; j < s.points.length; k = j++) {
+          const [xj, yj] = s.points[j], [xk, yk] = s.points[k];
+          if ((yj > y) !== (yk > y) && x < ((xk - xj) * (y - yj)) / (yk - yj) + xj)
+            inside = !inside;
+        }
+        if (inside) return i;
       }
     }
-  });
+    return -1;
+  },
 
-  canvas.addEventListener("mousemove", (e) => {
-    if (state.panning) {
-      state.tx += e.clientX - state._px; state.ty += e.clientY - state._py;
-      state._px = e.clientX; state._py = e.clientY; draw(); return;
-    }
-    if (!state.bitmap) return;
-    const [ix, iy] = imgCoords(e);
-    if (state.drawing) {
-      [state.drawing.x1, state.drawing.y1] = clampToImage(ix, iy); draw(); return;
-    }
-    if (!state.drag || state.selected < 0) return;
-    const a = state.anns[state.selected];
-    if (state.drag.kind === "move") {
-      const dx = ix - state.drag.ix, dy = iy - state.drag.iy;
-      state.drag.ix = ix; state.drag.iy = iy;
-      if (a.segmentation && a.segmentation.length) {
-        const pts = a.segmentation[0];
-        for (let k = 0; k < pts.length; k += 2) { pts[k] += dx; pts[k + 1] += dy; }
-        a.bbox = polyBbox(pts);
-      } else {
-        a.bbox = [a.bbox[0] + dx, a.bbox[1] + dy, a.bbox[2], a.bbox[3]];
+  // ---------------------------------------------------------- canvas view
+  _resizeCanvas() {
+    const canvas = $("anno-canvas");
+    if (!this.editorImage) return;
+    const wrap = canvas.parentElement;
+    const w = Math.max(320, wrap.clientWidth - 2);
+    const h = Math.max(240, wrap.clientHeight - 2);
+    canvas.width = w; canvas.height = h;
+    this.baseScale = Math.min(w / this.editorImage.naturalWidth,
+                              h / this.editorImage.naturalHeight, 1);
+    this._centerImage();
+    this._drawCanvas();
+  },
+  _centerImage() {
+    const canvas = $("anno-canvas");
+    const scale = this.baseScale * this.zoom;
+    this.panX = Math.round((canvas.width - this.editorImage.naturalWidth * scale) / 2);
+    this.panY = Math.round((canvas.height - this.editorImage.naturalHeight * scale) / 2);
+  },
+  _clampPan() {
+    const canvas = $("anno-canvas");
+    const scale = this.baseScale * this.zoom;
+    const iw = this.editorImage.naturalWidth * scale;
+    const ih = this.editorImage.naturalHeight * scale;
+    this.panX = iw <= canvas.width
+      ? Math.round((canvas.width - iw) / 2) : this._clamp(this.panX, canvas.width - iw, 0);
+    this.panY = ih <= canvas.height
+      ? Math.round((canvas.height - ih) / 2) : this._clamp(this.panY, canvas.height - ih, 0);
+  },
+
+  _drawCanvas() {
+    const canvas = $("anno-canvas");
+    if (!canvas || !this.editorImage) { this.renderShapesList(); return; }
+    const ctx = canvas.getContext("2d");
+    const scale = this.baseScale * this.zoom;
+    this._clampPan();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.translate(this.panX, this.panY);
+    ctx.scale(scale, scale);
+    ctx.drawImage(this.editorImage, 0, 0);
+    const inv = 1 / scale;
+
+    const drawPoint = (x, y, isHovered, faint) => {
+      const r = (isHovered ? 7 : faint ? 4 : 5) * inv;
+      ctx.globalAlpha = faint ? 0.45 : 1;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = isHovered ? "#ffffff" : "#4dabf7"; ctx.fill();
+      ctx.lineWidth = 1 * inv; ctx.strokeStyle = "#111111"; ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+
+    this.editorShapes.forEach((shape, i) => {
+      const isSelected = i === this.selectedShapeIdx;
+      const isHovered = i === this.hoverShapeIdx;
+      const color = this._getColor(shape.label);
+      const fillAlpha = isSelected ? 0.38 : isHovered ? 0.3 : 0.2;
+      const lineW = (isSelected ? 3.5 : isHovered ? 3 : 2) * inv;
+      const stroke = () => {
+        ctx.globalAlpha = 1; ctx.lineWidth = lineW; ctx.strokeStyle = color; ctx.stroke();
+      };
+      if (shape.shape_type === "rectangle" && shape.points.length === 2) {
+        const [x1, y1] = shape.points[0], [x2, y2] = shape.points[1];
+        ctx.beginPath(); ctx.rect(x1, y1, x2 - x1, y2 - y1);
+        ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
+      } else if (shape.shape_type === "polygon" && shape.points.length) {
+        ctx.beginPath();
+        shape.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
       }
-      state.drag.moved = true; draw();
-    } else if (state.drag.kind === "vertex") {
-      const pts = a.segmentation[0];
-      [pts[state.drag.index], pts[state.drag.index + 1]] = clampToImage(ix, iy);
-      a.bbox = polyBbox(pts);
-      state.drag.moved = true; draw();
-    } else if (state.drag.kind === "handle") {
-      resizeBox(a, state.drag.index, ...clampToImage(ix, iy));
-      state.drag.moved = true; draw();
-    }
-  });
+      ctx.globalAlpha = 1;
+      ctx.font = `600 ${14 * inv}px system-ui, sans-serif`;
+      const lx = shape.points[0][0], ly = shape.points[0][1] - 6 * inv;
+      const tw = ctx.measureText(shape.label).width;
+      ctx.fillStyle = "rgba(0,0,0,0.66)";
+      ctx.fillRect(lx - 4 * inv, ly - 13 * inv, tw + 8 * inv, 18 * inv);
+      ctx.fillStyle = isSelected ? "#ffffff" : color;
+      ctx.fillText(shape.label, lx, ly);
+      const faint = !isSelected;
+      shape.points.forEach((p, j) =>
+        drawPoint(p[0], p[1], isSelected && this.hoverVertexIdx === j, faint));
+    });
 
-  window.addEventListener("mouseup", () => {
-    if (state.panning) { state.panning = false; canvas.classList.remove("panning"); return; }
-    if (state.drawing) {
-      const d = state.drawing; state.drawing = null;
-      const w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
-      if (w >= 3 && h >= 3 && state.currentClass != null) {
-        mutate(() => state.anns.push({
-          id: 0, category_id: state.currentClass,
-          bbox: [Math.min(d.x0, d.x1), Math.min(d.y0, d.y1), w, h], segmentation: [],
-        }));
-        state.selected = state.anns.length - 1;
-      } else draw();
+    if (this.isDrawing && this.currentPoints.length) {
+      const cls = $("class-input").value.trim() || "object";
+      ctx.strokeStyle = this._getColor(cls);
+      ctx.lineWidth = 2 * inv;
+      if (this.activeTool === "rect" && this.currentPoints.length === 2) {
+        const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
+        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      } else if (this.activeTool === "poly") {
+        ctx.beginPath();
+        this.currentPoints.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        const [mx, my] = this._clampPoint([
+          (this.mousePos[0] - this.panX) / scale, (this.mousePos[1] - this.panY) / scale]);
+        ctx.lineTo(mx, my); ctx.stroke();
+        if (this.currentPoints.length > 2) {
+          const [fx, fy] = this.currentPoints[0];
+          drawPoint(fx, fy, Math.hypot(mx - fx, my - fy) < 12 * inv);
+        }
+      }
+    }
+    this.renderShapesList();
+  },
+
+  renderShapesList() {
+    const el = $("shapes-list");
+    if (!this.editorShapes.length) {
+      el.innerHTML = '<p style="color:var(--dim);font-size:12px">No shapes</p>';
       return;
     }
-    if (state.drag) {
-      const changed = state.drag.moved;
-      const before = state.drag.startAnns;
-      state.drag = null;
-      if (changed) {
-        state.undoStack.push(before);
-        if (state.undoStack.length > 50) state.undoStack.shift();
-        save();
-      }
-    }
-  });
+    el.innerHTML = this.editorShapes.map((s, i) => `
+      <div class="shape-item ${i === this.selectedShapeIdx ? "on" : ""}" data-i="${i}">
+        <span><span class="dot" style="background:${this._getColor(s.label)}"></span>
+          ${s.label} <small>(${s.shape_type})</small></span>
+        <button class="del" data-i="${i}">×</button>
+      </div>`).join("");
+    [...el.children].forEach((row) => {
+      row.onclick = () => this.selectShape(Number(row.dataset.i));
+      row.querySelector(".del").onclick = (e) => {
+        e.stopPropagation(); this.deleteShape(Number(row.dataset.i));
+      };
+    });
+  },
 
-  canvas.addEventListener("dblclick", () => {
-    if (state.mode === "polygon" && state.polyPoints.length >= 6) closePolygon();
-  });
-  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  // ---------------------------------------------------------- canvas events
+  _initCanvasEvents() {
+    const canvas = $("anno-canvas");
+    const wrap = canvas.parentElement;
 
-  window.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-    if (e.code === "Space") { state.spaceHeld = true; e.preventDefault(); return; }
-    if (e.key === "?") { toggleHelp(); return; }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-      e.preventDefault(); undo(); return;
-    }
-    if (e.key >= "1" && e.key <= "9") {
-      const cat = state.categories[Number(e.key) - 1];
-      if (!cat) return;
-      if (state.selected >= 0 && state.mode === "select") {
-        mutate(() => { state.anns[state.selected].category_id = cat.id; });
-      }
-      state.currentClass = cat.id; renderClasses(); draw(); return;
-    }
-    switch (e.key.toLowerCase()) {
-      case "v": setMode("select"); break;
-      case "w": setMode("box"); break;
-      case "p": setMode("polygon"); break;
-      case "d": openImage(state.index + 1); break;
-      case "a": openImage(state.index - 1); break;
-      case "0": fitToView(); break;
-      case "escape":
-        if (state.polyPoints.length) { state.polyPoints = []; draw(); }
-        else if (state.drawing) { state.drawing = null; draw(); }
-        else { state.selected = -1; draw(); }
-        break;
-      case "backspace": case "delete":
+    const zoomWheel = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (!this.editorImage) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const oldScale = this.baseScale * this.zoom;
+      const ix = (mx - this.panX) / oldScale, iy = (my - this.panY) / oldScale;
+      const next = this._clamp(this.zoom * Math.exp(-e.deltaY * 0.0012), 1, 16);
+      if (Math.abs(next - this.zoom) < 1e-4) return;
+      this.zoom = next;
+      const s = this.baseScale * this.zoom;
+      this.panX = mx - ix * s; this.panY = my - iy * s;
+      this._clampPan(); this._drawCanvas();
+    };
+    wrap.addEventListener("wheel", zoomWheel, { passive: false });
+
+    canvas.onmousedown = (e) => {
+      if (!this.editorImage) return;
+      if (e.button === 2) {
         e.preventDefault();
-        if (state.mode === "polygon" && state.polyPoints.length) {
-          state.polyPoints.splice(-2); draw();
-        } else if (state.selected >= 0) {
-          mutate(() => { state.anns.splice(state.selected, 1); state.selected = -1; });
+        this.panDragging = true;
+        this.panDragStart = [e.clientX, e.clientY];
+        this.panOrigin = [this.panX, this.panY];
+        this._updateCursor();
+        return;
+      }
+      if (e.button !== 0) { if (e.button === 1) e.preventDefault(); return; }
+      const [x, y] = this._getPos(e, canvas);
+      if (this.activeTool === "select") {
+        if (this.selectedShapeIdx !== -1) {
+          const vIdx = this._hitTestVertex(x, y, this.editorShapes[this.selectedShapeIdx]);
+          if (vIdx !== -1) {
+            this._pushHistory();
+            this.dragMode = "vertex"; this.hoverVertexIdx = vIdx;
+            return;
+          }
         }
-        break;
-      case "enter":
-        if (state.mode === "polygon" && state.polyPoints.length >= 6) closePolygon();
-        break;
+        const sIdx = this._hitTestShape(x, y);
+        this.selectShape(sIdx);
+        if (sIdx !== -1) {
+          this._pushHistory();
+          this.dragMode = "shape"; this.dragStart = [x, y];
+        }
+      } else if (this.activeTool === "rect") {
+        this.isDrawing = true;
+        const p = this._clampPoint([x, y]);
+        this.currentPoints = [p, p];
+      } else if (this.activeTool === "poly") {
+        if (!this.isDrawing) {
+          this.isDrawing = true;
+          this.currentPoints = [this._clampPoint([x, y])];
+        } else {
+          if (this.currentPoints.length > 2) {
+            const [fx, fy] = this.currentPoints[0];
+            if (Math.hypot(x - fx, y - fy) < 12 / (this.baseScale * this.zoom)) {
+              this._finishPolygon(); return;
+            }
+          }
+          this.currentPoints.push(this._clampPoint([x, y]));
+        }
+        this._drawCanvas();
+      }
+    };
+
+    canvas.onmousemove = (e) => {
+      if (this.panDragging) {
+        e.preventDefault();
+        this.panX = this.panOrigin[0] + e.clientX - this.panDragStart[0];
+        this.panY = this.panOrigin[1] + e.clientY - this.panDragStart[1];
+        this._clampPan(); this._drawCanvas();
+        return;
+      }
+      if (!this.editorImage) return;
+      const [x, y, cx, cy] = this._getPos(e, canvas);
+      this.mousePos = [cx, cy];
+      if (this.activeTool === "select") {
+        if (this.dragMode === "vertex" && this.selectedShapeIdx !== -1) {
+          this.editorShapes[this.selectedShapeIdx].points[this.hoverVertexIdx] =
+            this._clampPoint([x, y]);
+          this._drawCanvas(); return;
+        }
+        if (this.dragMode === "shape" && this.dragStart && this.selectedShapeIdx !== -1) {
+          const shape = this.editorShapes[this.selectedShapeIdx];
+          const [dx, dy] = this._clampShapeDelta(
+            shape, x - this.dragStart[0], y - this.dragStart[1]);
+          shape.points = shape.points.map((p) => [p[0] + dx, p[1] + dy]);
+          this.dragStart = [this.dragStart[0] + dx, this.dragStart[1] + dy];
+          this._drawCanvas(); return;
+        }
+        let hoverVtx = -1, hoverShape = -1;
+        if (this.selectedShapeIdx !== -1)
+          hoverVtx = this._hitTestVertex(x, y, this.editorShapes[this.selectedShapeIdx]);
+        if (hoverVtx === -1) hoverShape = this._hitTestShape(x, y);
+        if (hoverShape !== this.hoverShapeIdx || hoverVtx !== this.hoverVertexIdx) {
+          this.hoverShapeIdx = hoverShape; this.hoverVertexIdx = hoverVtx;
+          this._drawCanvas();
+        }
+        this._updateCursor();
+      } else if (this.activeTool === "rect" && this.isDrawing) {
+        this.currentPoints[1] = this._clampPoint([x, y]);
+        this._drawCanvas();
+      } else if (this.activeTool === "poly" && this.isDrawing) {
+        this._drawCanvas();
+      }
+    };
+
+    canvas.onmouseup = () => {
+      if (this.panDragging) {
+        this.panDragging = false; this.panDragStart = null; this.panOrigin = null;
+        this._updateCursor(); return;
+      }
+      if (this.activeTool === "select") {
+        if (this.dragMode) {
+          if (this.selectedShapeIdx !== -1)
+            this._clampShapePoints(this.editorShapes[this.selectedShapeIdx]);
+          this._triggerChange();
+        }
+        this.dragMode = null; this.dragStart = null;
+      } else if (this.activeTool === "rect" && this.isDrawing) {
+        this.isDrawing = false;
+        const cls = $("class-input").value.trim() || "object";
+        const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
+        const min = 5 / (this.baseScale * this.zoom);
+        if (Math.abs(x2 - x1) > min && Math.abs(y2 - y1) > min) {
+          this._pushHistory();
+          this.editorShapes.push({
+            label: cls, shape_type: "rectangle",
+            points: [[Math.min(x1, x2), Math.min(y1, y2)],
+                     [Math.max(x1, x2), Math.max(y1, y2)]],
+          });
+          this._triggerChange();
+          this.selectShape(this.editorShapes.length - 1);
+        }
+        this.currentPoints = [];
+        this._drawCanvas();
+      }
+    };
+
+    canvas.onmouseleave = () => {
+      if (this.panDragging) {
+        this.panDragging = false; this.panDragStart = null; this.panOrigin = null;
+        this._updateCursor();
+      }
+    };
+    // Right-click is reserved for panning; just suppress the context menu.
+    canvas.oncontextmenu = (e) => e.preventDefault();
+    canvas.onauxclick = (e) => { if (e.button === 1) e.preventDefault(); };
+    // Finish a polygon with a double-click (each click added a vertex at ~the
+    // same spot; drop the duplicate before closing, keep at least 3 points).
+    canvas.ondblclick = (e) => {
+      if (this.activeTool === "poly" && this.isDrawing) {
+        e.preventDefault();
+        if (this.currentPoints.length > 3) this.currentPoints.pop();
+        this._finishPolygon();
+      }
+    };
+  },
+
+  _finishPolygon() {
+    this.isDrawing = false;
+    const cls = $("class-input").value.trim() || "object";
+    if (this.currentPoints.length > 2) {
+      this._pushHistory();
+      this.editorShapes.push({
+        label: cls, shape_type: "polygon",
+        points: this.currentPoints.map((p) => this._clampPoint(p)),
+      });
+      this._triggerChange();
+      this.selectShape(this.editorShapes.length - 1);
     }
-  });
-  window.addEventListener("keyup", (e) => {
-    if (e.code === "Space") state.spaceHeld = false;
-  });
-}
+    this.currentPoints = [];
+    this._drawCanvas();
+  },
 
-function closePolygon() {
-  const pts = state.polyPoints.slice();
-  state.polyPoints = [];
-  if (pts.length < 6 || state.currentClass == null) { draw(); return; }
-  mutate(() => state.anns.push({
-    id: 0, category_id: state.currentClass, bbox: polyBbox(pts), segmentation: [pts],
-  }));
-  state.selected = state.anns.length - 1;
-}
+  // ----------------------------------------------------------- class modal
+  async openClassManager() {
+    $("class-modal").style.display = "flex";
+    let counts = {};
+    try {
+      const stats = await api("/dataset/stats");
+      stats.per_class.forEach((c) => { counts[c.name] = c.instances; });
+    } catch (e) {}
+    $("class-tbody").innerHTML = this.categories.map((c) => `
+      <tr>
+        <td><input type="color" value="${c.color}" data-id="${c.id}"
+             style="width:26px;height:20px;border:none;background:none;padding:0;cursor:pointer"></td>
+        <td>${c.name}</td>
+        <td>${counts[c.name] || 0}</td>
+        <td>
+          <button class="btn" data-act="rename" data-id="${c.id}">Rename</button>
+          <button class="btn danger" data-act="delete" data-id="${c.id}">Del</button>
+        </td>
+      </tr>`).join("");
+    $("class-tbody").querySelectorAll("button").forEach((b) => {
+      const id = Number(b.dataset.id);
+      b.onclick = b.dataset.act === "rename"
+        ? () => this.renameClass(id) : () => this.deleteClass(id);
+    });
+    $("class-tbody").querySelectorAll("input[type=color]").forEach((inp) => {
+      inp.onchange = async () => {
+        const cat = await api(`/categories/${inp.dataset.id}`,
+          json("PATCH", { color: inp.value }));
+        Object.assign(this.categories.find((c) => c.id === cat.id), cat);
+        this.renderChips(); this._drawCanvas();
+      };
+    });
+  },
+  async addClassFromManager() {
+    const name = $("new-class-name").value.trim();
+    if (!name) return;
+    try {
+      const cat = await api("/categories", json("POST", { name }));
+      this.categories.push(cat);
+      $("new-class-name").value = "";
+      this.renderChips(); this.openClassManager();
+    } catch (e) { toast(e.message, "err"); }
+  },
+  async renameClass(id) {
+    const cat = this.categories.find((c) => c.id === id);
+    const name = prompt(`Rename class '${cat.name}':`, cat.name);
+    if (!name || name === cat.name) return;
+    try {
+      const updated = await api(`/categories/${id}`, json("PATCH", { name }));
+      Object.assign(cat, updated);
+      this.renderChips(); this._drawCanvas(); this.openClassManager();
+    } catch (e) { toast(e.message, "err"); }
+  },
+  async deleteClass(id) {
+    const cat = this.categories.find((c) => c.id === id);
+    try {
+      await api(`/categories/${id}`, json("DELETE", {}));
+    } catch (e) {
+      if (e.status !== 400) { toast(e.message, "err"); return; }
+      if (!confirm(`${e.message}\n\nDelete the class AND those annotations?`)) return;
+      try { await api(`/categories/${id}`, json("DELETE", { force: true })); }
+      catch (e2) { toast(e2.message, "err"); return; }
+    }
+    this.categories = this.categories.filter((c) => c.id !== id);
+    this.renderChips(); this._drawCanvas(); this.openClassManager();
+  },
+};
 
-function resizeBox(a, handleIndex, ix, iy) {
-  let [x, y, w, h] = a.bbox;
-  let x2 = x + w, y2 = y + h;
-  // handles: 0 tl, 1 tm, 2 tr, 3 mr, 4 br, 5 bm, 6 bl, 7 ml
-  if ([0, 6, 7].includes(handleIndex)) x = ix;
-  if ([2, 3, 4].includes(handleIndex)) x2 = ix;
-  if ([0, 1, 2].includes(handleIndex)) y = iy;
-  if ([4, 5, 6].includes(handleIndex)) y2 = iy;
-  a.bbox = [Math.min(x, x2), Math.min(y, y2), Math.abs(x2 - x), Math.abs(y2 - y)];
-}
-
-// ------------------------------------------------------------------ sidebar
-function renderClasses() {
-  const counts = {};
-  state.anns.forEach((a) => { counts[a.category_id] = (counts[a.category_id] || 0) + 1; });
-  $("class-list").innerHTML = state.categories.map((c, i) => `
-    <div class="cls ${c.id === state.currentClass ? "active" : ""}" data-id="${c.id}">
-      <span class="chip" style="background:${c.color}"></span>
-      <span>${c.name}</span>
-      <span class="cnt">${counts[c.id] || ""}</span>
-      <span class="key">${i < 9 ? i + 1 : ""}</span>
-    </div>`).join("");
-  [...$("class-list").children].forEach((el) => {
-    el.onclick = () => { state.currentClass = Number(el.dataset.id); renderClasses(); };
-    el.ondblclick = () => renameClassFlow(Number(el.dataset.id));
-  });
-}
-async function addClassFlow() {
-  const name = prompt("New class name:");
-  if (!name) return;
-  try {
-    const cat = await api("/categories", json("POST", { name }));
-    state.categories.push(cat);
-    if (state.currentClass == null) state.currentClass = cat.id;
-    renderClasses();
-  } catch (e) { toast(e.message, "err"); }
-}
-async function renameClassFlow(id) {
-  const cat = catById(id);
-  const name = prompt(`Rename class '${cat.name}' (empty to keep):`, cat.name);
-  if (!name || name === cat.name) return;
-  try {
-    const updated = await api(`/categories/${id}`, json("PATCH", { name }));
-    Object.assign(cat, updated); renderClasses(); draw();
-  } catch (e) { toast(e.message, "err"); }
-}
-
-function renderImageList() {
-  $("image-list").innerHTML = state.queue.map((item, i) => `
-    <div class="img ${i === state.index ? "current" : ""}" data-i="${i}"
-         title="${item.image.file_name}">
-      <span class="mark">${item.claimed_by ? "🔒" : item.annotated ? "✓" : "·"}</span>
-      ${item.image.file_name}
-    </div>`).join("");
-  [...$("image-list").children].forEach((el) => {
-    el.onclick = () => openImage(Number(el.dataset.i));
-  });
-  const current = $("image-list").querySelector(".current");
-  if (current) current.scrollIntoView({ block: "nearest" });
-}
-
-function toggleHelp() {
-  const el = $("help");
-  el.style.display = el.style.display === "flex" ? "none" : "flex";
-}
-
-boot().catch((e) => toast("Failed to load: " + e.message, "err", 8000));
+Page._bindKeys();
+Page.init().catch((e) => toast("Failed to load: " + e.message, "err", 8000));
 </script>
 </body>
 </html>
