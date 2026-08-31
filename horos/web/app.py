@@ -59,6 +59,9 @@ def create_app(project_root: str | Path | None = None) -> Flask:
     app.config["HOROS_PROJECT_ROOT"] = str(project_root) if project_root else None
     # uploads capped at 2 GB; datasets bigger than that should be imported by path
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024**3
+    # horos ui is a local tool: without this, Jinja caches templates per process
+    # and UI changes only appear after a server restart — endlessly confusing
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
 
     from horos.web.routes.annotate import bp as annotate_bp
     from horos.web.routes.autolabel import bp as autolabel_bp
