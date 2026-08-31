@@ -41,7 +41,9 @@ from horos.api.labels import add_category, delete_category, update_category
 from horos.api.manifest import Capability, get_capability, list_capabilities
 from horos.api.project import create_project, open_project
 from horos.api.system import (
+    DoctorReport,
     PlatformCapabilities,
+    doctor_report,
     ensure_supported,
     list_models,
     platform_capabilities,
@@ -53,6 +55,7 @@ __all__ = [
     "AssistResult",
     "Capability",
     "ClaimResult",
+    "DoctorReport",
     "ImportSummary",
     "JobStatus",
     "PlatformCapabilities",
@@ -67,6 +70,7 @@ __all__ = [
     "create_project",
     "dataset_stats",
     "delete_category",
+    "doctor_report",
     "ensure_supported",
     "export_dataset",
     "get_annotations",

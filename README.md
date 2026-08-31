@@ -31,11 +31,16 @@ What they decide for you:
 | Windows without GPU | PyPI (CPU) |
 | Jetson | **never installed by the script** — see below |
 
-Manual install works too:
+Or simply:
 
 ```bash
 pip install horos
+horos doctor        # verifies the environment; `horos doctor --fix` installs what's missing
 ```
+
+`pip install horos` does the right thing per platform: on Linux/aarch64 (Jetson)
+it deliberately skips `rfdetr`/`torch` so pip can never replace the CUDA JetPack
+torch — `horos doctor --fix` completes the install there with the right sources.
 
 **Use a dedicated environment.** horos pins `rfdetr` exactly (upstream has had
 silent annotation-corruption bugs; reproducibility wins) and requires

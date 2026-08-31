@@ -106,6 +106,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("models", help="List available models (with licenses)")
     sub.add_parser("capabilities", help="Show what this platform supports")
 
+    p = sub.add_parser(
+        "doctor", help="Check dependencies for this platform; --fix installs what's missing"
+    )
+    p.add_argument(
+        "--fix",
+        action="store_true",
+        help="Run the planned pip installs (torch on Jetson is never automated)",
+    )
+
     p = sub.add_parser("ui", help="Start the Web API + WebUI server")
     p.add_argument(
         "project_path",
@@ -199,6 +208,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             _emit([m.model_dump() for m in api.list_models()])
         elif args.command == "capabilities":
             _emit(api.platform_capabilities().model_dump())
+        elif args.command == "doctor":
+            import subprocess
+
+            report = api.doctor_report()
+            plat = report.platform
+            print(f"platform : {plat.os_family}/{plat.arch}"  # noqa: T201
+                  f"{' (Jetson)' if plat.is_jetson else ''}  python {plat.python_version}")
+            for dep in report.dependencies:
+                mark = "ok " if dep.ok else "MISSING"
+                extra = f"  ({dep.note})" if dep.note else ""
+                print(f"  [{mark}] {dep.name:<12} {dep.installed or '-':<10} "  # noqa: T201
+                      f"requires {dep.required}{extra}")
+            if report.torch_cuda_available is not None:
+                print(f"device   : cuda={report.torch_cuda_available} "  # noqa: T201
+                      f"mps={report.torch_mps_available}")
+            for action in report.manual_actions:
+                print(f"manual   : {action}")  # noqa: T201
+            if report.ok:
+                print("Environment OK.")  # noqa: T201
+                return 0
+            if not args.fix:
+                for command in report.fix_commands:
+                    print(f"fix      : pip install {' '.join(command)}")  # noqa: T201
+                print("Run 'horos doctor --fix' to install the above.")  # noqa: T201
+                return 1
+            for command in report.fix_commands:
+                print(f"==> pip install {' '.join(command)}")  # noqa: T201
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", *command], check=True
+                )
+            if report.manual_actions:
+                print("Manual steps remain (see above) — not automated on purpose.")  # noqa: T201
+                return 1
+            print("Fixes applied. Re-run 'horos doctor' to verify.")  # noqa: T201
         elif args.command == "ui":
             from horos.web.app import create_app
 

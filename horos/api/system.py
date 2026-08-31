@@ -116,3 +116,146 @@ def ensure_supported(feature: str) -> FeatureSupport:
 def list_models(task: str | None = None) -> list[ModelInfo]:
     """Registry passthrough (static metadata only — nothing is imported)."""
     return _registry_list_models(task)  # type: ignore[arg-type]
+
+
+# ------------------------------------------------------------------ doctor
+
+
+class DependencyStatus(BaseModel):
+    name: str
+    required: str
+    installed: str | None
+    ok: bool
+    note: str = ""
+
+
+class DoctorReport(BaseModel):
+    platform: PlatformInfo
+    dependencies: list[DependencyStatus]
+    torch_cuda_available: bool | None = None  # None when torch is missing
+    torch_mps_available: bool | None = None
+    #: pip install argument lists `doctor --fix` would run, in order
+    fix_commands: list[list[str]]
+    #: steps that must never be automated (Jetson torch), spelled out
+    manual_actions: list[str]
+
+    @property
+    def ok(self) -> bool:
+        return all(d.ok for d in self.dependencies) and not self.manual_actions
+
+
+_RUNTIME_DEPS: list[tuple[str, str]] = [
+    ("pydantic", "pydantic>=2.6,<3"),
+    ("flask", "flask>=3.0,<4"),
+    ("yaml", "pyyaml>=6.0"),
+    ("PIL", "pillow>=10.0"),
+    ("transformers", "transformers>=5.1,<6"),
+    ("torch", "torch"),
+    ("torchvision", "torchvision"),
+    ("rfdetr", "rfdetr==1.9.4"),
+]
+
+_IMPORT_TO_DIST = {"yaml": "PyYAML", "PIL": "pillow"}
+
+
+def _installed_version(import_name: str) -> str | None:
+    import importlib.metadata
+    import importlib.util
+
+    if importlib.util.find_spec(import_name) is None:
+        return None
+    dist = _IMPORT_TO_DIST.get(import_name, import_name)
+    try:
+        return importlib.metadata.version(dist)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _plan_fixes(
+    missing: list[str], platform: PlatformInfo
+) -> tuple[list[list[str]], list[str]]:
+    """Map missing deps to pip commands per platform. torch on Jetson is never
+    automated — a PyPI torch would silently replace the CUDA JetPack build (§4)."""
+    commands: list[list[str]] = []
+    manual: list[str] = []
+    needs_torch = "torch" in missing or "torchvision" in missing
+    if needs_torch:
+        if platform.is_jetson:
+            manual.append(
+                "Install the NVIDIA JetPack-matched torch/torchvision wheel "
+                "(never from PyPI): https://docs.nvidia.com/deeplearning/frameworks/"
+                "install-pytorch-jetson-platform/"
+            )
+        elif platform.os_family == "windows":
+            manual.append(
+                "On Windows with an NVIDIA GPU, install torch from the matching "
+                "CUDA index first (install.bat does this); the plain PyPI wheel "
+                "is CPU-only. CPU-only is fine? run: pip install torch torchvision"
+            )
+        else:
+            commands.append(["torch", "torchvision"])
+    if "rfdetr" in missing:
+        if platform.is_jetson:
+            # --no-deps so rfdetr cannot drag a PyPI torch in behind our back
+            commands.append(["rfdetr==1.9.4", "--no-deps"])
+            commands.append(["supervision", "pycocotools"])
+        else:
+            commands.append(["rfdetr==1.9.4"])
+    if "transformers" in missing:
+        commands.append(["transformers>=5.1,<6"])
+    for name in missing:
+        if name in ("torch", "torchvision", "rfdetr", "transformers"):
+            continue
+        spec = dict(_RUNTIME_DEPS)[name]
+        commands.append([spec])
+    return commands, manual
+
+
+@capability(
+    "system.doctor",
+    summary="Check installed dependencies against the platform; plan the fixes",
+    web_route=None,
+    not_web_because="Diagnoses and mutates the local Python environment, not a project.",
+    cli="doctor",
+)
+def doctor_report() -> DoctorReport:
+    """`pip install horos` intentionally skips rfdetr/torch on Linux/aarch64
+    (the Jetson trap) and cannot pick CUDA builds — this closes the gap:
+    it reports what is missing and plans the platform-correct installs that
+    `horos doctor --fix` executes."""
+    platform = detect_platform()
+    deps: list[DependencyStatus] = []
+    missing: list[str] = []
+    for import_name, spec in _RUNTIME_DEPS:
+        version = _installed_version(import_name)
+        ok = version is not None
+        if not ok:
+            missing.append(import_name)
+        deps.append(
+            DependencyStatus(
+                name=import_name, required=spec, installed=version, ok=ok
+            )
+        )
+
+    cuda = mps = None
+    if _installed_version("torch") is not None:
+        from horos.backends.env import check_environment
+
+        env = check_environment(emit_warnings=False)
+        cuda, mps = env.cuda_available, env.mps_available
+        if platform.is_jetson and not cuda:
+            for dep in deps:
+                if dep.name == "torch":
+                    dep.ok = False
+                    dep.note = "installed, but CUDA is unavailable on Jetson (PyPI build?)"
+            missing.append("torch")
+
+    commands, manual = _plan_fixes(missing, platform)
+    return DoctorReport(
+        platform=platform,
+        dependencies=deps,
+        torch_cuda_available=cuda,
+        torch_mps_available=mps,
+        fix_commands=commands,
+        manual_actions=manual,
+    )

@@ -18,7 +18,10 @@ dependencies = [
     # R5: rfdetr is pinned exactly. The package has had silent annotation-corruption
     # bugs under specific augmentation settings; a floating version makes training
     # runs unreproducible. Upgrading is a standalone task with a full regression run.
-    "rfdetr==1.9.4",
+    # The marker skips rfdetr (and the torch it would drag in) on Linux/aarch64 —
+    # on Jetson a PyPI torch would silently replace the CUDA JetPack build (§4).
+    # `horos doctor --fix` completes the install there with the right sources.
+    'rfdetr==1.9.4; platform_machine != "aarch64" or sys_platform != "linux"',
     # transformers hosts the OWLv2 backend; range chosen to match rfdetr 1.9.4's
     # own constraint (>=5.1.0,<6).
     "transformers>=5.1.0,<6",
