@@ -9,7 +9,9 @@ from flask import Flask, jsonify
 
 from horos.errors import (
     AnnotationConflictError,
+    ClassNamesRequiredError,
     HorosError,
+    ImportConflictError,
     LicenseError,
     ProjectError,
     UnknownModelError,
@@ -20,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 _STATUS_BY_ERROR: list[tuple[type[HorosError], int]] = [
     (AnnotationConflictError, 409),
+    (ImportConflictError, 409),
+    (ClassNamesRequiredError, 422),
     (LicenseError, 403),
     (UnknownModelError, 404),
     (UnsupportedPlatformError, 409),
@@ -34,9 +38,15 @@ def _status_for(exc: HorosError) -> int:
     return 400
 
 
-def error_payload(code: str, message: str) -> dict:
-    """The one error shape every /api response uses: {"error": {code, message}}."""
-    return {"error": {"code": code, "message": message}}
+def error_payload(code: str, message: str, details: dict | None = None) -> dict:
+    """The one error shape every /api response uses: {"error": {code, message}}.
+
+    `details` carries optional structured payload (e.g. conflict file lists)
+    so the UI can act on the error, not just display it."""
+    payload: dict = {"error": {"code": code, "message": message}}
+    if details:
+        payload["error"]["details"] = details
+    return payload
 
 
 def create_app(project_root: str | Path | None = None) -> Flask:
@@ -63,7 +73,7 @@ def create_app(project_root: str | Path | None = None) -> Flask:
     @app.errorhandler(HorosError)
     def handle_horos_error(exc: HorosError):
         logger.info("request failed: %s: %s", exc.code, exc)
-        return jsonify(error_payload(exc.code, str(exc))), _status_for(exc)
+        return jsonify(error_payload(exc.code, str(exc), exc.details)), _status_for(exc)
 
     @app.errorhandler(404)
     def handle_not_found(exc):

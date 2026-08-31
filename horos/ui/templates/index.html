@@ -46,6 +46,20 @@
   .license { color: var(--ok); font-size: 12px; border: 1px solid var(--ok);
              border-radius: 4px; padding: 1px 6px; }
   .hidden { display: none; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+           border-radius: 10px; padding: 20px; max-width: 480px; }
+  dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  dialog h3 { margin: 0 0 10px; font-size: 15px; }
+  dialog p { color: var(--dim); margin: 0 0 12px; }
+  dialog ul { max-height: 160px; overflow-y: auto; margin: 0 0 14px; padding-left: 20px; }
+  dialog .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  dialog button { background: var(--bg); color: var(--text); border: 1px solid var(--line);
+                  border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+  dialog button:hover { border-color: var(--accent); }
+  dialog button.primary { border-color: var(--accent); color: var(--accent); }
+  #class-names-list { display: grid; gap: 6px; margin-bottom: 14px; }
+  #class-names-list input { background: var(--bg); color: var(--text);
+                            border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
 </style>
 </head>
 <body>
@@ -59,11 +73,35 @@
     <div id="dropzone">
       <input type="file" id="file-input" accept=".zip">
       <p><strong>Drop a dataset .zip here</strong> or click to choose a file</p>
-      <p>COCO (<code>_annotations.coco.json</code>) or YOLO (<code>data.yaml</code>) —
-         format is detected automatically</p>
+      <p>COCO (<code>_annotations.coco.json</code>), YOLO (<code>data.yaml</code>),
+         Pascal VOC, or Darknet — format is detected automatically</p>
     </div>
     <p id="status"></p>
   </section>
+
+  <dialog id="conflict-dialog">
+    <h3>Some file names already exist</h3>
+    <p>These images are already in the project with <strong>different</strong> content.
+       Identical duplicates are skipped automatically.</p>
+    <ul id="conflict-list"></ul>
+    <div class="actions">
+      <button data-policy="">Cancel</button>
+      <button data-policy="skip">Skip them</button>
+      <button data-policy="rename">Import renamed</button>
+      <button data-policy="overwrite" class="primary">Overwrite</button>
+    </div>
+  </dialog>
+
+  <dialog id="class-names-dialog">
+    <h3>Class names needed</h3>
+    <p>This Darknet dataset has no <code>_darknet.labels</code> file.
+       Edit the class names below (defaults are the class indices).</p>
+    <div id="class-names-list"></div>
+    <div class="actions">
+      <button data-ok="">Cancel</button>
+      <button data-ok="1" class="primary">Import with these names</button>
+    </div>
+  </dialog>
 
   <section class="panel hidden" id="summary-panel">
     <h2>Dataset summary</h2>
@@ -97,7 +135,12 @@
 const $ = (id) => document.getElementById(id);
 const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((data.error && data.error.message) || r.statusText);
+  if (!r.ok) {
+    const err = new Error((data.error && data.error.message) || r.statusText);
+    err.code = data.error && data.error.code;
+    err.details = (data.error && data.error.details) || {};
+    throw err;
+  }
   return data;
 });
 
@@ -137,22 +180,75 @@ async function refreshStats() {
   $("issues-panel").classList.remove("hidden");
 }
 
-async function upload(file) {
+function askDialog(dialog, setup) {
+  // resolves with the value the clicked button carries, or null on cancel/esc
+  return new Promise((resolve) => {
+    setup();
+    const done = (value) => { dialog.close(); resolve(value); };
+    dialog.querySelectorAll("button").forEach((b) => {
+      b.onclick = () => done((b.dataset.policy || b.dataset.ok) ? b : null);
+    });
+    dialog.oncancel = () => resolve(null);
+    dialog.showModal();
+  });
+}
+
+async function resolveConflicts(conflicts) {
+  const btn = await askDialog($("conflict-dialog"), () => {
+    $("conflict-list").innerHTML = conflicts
+      .map((name) => `<li>${name}</li>`).join("");
+  });
+  return btn ? btn.dataset.policy : null;
+}
+
+async function editClassNames(defaults) {
+  const btn = await askDialog($("class-names-dialog"), () => {
+    $("class-names-list").innerHTML = defaults
+      .map((n, i) => `<input value="${n}" aria-label="class ${i}">`).join("");
+  });
+  if (!btn) return null;
+  return [...$("class-names-list").querySelectorAll("input")]
+    .map((inp) => inp.value.trim() || inp.getAttribute("value"));
+}
+
+async function upload(file, extras = {}) {
   const status = $("status");
   status.className = "";
   status.textContent = "Uploading and parsing " + file.name + "…";
   const body = new FormData();
   body.append("file", file);
+  if (extras.on_conflict) body.append("on_conflict", extras.on_conflict);
+  if (extras.class_names) body.append("class_names", JSON.stringify(extras.class_names));
   try {
     const summary = await api("/dataset/upload", { method: "POST", body });
+    const resolved = [];
+    if (summary.duplicates_skipped) resolved.push(`${summary.duplicates_skipped} identical duplicate(s) skipped`);
+    if (summary.overwritten) resolved.push(`${summary.overwritten} overwritten`);
+    if (summary.conflicts_skipped) resolved.push(`${summary.conflicts_skipped} conflict(s) skipped`);
+    if (summary.renamed) resolved.push(`${summary.renamed} renamed`);
     status.className = "ok";
     status.textContent =
       `Imported ${summary.num_images} images, ${summary.num_annotations} annotations, ` +
       `${summary.num_categories} classes (${summary.format.toUpperCase()})` +
+      (resolved.length ? ` — ${resolved.join(", ")}` : "") +
       (summary.warnings.length ? ` — ${summary.warnings.length} warning(s)` : "");
     await refreshStats();
     await refreshProject();
   } catch (e) {
+    if (e.code === "import_conflict") {
+      const policy = await resolveConflicts(e.details.conflicts || []);
+      if (policy) return upload(file, { ...extras, on_conflict: policy });
+      status.className = "";
+      status.textContent = "Import cancelled — nothing was changed.";
+      return;
+    }
+    if (e.code === "class_names_required") {
+      const names = await editClassNames(e.details.default_names || []);
+      if (names) return upload(file, { ...extras, class_names: names });
+      status.className = "";
+      status.textContent = "Import cancelled — nothing was changed.";
+      return;
+    }
     status.className = "error";
     status.textContent = "Import failed: " + e.message;
   }

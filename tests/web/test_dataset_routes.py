@@ -130,3 +130,67 @@ def test_capabilities_route(client):
     body = client.get("/api/v1/capabilities").get_json()
     features = {f["feature"] for f in body["features"]}
     assert "export_tensorrt" in features
+
+
+def test_upload_conflict_flow(tmp_path, client, project_root):
+    # phase 1: same names, different content -> 409 with the conflict list
+    from helpers.data import make_image
+    from helpers.data import write_sample_coco_dir as sample
+
+    variant = sample(tmp_path / "variant")
+    make_image(variant / "train" / "a.png", 64, 48, color=(1, 2, 3))
+    post = lambda **extra: client.post(  # noqa: E731
+        "/api/v1/dataset/upload",
+        data={"file": (_zip_of(variant), "dataset.zip"), **extra},
+        content_type="multipart/form-data",
+    )
+    response = post()
+    assert response.status_code == 409
+    error = response.get_json()["error"]
+    assert error["code"] == "import_conflict"
+    assert error["details"]["conflicts"] == ["a.png"]
+    # phase 2: retry with the chosen policy
+    response = post(on_conflict="overwrite")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["overwritten"] == 1
+    assert body["duplicates_skipped"] == 2
+
+
+def test_upload_darknet_class_names_flow(tmp_path):
+    from helpers.data import make_image
+
+    from horos.api import create_project
+    from horos.web.app import create_app as make_app
+
+    src = tmp_path / "darknet"
+    make_image(src / "img1.png")
+    (src / "img1.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    app = make_app(create_project(tmp_path / "fresh").root)
+    app.testing = True
+    web = app.test_client()
+    post = lambda **extra: web.post(  # noqa: E731
+        "/api/v1/dataset/upload",
+        data={"file": (_zip_of(src), "dataset.zip"), **extra},
+        content_type="multipart/form-data",
+    )
+    # phase 1: no _darknet.labels -> 422 with editable defaults
+    response = post()
+    assert response.status_code == 422
+    error = response.get_json()["error"]
+    assert error["code"] == "class_names_required"
+    assert error["details"] == {"num_classes": 1, "default_names": ["0"]}
+    # phase 2: retry with the names the user typed
+    response = post(class_names='["helmet"]')
+    assert response.status_code == 200
+    assert response.get_json()["instances_per_category"] == {"helmet": 1}
+
+
+def test_upload_bad_class_names_is_400(tmp_path, client):
+    response = client.post(
+        "/api/v1/dataset/upload",
+        data={"file": (_zip_of(tmp_path), "dataset.zip"), "class_names": "not json"},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400
+    assert "class_names" in response.get_json()["error"]["message"]

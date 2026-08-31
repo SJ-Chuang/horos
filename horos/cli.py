@@ -28,14 +28,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("--name")
 
-    p = sub.add_parser("import", help="Import a COCO/YOLO dataset into a project")
+    p = sub.add_parser(
+        "import", help="Import a COCO/YOLO/VOC/Darknet dataset into a project"
+    )
     p.add_argument("source")
     p.add_argument("--project", required=True)
-    p.add_argument("--format", choices=["coco", "yolo"])
+    p.add_argument("--format", choices=["coco", "yolo", "voc", "darknet"])
     p.add_argument(
         "--no-copy",
         action="store_true",
         help="Reference images in place instead of copying them into the project",
+    )
+    p.add_argument(
+        "--on-conflict",
+        choices=["ask", "overwrite", "skip", "rename"],
+        default="ask",
+        help="What to do when a file name already exists with different content "
+        "(default: ask — fail with the conflict list, importing nothing)",
+    )
+    p.add_argument(
+        "--class-names",
+        help="Comma-separated class names for Darknet datasets without _darknet.labels",
     )
 
     p = sub.add_parser("export", help="Export the project dataset")
@@ -47,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("source")
     p.add_argument("out_dir")
     p.add_argument("--to", required=True, choices=["coco", "yolo"], dest="to_format")
-    p.add_argument("--from", choices=["coco", "yolo"], dest="from_format")
+    p.add_argument("--from", choices=["coco", "yolo", "voc", "darknet"], dest="from_format")
 
     p = sub.add_parser("validate", help="Validate the project dataset")
     p.add_argument("--project", required=True)
@@ -89,6 +102,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.source,
                 format=args.format,
                 copy_images=not args.no_copy,
+                on_conflict=args.on_conflict,
+                class_names=(
+                    [n.strip() for n in args.class_names.split(",")]
+                    if args.class_names
+                    else None
+                ),
             )
             _emit(summary.model_dump())
         elif args.command == "export":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -52,6 +53,18 @@ def project_summary():
     )
 
 
+def _class_names(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    try:
+        names = json.loads(raw)
+    except ValueError as exc:
+        raise ProjectError(f"'class_names' is not valid JSON: {exc}") from exc
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise ProjectError("'class_names' must be a JSON array of strings")
+    return names
+
+
 @bp.post("/dataset/import")
 def import_dataset():
     body = _body()
@@ -63,6 +76,8 @@ def import_dataset():
         source,
         format=body.get("format"),
         copy_images=bool(body.get("copy_images", True)),
+        on_conflict=body.get("on_conflict", "ask"),
+        class_names=body.get("class_names"),
     )
     return jsonify(summary.model_dump())
 
@@ -75,7 +90,14 @@ def upload_dataset():
     with tempfile.TemporaryDirectory(prefix="horos_upload_") as tmp:
         zip_path = Path(tmp) / "upload.zip"
         upload.save(zip_path)
-        summary = api.import_zip(_project(), zip_path)
+        summary = api.import_zip(
+            _project(),
+            zip_path,
+            on_conflict=request.form.get("on_conflict", "ask"),
+            class_names=_class_names(request.form.get("class_names")),
+            # the UI shows an editable class-name dialog instead of placeholders
+            require_class_names=True,
+        )
     return jsonify(summary.model_dump())
 
 

@@ -136,34 +136,65 @@ def test_import_zip_refuses_files_outside_archive(tmp_path):
         import_zip(project, zip_path)
 
 
-def test_import_zip_voc_gets_targeted_error(tmp_path):
+def _zip_dir(src, zip_path):
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for path in src.rglob("*"):
+            if path.is_file():
+                zf.write(path, path.relative_to(src))
+    return zip_path
+
+
+def test_import_zip_voc(tmp_path):
     from helpers.data import make_image
 
     src = tmp_path / "voc"
-    make_image(src / "img1.png")
-    (src / "img1.xml").write_text(
-        "<annotation><filename>img1.png</filename></annotation>", encoding="utf-8"
+    make_image(src / "train" / "img1.png", 64, 48)
+    (src / "train" / "img1.xml").write_text(
+        "<annotation><filename>img1.png</filename>"
+        "<size><width>64</width><height>48</height></size>"
+        "<object><name>helmet</name>"
+        "<bndbox><xmin>10</xmin><ymin>10</ymin><xmax>30</xmax><ymax>25</ymax></bndbox>"
+        "</object></annotation>",
+        encoding="utf-8",
     )
-    zip_path = tmp_path / "voc.zip"
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        for path in src.rglob("*"):
-            zf.write(path, path.relative_to(src))
     project = create_project(tmp_path / "proj")
-    with pytest.raises(DatasetFormatError, match="Pascal VOC"):
-        import_zip(project, zip_path)
+    summary = import_zip(project, _zip_dir(src, tmp_path / "voc.zip"))
+    assert summary.format == "voc"
+    assert summary.num_images == 1
+    assert summary.instances_per_category == {"helmet": 1}
+    assert summary.split_counts == {"train": 1}
 
 
-def test_import_zip_darknet_gets_targeted_error(tmp_path):
+def test_import_zip_darknet(tmp_path):
     from helpers.data import make_image
 
     src = tmp_path / "darknet"
-    make_image(src / "img1.png")
-    (src / "img1.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
-    (src / "_darknet.labels").write_text("helmet\n", encoding="utf-8")
-    zip_path = tmp_path / "darknet.zip"
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        for path in src.rglob("*"):
-            zf.write(path, path.relative_to(src))
+    make_image(src / "test" / "img1.png")
+    (src / "test" / "img1.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    (src / "test" / "_darknet.labels").write_text("helmet\n", encoding="utf-8")
     project = create_project(tmp_path / "proj")
-    with pytest.raises(DatasetFormatError, match="Darknet"):
-        import_zip(project, zip_path)
+    summary = import_zip(project, _zip_dir(src, tmp_path / "darknet.zip"))
+    assert summary.format == "darknet"
+    assert summary.num_images == 1
+    assert summary.instances_per_category == {"helmet": 1}
+    assert summary.split_counts == {"test": 1}
+
+
+def test_import_zip_darknet_without_labels_requires_names(tmp_path):
+    # the WebUI path (require_class_names=True) gets a structured 422-able error
+    from helpers.data import make_image
+
+    from horos.errors import ClassNamesRequiredError
+
+    src = tmp_path / "darknet"
+    make_image(src / "img1.png")
+    (src / "img1.txt").write_text("1 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    zip_path = _zip_dir(src, tmp_path / "darknet.zip")
+    project = create_project(tmp_path / "proj")
+    with pytest.raises(ClassNamesRequiredError) as exc:
+        import_zip(project, zip_path, require_class_names=True)
+    assert exc.value.default_names == ["0", "1"]
+    # supplying names resolves it
+    summary = import_zip(project, zip_path, class_names=["helmet", "vest"])
+    assert summary.instances_per_category == {"vest": 1}
+    assert summary.warnings == []

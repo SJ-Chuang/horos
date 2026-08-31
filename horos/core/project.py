@@ -210,6 +210,39 @@ class Project:
             self._save_image_index(index)
         return record
 
+    def replace_image(
+        self,
+        image_id: int,
+        source: Path,
+        *,
+        width: int,
+        height: int,
+        split: str = "train",
+        copy: bool = True,
+        _index: ImageIndex | None = None,
+    ) -> ImageRecord:
+        """Overwrite an existing record's file and metadata, keeping its id and
+        file_name (the import 'overwrite' conflict policy). The caller is
+        responsible for replacing the image's annotations."""
+        index = _index if _index is not None else self._load_image_index()
+        record = next((r for r in index.images if r.id == image_id), None)
+        if record is None:
+            raise ProjectError(f"No image with id {image_id} to replace")
+        record.width = width
+        record.height = height
+        record.split = split  # type: ignore[assignment]
+        target = self.images_dir / record.file_name
+        if copy:
+            shutil.copy2(source, target)
+            record.external_path = None
+        else:
+            record.external_path = str(Path(source).resolve())
+            # a stale copied file would shadow the new reference
+            target.unlink(missing_ok=True)
+        if _index is None:
+            self._save_image_index(index)
+        return record
+
     def update_image_splits(self, split_by_id: dict[int, str]) -> None:
         index = self._load_image_index()
         for record in index.images:

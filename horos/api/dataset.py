@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import tempfile
 import zipfile
@@ -13,11 +14,20 @@ from horos.api.manifest import capability
 from horos.core import formats
 from horos.core.dataset import Category, Dataset, default_color
 from horos.core.formats import coco as coco_format
+from horos.core.formats import darknet as darknet_format
+from horos.core.formats import voc as voc_format
 from horos.core.formats import yolo as yolo_format
 from horos.core.project import Project
 from horos.core.stats import DatasetStats, compute_stats
 from horos.core.validate import ValidationReport, validate_dataset
-from horos.errors import DatasetFormatError, ProjectError
+from horos.errors import (
+    ClassNamesRequiredError,
+    DatasetFormatError,
+    ImportConflictError,
+    ProjectError,
+)
+
+CONFLICT_POLICIES = ("ask", "overwrite", "skip", "rename")
 
 logger = logging.getLogger(__name__)
 
@@ -42,30 +52,48 @@ class ImportSummary(BaseModel):
     instances_per_category: dict[str, int] = Field(default_factory=dict)
     split_counts: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    #: same name AND same content as an existing image — skipped automatically
+    duplicates_skipped: int = 0
+    #: file names that already existed with different content
+    conflict_files: list[str] = Field(default_factory=list)
+    #: how the conflicts were resolved (per the on_conflict policy)
+    overwritten: int = 0
+    conflicts_skipped: int = 0
+    renamed: int = 0
 
 
-def _read_any(source: Path, format: str | None) -> tuple[str, Dataset, dict[int, Path]]:
+def _read_any(
+    source: Path, format: str | None, *, class_names: list[str] | None = None
+) -> tuple[str, Dataset, dict[int, Path]]:
     detected = format or formats.detect_format(source)
     if detected is None:
-        hint = formats.unsupported_format_hint(source)
-        looks_like = (
-            f"This looks like a {hint} export, which horos does not support — "
-            f"re-export it as COCO JSON or YOLO (with a data.yaml). "
-            if hint
-            else ""
-        )
         raise DatasetFormatError(
-            f"Could not detect a supported dataset format under {source}. {looks_like}"
-            f"Expected a COCO '_annotations.coco.json' (flat or in train/valid/test "
-            f"subdirectories) or a YOLO 'data.yaml'."
+            f"Could not detect a supported dataset format under {source}. Expected "
+            f"a COCO '_annotations.coco.json', a YOLO 'data.yaml', Pascal VOC "
+            f"<annotation> XML files, or Darknet label .txt files next to images."
         )
     if detected == "coco":
         dataset, image_paths = coco_format.read_coco(source)
     elif detected == "yolo":
         dataset, image_paths = yolo_format.read_yolo(source)
+    elif detected == "voc":
+        dataset, image_paths = voc_format.read_voc(source)
+    elif detected == "darknet":
+        dataset, image_paths = darknet_format.read_darknet(source, class_names=class_names)
     else:
         raise DatasetFormatError(f"Unsupported dataset format '{detected}'")
     return detected, dataset, image_paths
+
+
+def _sha256(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 @capability(
@@ -82,6 +110,9 @@ def import_dataset(
     format: str | None = None,
     copy_images: bool = True,
     boundary: Path | None = None,
+    on_conflict: str = "ask",
+    class_names: list[str] | None = None,
+    require_class_names: bool = False,
 ) -> ImportSummary:
     """Import a dataset directory (or annotation file) into the project.
 
@@ -90,11 +121,41 @@ def import_dataset(
     references instead. When `boundary` is given, any annotation-referenced
     file resolving outside that directory is refused — import_zip passes the
     extraction dir so an uploaded archive cannot pull in server-side files.
+
+    File-name conflicts: an incoming image whose name already exists in the
+    project with identical content is skipped automatically; with different
+    content it is resolved per `on_conflict` — "ask" (default) raises
+    ImportConflictError listing the names without touching the project,
+    "overwrite" replaces the image and its annotations, "skip" keeps the
+    existing one, "rename" imports under an auto-suffixed name.
+
+    `class_names` supplies Darknet class names when no _darknet.labels exists
+    (placeholder index names plus a warning otherwise); `require_class_names`
+    makes that case raise ClassNamesRequiredError instead — the WebUI upload
+    path uses it to show an editable name list.
     """
+    if on_conflict not in CONFLICT_POLICIES:
+        raise ProjectError(f"on_conflict must be one of {CONFLICT_POLICIES}")
     source = Path(source)
     if not source.exists():
         raise DatasetFormatError(f"Dataset source does not exist: {source}")
-    detected, dataset, image_paths = _read_any(source, format)
+    detected, dataset, image_paths = _read_any(source, format, class_names=class_names)
+    pre_warnings: list[str] = []
+    if (
+        detected == "darknet"
+        and class_names is None
+        and darknet_format.find_labels_file(source) is None
+    ):
+        if require_class_names:
+            raise ClassNamesRequiredError(
+                "This Darknet dataset has no _darknet.labels file — provide "
+                "class names to import it.",
+                default_names=[c.name for c in dataset.categories],
+            )
+        pre_warnings.append(
+            f"No _darknet.labels found — class indices 0..{len(dataset.categories) - 1} "
+            f"used as class names; rename them later or re-import with class_names"
+        )
     if boundary is not None:
         bound = boundary.resolve()
         for path in image_paths.values():
@@ -117,9 +178,34 @@ def import_dataset(
         category_map[cat.id] = id_by_name[cat.name]
     project.set_categories(categories)
 
-    warnings: list[str] = []
+    # conflict prescan — nothing is written until every decision is known
+    existing_by_name = {r.file_name: r for r in project.list_images()}
+    actions: dict[int, str] = {}  # image.id -> duplicate | overwrite | skip | rename
+    conflict_files: list[str] = []
+    for image in dataset.images:
+        src = image_paths.get(image.id)
+        existing = existing_by_name.get(image.file_name)
+        if src is None or existing is None or not src.exists():
+            continue
+        if _sha256(src) == _sha256(project.image_path(existing)):
+            actions[image.id] = "duplicate"
+        else:
+            conflict_files.append(image.file_name)
+            actions[image.id] = on_conflict
+    if conflict_files and on_conflict == "ask":
+        raise ImportConflictError(
+            f"{len(conflict_files)} image(s) already exist with different content: "
+            f"{', '.join(conflict_files[:10])}"
+            f"{' …' if len(conflict_files) > 10 else ''}. Nothing was imported — "
+            f"retry with on_conflict='overwrite', 'skip', or 'rename'.",
+            conflicts=conflict_files,
+        )
+
+    warnings = pre_warnings
     index = project._load_image_index()
     image_map: dict[int, int] = {}
+    overwritten_ids: set[int] = set()
+    duplicates_skipped = conflicts_skipped = renamed = 0
     for image in dataset.images:
         src = image_paths.get(image.id)
         if src is None or not src.exists():
@@ -127,14 +213,35 @@ def import_dataset(
                 f"Image file missing for '{image.file_name}' — record skipped"
             )
             continue
-        record = project.add_image(
-            src,
-            width=image.width,
-            height=image.height,
-            split=image.split,
-            copy=copy_images,
-            _index=index,
-        )
+        action = actions.get(image.id)
+        if action == "duplicate":
+            duplicates_skipped += 1
+            continue
+        if action == "skip":
+            conflicts_skipped += 1
+            continue
+        if action == "overwrite":
+            record = project.replace_image(
+                existing_by_name[image.file_name].id,
+                src,
+                width=image.width,
+                height=image.height,
+                split=image.split,
+                copy=copy_images,
+                _index=index,
+            )
+            overwritten_ids.add(record.id)
+        else:  # new image, or conflict resolved by rename (add_image auto-suffixes)
+            record = project.add_image(
+                src,
+                width=image.width,
+                height=image.height,
+                split=image.split,
+                copy=copy_images,
+                _index=index,
+            )
+            if action == "rename":
+                renamed += 1
         image_map[image.id] = record.id
     project._save_image_index(index)
 
@@ -159,7 +266,9 @@ def import_dataset(
             name = next(c.name for c in categories if c.id == new_cat)
             instances[name] = instances.get(name, 0) + 1
             imported_annotations += 1
-        if annotations:
+        if annotations or new_image_id in overwritten_ids:
+            # an overwritten image must not keep its old annotations, so an
+            # empty incoming set still saves
             project.save_annotations(
                 new_image_id, annotations, expected_version=current.version
             )
@@ -181,6 +290,11 @@ def import_dataset(
         instances_per_category=instances,
         split_counts=split_counts,
         warnings=warnings,
+        duplicates_skipped=duplicates_skipped,
+        conflict_files=conflict_files,
+        overwritten=len(overwritten_ids),
+        conflicts_skipped=conflicts_skipped,
+        renamed=renamed,
     )
 
 
@@ -203,14 +317,29 @@ def _safe_extract(zip_path: Path, target: Path) -> None:
     cli=None,
     not_cli_because="The CLI imports directories directly via 'import'.",
 )
-def import_zip(project: Project, zip_path: Path | str) -> ImportSummary:
+def import_zip(
+    project: Project,
+    zip_path: Path | str,
+    *,
+    on_conflict: str = "ask",
+    class_names: list[str] | None = None,
+    require_class_names: bool = False,
+) -> ImportSummary:
     """Extract a dataset zip to a temp dir and import it (always copies)."""
     zip_path = Path(zip_path)
     if not zipfile.is_zipfile(zip_path):
         raise DatasetFormatError(f"{zip_path} is not a valid zip archive")
     with tempfile.TemporaryDirectory(prefix="horos_upload_") as tmp:
         _safe_extract(zip_path, Path(tmp))
-        return import_dataset(project, Path(tmp), copy_images=True, boundary=Path(tmp))
+        return import_dataset(
+            project,
+            Path(tmp),
+            copy_images=True,
+            boundary=Path(tmp),
+            on_conflict=on_conflict,
+            class_names=class_names,
+            require_class_names=require_class_names,
+        )
 
 
 @capability(

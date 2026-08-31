@@ -14,6 +14,10 @@ class HorosError(Exception):
     #: Stable machine-readable code, used by the Web API error format (E9-T3).
     code = "horos_error"
 
+    #: Optional structured payload for the Web API error format (E9-T3),
+    #: e.g. conflict file lists — set per-instance by subclasses that need it.
+    details: dict | None = None
+
 
 class ProjectError(HorosError):
     """Project structure on disk is missing, corrupt, or already exists."""
@@ -83,3 +87,30 @@ class WeightsError(HorosError):
     """Model weights could not be downloaded or the cache is corrupt (E3-T7)."""
 
     code = "weights_error"
+
+
+class ImportConflictError(HorosError):
+    """Uploaded dataset contains file names that already exist with different
+    content, and the caller asked to be consulted (on_conflict="ask")."""
+
+    code = "import_conflict"
+
+    def __init__(self, message: str, *, conflicts: list[str]):
+        super().__init__(message)
+        self.conflicts = conflicts
+        self.details = {"conflicts": conflicts}
+
+
+class ClassNamesRequiredError(HorosError):
+    """A Darknet import has no _darknet.labels and the caller requires explicit
+    class names (the WebUI upload path — it shows an editable list instead)."""
+
+    code = "class_names_required"
+
+    def __init__(self, message: str, *, default_names: list[str]):
+        super().__init__(message)
+        self.default_names = default_names
+        self.details = {
+            "num_classes": len(default_names),
+            "default_names": default_names,
+        }
