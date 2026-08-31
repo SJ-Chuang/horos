@@ -140,6 +140,20 @@ _MODELS: dict[str, ModelInfo] = {
             entrypoint=_OWLV2_ENTRYPOINT,
             hf_id="google/owlv2-large-patch14-ensemble",
         ),
+        ModelInfo(
+            key="sam-base",
+            family="sam",
+            display_name="SAM ViT-B (box-to-mask refiner)",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url="https://huggingface.co/facebook/sam-vit-base",
+            input_resolution=1024,
+            params_millions=94.0,
+            latency_hint="turns autolabel boxes into polygons; not a detector",
+            entrypoint="horos.backends.sam:SAMBackend",
+            hf_id="facebook/sam-vit-base",
+        ),
     ]
 }
 

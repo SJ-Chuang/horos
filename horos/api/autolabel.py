@@ -22,6 +22,7 @@ from horos.errors import DatasetValidationError, ProjectError
 
 if TYPE_CHECKING:
     from horos.backends.base import (
+        BoxToMaskBackend,
         Event,
         ImagePrediction,
         OpenVocabularyBackend,
@@ -42,8 +43,15 @@ __all__ = [
 ]
 
 DEFAULT_MODEL = "owlv2-base"
+DEFAULT_REFINER = "sam-base"
 DEFAULT_THRESHOLD = 0.1
 DEFAULT_NMS_IOU = 0.5
+OUTPUT_MODES = ("bbox", "polygon")
+
+
+def _check_output(output: str) -> None:
+    if output not in OUTPUT_MODES:
+        raise ProjectError(f"output must be one of {OUTPUT_MODES}")
 
 
 class PromptSpec(BaseModel):
@@ -159,19 +167,24 @@ def _write_pending(
     image_id: int,
     detections: list[tuple[str, tuple[float, float, float, float], float]],
     cat_ids: dict[str, int],
+    polygons: list[list[float] | None] | None = None,
 ) -> int:
     """Replace the image's previous auto-pending annotations with this run's;
-    confirmed (human) annotations are never touched."""
+    confirmed (human) annotations are never touched. `polygons` (parallel to
+    detections) attaches a segmentation where the refiner produced one — a
+    detection whose mask failed keeps its box, never gets dropped silently."""
     stored = project.load_annotations(image_id)
     keep = [a for a in stored.annotations if a.status != "pending"]
     next_id = max((a.id for a in keep), default=0) + 1
-    for cls, bbox, score in detections:
+    for n, (cls, bbox, score) in enumerate(detections):
+        polygon = polygons[n] if polygons else None
         keep.append(
             Annotation(
                 id=next_id,
                 image_id=image_id,
                 category_id=cat_ids[cls],
                 bbox=bbox,
+                segmentation=[polygon] if polygon else [],
                 source="auto",
                 status="pending",
                 score=round(score, 4),
@@ -194,17 +207,23 @@ def autolabel_events(
     nms_iou: float = DEFAULT_NMS_IOU,
     split: str | None = None,
     only_unannotated: bool = True,
+    output: str = "bbox",
+    refiner_model: str = DEFAULT_REFINER,
     device: str | None = None,
     backend: OpenVocabularyBackend | None = None,
+    refiner: BoxToMaskBackend | None = None,
     cancel: CancelEvent | None = None,
 ) -> Iterator[Event]:
     """Autolabel the project's images as an R4 event stream.
 
-    `backend` is injectable for tests; by default the registry model is
-    resolved lazily. `cancel` is checked between images — a cancelled run ends
-    with RunCompleted carrying result["cancelled"]=True (work done so far is
-    kept; pre-labels are pending anyway).
+    `output="polygon"` runs each kept box through the SAM refiner and writes
+    the mask outline as the annotation's segmentation (the box is kept when a
+    mask fails — never dropped silently). `backend`/`refiner` are injectable
+    for tests. `cancel` is checked between images — a cancelled run ends with
+    RunCompleted carrying result["cancelled"]=True (work done so far is kept;
+    pre-labels are pending anyway).
     """
+    _check_output(output)
     from horos.backends.base import (
         PredictionReady,
         ProgressUpdated,
@@ -230,6 +249,7 @@ def autolabel_events(
         config={
             "model": model, "threshold": threshold, "nms_iou": nms_iou,
             "prompts": spec.prompts, "only_unannotated": only_unannotated,
+            "output": output,
             **({"split": split} if split else {}),
         },
     )
@@ -253,6 +273,10 @@ def autolabel_events(
             from horos.backends import get_backend
 
             backend = get_backend(model, device=device)  # type: ignore[assignment]
+        if output == "polygon" and refiner is None:
+            from horos.backends import get_backend
+
+            refiner = get_backend(refiner_model, device=device)  # type: ignore[assignment]
         backend.configure_prompts(texts)
         cat_ids = _ensure_categories(project, set(class_by_prompt))
 
@@ -268,7 +292,12 @@ def autolabel_events(
             detections = postprocess(
                 prediction, class_by_prompt, threshold=threshold, nms_iou=nms_iou
             )
-            written += _write_pending(project, record.id, detections, cat_ids)
+            polygons = (
+                refiner.polygons_for_boxes(path, [b for _, b, _ in detections])
+                if refiner is not None and detections
+                else None
+            )
+            written += _write_pending(project, record.id, detections, cat_ids, polygons)
             yield PredictionReady(index=index, prediction=prediction)
             yield ProgressUpdated(
                 current=index + 1, total=len(targets), phase="autolabel",
@@ -297,14 +326,17 @@ def start_autolabel(
     nms_iou: float = DEFAULT_NMS_IOU,
     split: str | None = None,
     only_unannotated: bool = True,
+    output: str = "bbox",
     device: str | None = None,
     backend: OpenVocabularyBackend | None = None,
+    refiner: BoxToMaskBackend | None = None,
 ) -> str:
     """Kick off the batch as a background job (design decision); returns the
     job id for polling. The CLI instead consumes autolabel_events directly."""
     from horos.api import jobs
 
     spec.flat()  # validate before the thread starts, so errors are synchronous
+    _check_output(output)
     return jobs.start_job(
         project,
         "autolabel",
@@ -316,8 +348,10 @@ def start_autolabel(
             nms_iou=nms_iou,
             split=split,
             only_unannotated=only_unannotated,
+            output=output,
             device=device,
             backend=backend,
+            refiner=refiner,
             cancel=cancel,
         ),
     )
@@ -353,11 +387,15 @@ def assist_image(
     model: str = DEFAULT_MODEL,
     threshold: float = DEFAULT_THRESHOLD,
     nms_iou: float = DEFAULT_NMS_IOU,
+    output: str = "bbox",
+    refiner_model: str = DEFAULT_REFINER,
     device: str | None = None,
     backend: OpenVocabularyBackend | None = None,
+    refiner: BoxToMaskBackend | None = None,
 ) -> AssistResult:
     """Run the open-vocabulary model on one image and write the results as
     pending annotations (replacing previous pendings on that image)."""
+    _check_output(output)
     record = next((r for r in project.list_images() if r.id == image_id), None)
     if record is None:
         raise ProjectError(f"No image with id {image_id}")
@@ -365,12 +403,18 @@ def assist_image(
     if backend is None:
         backend = _cached_backend(model, device)
     backend.configure_prompts(texts)
-    prediction = backend.infer_one(project.image_path(record), threshold=threshold)
+    path = project.image_path(record)
+    prediction = backend.infer_one(path, threshold=threshold)
     detections = postprocess(
         prediction, class_by_prompt, threshold=threshold, nms_iou=nms_iou
     )
+    polygons = None
+    if output == "polygon" and detections:
+        if refiner is None:
+            refiner = _cached_backend(refiner_model, device)
+        polygons = refiner.polygons_for_boxes(path, [b for _, b, _ in detections])
     cat_ids = _ensure_categories(project, set(class_by_prompt))
-    _write_pending(project, image_id, detections, cat_ids)
+    _write_pending(project, image_id, detections, cat_ids, polygons)
     stored = project.load_annotations(image_id)
     return AssistResult(
         image_id=image_id, version=stored.version, annotations=stored.annotations

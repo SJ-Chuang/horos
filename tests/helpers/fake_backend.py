@@ -107,3 +107,25 @@ class FakeOpenVocabBackend(FakeBackend):
             for i in range(len(self.prompts))
         ]
         return ImagePrediction(image=str(image), instances=instances)
+
+
+class FakeRefinerBackend:
+    """Deterministic box->polygon refiner for the autolabel polygon tests:
+    each box becomes a triangle inside it; boxes named in `fail_indices`
+    return None (mask failure -> the box must survive as a box)."""
+
+    family = "fake-refiner"
+
+    def __init__(self, *, fail_indices=()):
+        self.fail_indices = set(fail_indices)
+        self.calls: list[tuple[str, int]] = []
+
+    def polygons_for_boxes(self, image, boxes):
+        self.calls.append((Path(image).name, len(boxes)))
+        out = []
+        for i, (x, y, w, h) in enumerate(boxes):
+            if i in self.fail_indices:
+                out.append(None)
+            else:
+                out.append([x, y, x + w, y, x + w / 2, y + h])
+        return out

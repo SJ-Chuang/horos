@@ -4,7 +4,7 @@
 
 ```bash
 # 需要安裝完整相依（含 torch/transformers）；首次執行會下載 OWLv2 權重
-horos ui --project ./demo_project
+horos ui ./demo_project
 # 瀏覽器開 http://localhost:5000/annotate
 ```
 
@@ -14,6 +14,9 @@ horos ui --project ./demo_project
 1. 網格頁右上按「Auto-label…」：彈窗出現，一列＝一個類別（類別名＋逗號分隔的提示詞，
    提示詞留空則用類別名）
 2. 填入 `helmet`、`vest` 兩列，Confidence 0.10，勾選 only unannotated，按 Start
+2b. Output 選「Polygon (SAM)」重跑：預標變成貼合物體輪廓的多邊形（OWLv2 框
+    經 SAM 轉遮罩再取輪廓；首次使用另外下載 SAM 權重約 375MB）；遮罩失敗的
+    物件保留原框，不會被丟掉
 3. 進度條隨影像數推進，文字顯示「N/M — 檔名: K pre-label(s)」；首次執行顯示
    權重下載提示（E3-S6，下載中斷可續）
 4. 完成後 toast 顯示產生的預標數，佇列自動切到「Needs review (uncertain first)」

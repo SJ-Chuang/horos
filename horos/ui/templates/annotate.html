@@ -209,6 +209,16 @@
         <div id="assist-panel" style="display:none;margin-top:10px">
           <input type="text" id="assist-input" placeholder="e.g. helmet, vest, person"
                  style="width:100%" title="Comma-separated object names — each becomes a class">
+          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
+            <span>Output</span>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+              <input type="radio" name="assist-output" value="bbox" checked> Box
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"
+                   title="Runs each box through SAM for an editable polygon">
+              <input type="radio" name="assist-output" value="polygon"> Polygon
+            </label>
+          </div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--dim)">
             <span>Confidence</span>
             <div class="conf-control">
@@ -283,7 +293,17 @@
         One row per class. Prompts are comma-separated synonyms OWLv2 will look for.</p>
       <div id="prompt-rows"></div>
       <button class="btn" id="add-prompt-row" style="width:100%;margin:6px 0">+ add class</button>
-      <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim);margin:10px 0 6px">
+      <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:var(--dim);margin:10px 0 6px">
+        <span>Output</span>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="radio" name="autolabel-output" value="bbox" checked> Box
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer"
+               title="Runs each detected box through SAM and writes the mask outline as an editable polygon">
+          <input type="radio" name="autolabel-output" value="polygon"> Polygon (SAM)
+        </label>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim);margin:0 0 6px">
         <span>Confidence</span>
         <div class="conf-control">
           <input type="range" id="autolabel-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
@@ -1329,6 +1349,7 @@ const Page = {
     try {
       const result = await api(`/images/${item.image.id}/assist`, json("POST", {
         prompts, threshold: Number($("assist-conf").value) || 0.1,
+        output: document.querySelector('input[name="assist-output"]:checked').value,
       }));
       const project = await api("/project");
       this.categories = project.categories;  // assist may have created classes
@@ -1380,6 +1401,7 @@ const Page = {
         prompts,
         threshold: Number($("autolabel-conf").value) || 0.1,
         only_unannotated: $("autolabel-unannotated").checked,
+        output: document.querySelector('input[name="autolabel-output"]:checked').value,
       }));
       this._jobId = job_id;
       this._jobEvents = 0;

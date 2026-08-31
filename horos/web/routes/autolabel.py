@@ -50,6 +50,7 @@ def start_autolabel():
         nms_iou=float(body.get("nms_iou", DEFAULT_NMS_IOU)),
         split=body.get("split") or None,
         only_unannotated=bool(body.get("only_unannotated", True)),
+        output=str(body.get("output", "bbox")),
     )
     return jsonify({"job_id": job_id}), 202
 
@@ -77,6 +78,7 @@ def assist(image_id: int):
         model=str(body.get("model", DEFAULT_MODEL)),
         threshold=float(body.get("threshold", DEFAULT_THRESHOLD)),
         nms_iou=float(body.get("nms_iou", DEFAULT_NMS_IOU)),
+        output=str(body.get("output", "bbox")),
     )
     return jsonify(result.model_dump())
 

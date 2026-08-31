@@ -90,6 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", default="owlv2-base")
     p.add_argument("--threshold", type=float, default=0.1)
     p.add_argument("--nms-iou", type=float, default=0.5)
+    p.add_argument(
+        "--output",
+        choices=["bbox", "polygon"],
+        default="bbox",
+        help="polygon runs each box through SAM and writes the mask outline",
+    )
     p.add_argument("--split", choices=["train", "valid", "test"])
     p.add_argument(
         "--include-annotated",
@@ -101,7 +107,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("capabilities", help="Show what this platform supports")
 
     p = sub.add_parser("ui", help="Start the Web API + WebUI server")
-    p.add_argument("--project", required=True)
+    p.add_argument(
+        "project_path",
+        nargs="?",
+        default=None,
+        metavar="project",
+        help="Path to the horos project directory",
+    )
+    # kept for compatibility with older docs/scripts: horos ui --project <dir>
+    p.add_argument("--project", dest="project_flag", help=argparse.SUPPRESS)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5000)
 
@@ -172,6 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model=args.model,
                 threshold=args.threshold,
                 nms_iou=args.nms_iou,
+                output=args.output,
                 split=args.split,
                 only_unannotated=not args.include_annotated,
             ):
@@ -187,7 +202,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "ui":
             from horos.web.app import create_app
 
-            app = create_app(args.project)
+            project_path = args.project_path or args.project_flag
+            if not project_path:
+                print("usage: horos ui <project>", file=sys.stderr)  # noqa: T201
+                return 2
+            app = create_app(project_path)
             app.run(host=args.host, port=args.port)
     except HorosError as exc:
         print(f"error [{exc.code}]: {exc}", file=sys.stderr)  # noqa: T201

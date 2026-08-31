@@ -200,6 +200,18 @@ class OpenVocabularyBackend(ModelBackend):
         """Set the text prompts used by subsequent infer_one/infer_batch calls."""
 
 
+class BoxToMaskBackend(ModelBackend):
+    """Promptable segmenters that turn detection boxes into masks (SAM and
+    successors) — the polygon output path of autolabel."""
+
+    @abstractmethod
+    def polygons_for_boxes(
+        self, image: Path, boxes: list[tuple[float, float, float, float]]
+    ) -> list[list[float] | None]:
+        """One flat [x1, y1, x2, y2, ...] polygon per COCO-xywh box, in the
+        same order; None where no usable mask came back."""
+
+
 # ------------------------------------------------------------------ error bridge
 
 
