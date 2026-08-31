@@ -334,7 +334,9 @@ def release_claim(project: Project, image_id: int, session_id: str) -> bool:
 )
 def image_file_path(project: Project, image_id: int) -> Path:
     record = _record(project, image_id)
-    path = project.image_path(record)
+    # absolute: Flask's send_file resolves relative paths against the app
+    # package dir, not the CWD — a project opened via a relative path 500s
+    path = project.image_path(record).resolve()
     if not path.exists():
         raise ProjectError(f"Image file missing on disk for image {image_id}: {path}")
     return path

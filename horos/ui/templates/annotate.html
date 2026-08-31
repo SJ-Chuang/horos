@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>horos — annotate</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #1a2129; --line: #2a333e;
+    --text: #e6edf3; --dim: #8b98a5; --accent: #4dabf7; --ok: #51cf66; --err: #ff6b6b;
+    --warn: #fcc419;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); overflow: hidden;
+         font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #app { display: grid; grid-template-columns: 240px 1fr; grid-template-rows: 44px 1fr;
+         height: 100vh; }
+  header { grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
+           padding: 0 14px; border-bottom: 1px solid var(--line); }
+  header a { color: var(--dim); text-decoration: none; }
+  header a:hover { color: var(--accent); }
+  header .name { font-weight: 600; }
+  header .pos, header .zoom { color: var(--dim); }
+  .modes { display: flex; gap: 4px; margin-left: 8px; }
+  .modes button { background: var(--panel); color: var(--dim); border: 1px solid var(--line);
+                  border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .modes button.active { color: var(--accent); border-color: var(--accent); }
+  #save-state { margin-left: auto; color: var(--dim); }
+  #save-state.saving { color: var(--warn); }
+  #save-state.saved { color: var(--ok); }
+  #save-state.conflict { color: var(--err); }
+  aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 10px;
+          display: flex; flex-direction: column; gap: 12px; }
+  aside h2 { font-size: 11px; color: var(--dim); text-transform: uppercase;
+             letter-spacing: .08em; margin: 0 0 6px; }
+  .cls { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+         border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+  .cls.active { border-color: var(--accent); background: var(--panel); }
+  .cls .chip { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .cls .key { color: var(--dim); font-size: 11px; margin-left: auto; }
+  .cls .cnt { color: var(--dim); font-size: 11px; min-width: 16px; text-align: right; }
+  #add-class { background: none; border: 1px dashed var(--line); color: var(--dim);
+               border-radius: 6px; padding: 5px; cursor: pointer; width: 100%; }
+  #add-class:hover { color: var(--accent); border-color: var(--accent); }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 4px 6px; width: 100%; }
+  #progress-bar { background: var(--line); height: 6px; border-radius: 3px; overflow: hidden; }
+  #progress-bar > div { background: var(--ok); height: 100%; width: 0; }
+  #progress-text { color: var(--dim); font-size: 11px; margin-top: 4px; }
+  #image-list { display: flex; flex-direction: column; gap: 2px; }
+  #image-list .img { padding: 4px 8px; border-radius: 5px; cursor: pointer;
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                     color: var(--dim); }
+  #image-list .img.current { background: var(--panel); color: var(--text); }
+  #image-list .img .mark { margin-right: 6px; }
+  main { position: relative; overflow: hidden; }
+  canvas { display: block; cursor: crosshair; }
+  canvas.mode-select { cursor: default; }
+  canvas.panning { cursor: grabbing; }
+  #toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+           background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+           padding: 8px 16px; display: none; }
+  #toast.warn { border-color: var(--warn); color: var(--warn); }
+  #toast.err { border-color: var(--err); color: var(--err); }
+  #help { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: none;
+          align-items: center; justify-content: center; }
+  #help .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+                padding: 20px 26px; max-height: 80vh; overflow-y: auto; }
+  #help table { border-collapse: collapse; }
+  #help td { padding: 3px 14px 3px 0; color: var(--dim); }
+  #help td:first-child { color: var(--text); font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <a href="/">← horos</a>
+    <span class="name" id="image-name">—</span>
+    <span class="pos" id="image-pos"></span>
+    <div class="modes">
+      <button id="mode-select" title="Select / edit (V)">Select</button>
+      <button id="mode-box" title="Draw box (W)">Box</button>
+      <button id="mode-polygon" title="Draw polygon (P)">Polygon</button>
+    </div>
+    <span class="zoom" id="zoom-label"></span>
+    <span class="pos" id="claim-note"></span>
+    <span id="save-state">—</span>
+    <a href="#" id="help-link" title="Shortcuts (?)">?⌨</a>
+  </header>
+  <aside>
+    <div>
+      <h2>Classes</h2>
+      <div id="class-list"></div>
+      <button id="add-class">+ add class</button>
+    </div>
+    <div>
+      <h2>Queue</h2>
+      <select id="queue-mode">
+        <option value="unannotated_first">Unannotated first</option>
+        <option value="file_name">File name order</option>
+        <option value="unannotated">Only unannotated</option>
+        <option value="annotated">Only annotated</option>
+      </select>
+      <div style="height:6px"></div>
+      <select id="split-filter">
+        <option value="">All splits</option>
+        <option value="train">train</option>
+        <option value="valid">valid</option>
+        <option value="test">test</option>
+      </select>
+    </div>
+    <div>
+      <h2>Progress</h2>
+      <div id="progress-bar"><div></div></div>
+      <div id="progress-text"></div>
+    </div>
+    <div>
+      <h2>Images</h2>
+      <div id="image-list"></div>
+    </div>
+  </aside>
+  <main>
+    <canvas id="canvas"></canvas>
+    <div id="toast"></div>
+    <div id="help"><div class="card">
+      <h3 style="margin-top:0">Keyboard shortcuts</h3>
+      <table>
+        <tr><td>1–9</td><td>select class / reassign selected annotation</td></tr>
+        <tr><td>V</td><td>select &amp; edit mode</td></tr>
+        <tr><td>W</td><td>box mode — drag to draw</td></tr>
+        <tr><td>P</td><td>polygon mode — click points, Enter or click first point to close</td></tr>
+        <tr><td>Esc</td><td>cancel drawing / deselect</td></tr>
+        <tr><td>Backspace</td><td>remove last polygon point (while drawing)</td></tr>
+        <tr><td>Delete / Backspace</td><td>delete selected annotation</td></tr>
+        <tr><td>D / A</td><td>next / previous image</td></tr>
+        <tr><td>Ctrl+Z</td><td>undo (per image)</td></tr>
+        <tr><td>Space+drag</td><td>pan</td></tr>
+        <tr><td>Wheel</td><td>zoom to cursor</td></tr>
+        <tr><td>0</td><td>fit image to view</td></tr>
+        <tr><td>?</td><td>toggle this help</td></tr>
+      </table>
+      <p style="color:var(--dim)">Every action saves immediately. Click anywhere to close.</p>
+    </div></div>
+  </main>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error((data.error && data.error.message) || r.statusText);
+    err.code = data.error && data.error.code;
+    err.status = r.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+});
+const json = (method, body) => ({
+  method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+
+const session = (() => {
+  let s = null;
+  try { s = localStorage.getItem("horos_session"); } catch (e) {}
+  if (!s) {
+    s = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem("horos_session", s); } catch (e) {}
+  }
+  return s;
+})();
+
+const state = {
+  categories: [], queue: [], index: -1,
+  image: null, bitmap: null, anns: [], version: 0,
+  mode: "select", currentClass: null, selected: -1,
+  scale: 1, tx: 0, ty: 0,
+  drawing: null,        // {x0, y0, x1, y1} while dragging a box
+  polyPoints: [],       // [x, y, ...] while drawing a polygon
+  drag: null,           // {kind: move|handle|vertex, ...}
+  panning: false, spaceHeld: false,
+  undoStack: [], saving: 0,
+};
+
+const canvas = $("canvas");
+const ctx = canvas.getContext("2d");
+
+// ------------------------------------------------------------------ helpers
+function toast(msg, cls = "warn", ms = 2600) {
+  const el = $("toast");
+  el.textContent = msg; el.className = cls; el.style.display = "block";
+  clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = "none"; }, ms);
+}
+function setSaveState(cls, text) { const el = $("save-state"); el.className = cls; el.textContent = text; }
+function imgCoords(e) {
+  const r = canvas.getBoundingClientRect();
+  return [(e.clientX - r.left - state.tx) / state.scale,
+          (e.clientY - r.top - state.ty) / state.scale];
+}
+function clampToImage(x, y) {
+  return [Math.min(Math.max(x, 0), state.image.width),
+          Math.min(Math.max(y, 0), state.image.height)];
+}
+function catById(id) { return state.categories.find((c) => c.id === id); }
+function polyBbox(pts) {
+  const xs = pts.filter((_, i) => i % 2 === 0), ys = pts.filter((_, i) => i % 2 === 1);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return [x, y, Math.max(...xs) - x, Math.max(...ys) - y];
+}
+
+// ------------------------------------------------------------------ loading
+async function boot() {
+  const project = await api("/project");
+  state.categories = project.categories;
+  if (state.categories.length) state.currentClass = state.categories[0].id;
+  await refreshQueue(true);
+  bindEvents();
+}
+
+async function refreshQueue(openFirst = false) {
+  const mode = $("queue-mode").value;
+  const split = $("split-filter").value;
+  const q = new URLSearchParams({ mode, session });
+  if (split) q.set("split", split);
+  state.queue = await api("/queue?" + q);
+  renderImageList();
+  await refreshProgress();
+  if (openFirst && state.queue.length) openImage(0);
+  else if (state.image) {
+    const i = state.queue.findIndex((it) => it.image.id === state.image.id);
+    state.index = i; renderImageList();
+  }
+}
+
+async function refreshProgress() {
+  const p = await api("/progress");
+  $("progress-bar").firstElementChild.style.width =
+    p.total_images ? (100 * p.annotated_images / p.total_images) + "%" : "0";
+  $("progress-text").textContent =
+    `${p.annotated_images} / ${p.total_images} images annotated · ${p.total_annotations} annotations`;
+}
+
+async function openImage(index) {
+  if (index < 0 || index >= state.queue.length) return;
+  if (state.image) releaseClaim(state.image.id);
+  const item = state.queue[index];
+  state.index = index;
+  state.image = item.image;
+  state.selected = -1; state.drawing = null; state.polyPoints = [];
+  state.undoStack = [];
+  $("image-name").textContent = item.image.file_name;
+  $("image-pos").textContent = `${index + 1}/${state.queue.length} · ${item.image.split}`;
+  const [view, blob] = await Promise.all([
+    api(`/images/${item.image.id}/annotations`),
+    fetch(`/api/v1/images/${item.image.id}/file`).then((r) => r.blob()),
+  ]);
+  state.anns = view.annotations; state.version = view.version;
+  state.bitmap = await createImageBitmap(blob);
+  fitToView();
+  claim(item.image.id);
+  renderImageList(); renderClasses(); setSaveState("", `v${state.version}`);
+}
+
+async function claim(imageId) {
+  try {
+    await api(`/images/${imageId}/claim`, json("POST", { session }));
+    $("claim-note").textContent = "";
+  } catch (e) {
+    if (e.status === 409) {
+      $("claim-note").textContent = "⚠ someone else is annotating this image";
+      toast("Another session is annotating this image — your saves may conflict.", "warn");
+    }
+  }
+  clearInterval(state._claimTimer);
+  state._claimTimer = setInterval(() => {
+    if (state.image && state.image.id === imageId)
+      api(`/images/${imageId}/claim`, json("POST", { session })).catch(() => {});
+  }, 120000);
+}
+function releaseClaim(imageId) {
+  clearInterval(state._claimTimer);
+  fetch(`/api/v1/images/${imageId}/claim`, {
+    ...json("DELETE", { session }), keepalive: true,
+  }).catch(() => {});
+}
+window.addEventListener("beforeunload", () => { if (state.image) releaseClaim(state.image.id); });
+
+// ------------------------------------------------------------------- saving
+function pushUndo() {
+  state.undoStack.push(JSON.stringify(state.anns));
+  if (state.undoStack.length > 50) state.undoStack.shift();
+}
+async function save() {
+  state.saving++;
+  setSaveState("saving", "saving…");
+  const payload = state.anns.map((a) => ({
+    id: a.id, category_id: a.category_id, bbox: a.bbox,
+    segmentation: a.segmentation || [], source: a.source || "manual",
+    status: a.status || "confirmed", score: a.score ?? null,
+  }));
+  try {
+    const view = await api(`/images/${state.image.id}/annotations`,
+      json("PUT", { expected_version: state.version, annotations: payload }));
+    state.version = view.version; state.anns = view.annotations;
+    setSaveState("saved", `saved · v${state.version}`);
+    updateQueueItem();
+  } catch (e) {
+    if (e.code === "annotation_conflict") {
+      const view = await api(`/images/${state.image.id}/annotations`);
+      state.anns = view.annotations; state.version = view.version;
+      state.selected = -1; state.undoStack = [];
+      setSaveState("conflict", "conflict — reloaded");
+      toast("Someone else saved this image first. Reloaded their version; redo your change.", "err", 4200);
+    } else {
+      setSaveState("conflict", "save failed");
+      toast("Save failed: " + e.message, "err", 4200);
+    }
+  } finally {
+    state.saving--; draw(); renderClasses(); refreshProgress();
+  }
+}
+function updateQueueItem() {
+  const item = state.queue[state.index];
+  if (!item) return;
+  item.num_annotations = state.anns.length;
+  item.annotated = state.anns.length > 0;
+  renderImageList();
+}
+function mutate(fn) { pushUndo(); fn(); save(); }
+function undo() {
+  const prev = state.undoStack.pop();
+  if (prev === undefined) return;
+  state.anns = JSON.parse(prev); state.selected = -1; save();
+}
+
+// ---------------------------------------------------------------- rendering
+function fitToView() {
+  resizeCanvas();
+  const pad = 24;
+  const sx = (canvas.width - 2 * pad) / state.image.width;
+  const sy = (canvas.height - 2 * pad) / state.image.height;
+  state.scale = Math.min(sx, sy, 4);
+  state.tx = (canvas.width - state.image.width * state.scale) / 2;
+  state.ty = (canvas.height - state.image.height * state.scale) / 2;
+  draw();
+}
+function resizeCanvas() {
+  const main = canvas.parentElement;
+  canvas.width = main.clientWidth; canvas.height = main.clientHeight;
+}
+window.addEventListener("resize", () => { if (state.bitmap) { resizeCanvas(); draw(); } });
+
+function draw() {
+  if (!state.bitmap) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(state.scale, 0, 0, state.scale, state.tx, state.ty);
+  ctx.imageSmoothingEnabled = state.scale < 3;
+  ctx.drawImage(state.bitmap, 0, 0);
+  const lw = 1.6 / state.scale;
+  state.anns.forEach((a, i) => {
+    const cat = catById(a.category_id);
+    const color = (cat && cat.color) || "#4dabf7";
+    ctx.lineWidth = i === state.selected ? lw * 2 : lw;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color + "2e";
+    if (a.segmentation && a.segmentation.length) {
+      const pts = a.segmentation[0];
+      ctx.beginPath();
+      ctx.moveTo(pts[0], pts[1]);
+      for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      if (i === state.selected) pts.forEach((_, k) => {
+        if (k % 2) return;
+        drawHandle(pts[k], pts[k + 1], color);
+      });
+    } else {
+      const [x, y, w, h] = a.bbox;
+      ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+      if (i === state.selected) boxHandles(a.bbox).forEach(([hx, hy]) => drawHandle(hx, hy, color));
+    }
+    if (cat) {
+      ctx.font = `${11 / state.scale}px system-ui`;
+      const [x, y] = a.segmentation && a.segmentation.length
+        ? [a.segmentation[0][0], a.segmentation[0][1]] : [a.bbox[0], a.bbox[1]];
+      ctx.fillStyle = color;
+      ctx.fillText(cat.name, x + 2 / state.scale, y - 3 / state.scale);
+    }
+  });
+  const cat = catById(state.currentClass);
+  const liveColor = (cat && cat.color) || "#4dabf7";
+  ctx.lineWidth = lw; ctx.strokeStyle = liveColor; ctx.setLineDash([4 / state.scale]);
+  if (state.drawing) {
+    const d = state.drawing;
+    ctx.strokeRect(Math.min(d.x0, d.x1), Math.min(d.y0, d.y1),
+                   Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0));
+  }
+  if (state.polyPoints.length) {
+    const pts = state.polyPoints;
+    ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
+    for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
+    ctx.stroke();
+    pts.forEach((_, k) => { if (!(k % 2)) drawHandle(pts[k], pts[k + 1], liveColor); });
+  }
+  ctx.setLineDash([]);
+  $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
+}
+function drawHandle(x, y, color) {
+  const r = 4 / state.scale;
+  ctx.fillStyle = "#101418"; ctx.strokeStyle = color; ctx.lineWidth = 1.4 / state.scale;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
+}
+function boxHandles([x, y, w, h]) {
+  return [[x, y], [x + w / 2, y], [x + w, y], [x + w, y + h / 2], [x + w, y + h],
+          [x + w / 2, y + h], [x, y + h], [x, y + h / 2]];
+}
+
+// -------------------------------------------------------------- hit testing
+function hitHandle(ix, iy) {
+  if (state.selected < 0) return null;
+  const a = state.anns[state.selected];
+  const r = 7 / state.scale;
+  if (a.segmentation && a.segmentation.length) {
+    const pts = a.segmentation[0];
+    for (let k = 0; k < pts.length; k += 2)
+      if (Math.hypot(pts[k] - ix, pts[k + 1] - iy) < r)
+        return { kind: "vertex", index: k };
+    return null;
+  }
+  const handles = boxHandles(a.bbox);
+  for (let k = 0; k < handles.length; k++)
+    if (Math.hypot(handles[k][0] - ix, handles[k][1] - iy) < r)
+      return { kind: "handle", index: k };
+  return null;
+}
+function hitAnnotation(ix, iy) {
+  for (let i = state.anns.length - 1; i >= 0; i--) {
+    const a = state.anns[i];
+    if (a.segmentation && a.segmentation.length) {
+      if (pointInPolygon(ix, iy, a.segmentation[0])) return i;
+    } else {
+      const [x, y, w, h] = a.bbox;
+      if (ix >= x && ix <= x + w && iy >= y && iy <= y + h) return i;
+    }
+  }
+  return -1;
+}
+function pointInPolygon(px, py, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 2; i < pts.length; j = i, i += 2) {
+    const xi = pts[i], yi = pts[i + 1], xj = pts[j], yj = pts[j + 1];
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)
+      inside = true;
+  }
+  return inside;
+}
+
+// ------------------------------------------------------------------- events
+function setMode(mode) {
+  state.mode = mode;
+  state.drawing = null; state.polyPoints = [];
+  ["select", "box", "polygon"].forEach((m) =>
+    $("mode-" + m).classList.toggle("active", m === mode));
+  canvas.className = mode === "select" ? "mode-select" : "";
+  draw();
+}
+
+function bindEvents() {
+  setMode("select");
+  $("mode-select").onclick = () => setMode("select");
+  $("mode-box").onclick = () => setMode("box");
+  $("mode-polygon").onclick = () => setMode("polygon");
+  $("queue-mode").onchange = () => refreshQueue(true);
+  $("split-filter").onchange = () => refreshQueue(true);
+  $("help-link").onclick = (e) => { e.preventDefault(); toggleHelp(); };
+  $("help").onclick = toggleHelp;
+  $("add-class").onclick = addClassFlow;
+
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const [ix, iy] = imgCoords(e);
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    state.scale = Math.min(Math.max(state.scale * factor, 0.05), 24);
+    const r = canvas.getBoundingClientRect();
+    state.tx = e.clientX - r.left - ix * state.scale;
+    state.ty = e.clientY - r.top - iy * state.scale;
+    draw();
+  }, { passive: false });
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (!state.bitmap) return;
+    if (e.button === 1 || state.spaceHeld || e.button === 2) {
+      state.panning = true; state._px = e.clientX; state._py = e.clientY;
+      canvas.classList.add("panning"); return;
+    }
+    const [ix, iy] = imgCoords(e);
+    if (state.mode === "box") {
+      const [cx, cy] = clampToImage(ix, iy);
+      state.drawing = { x0: cx, y0: cy, x1: cx, y1: cy };
+    } else if (state.mode === "polygon") {
+      const [cx, cy] = clampToImage(ix, iy);
+      const pts = state.polyPoints;
+      if (pts.length >= 6 && Math.hypot(pts[0] - cx, pts[1] - cy) < 8 / state.scale) {
+        closePolygon(); return;
+      }
+      pts.push(cx, cy); draw();
+    } else {
+      const handle = hitHandle(ix, iy);
+      if (handle) {
+        state.drag = { ...handle, startAnns: JSON.stringify(state.anns) };
+      } else {
+        const hit = hitAnnotation(ix, iy);
+        state.selected = hit;
+        if (hit >= 0)
+          state.drag = { kind: "move", ix, iy, startAnns: JSON.stringify(state.anns) };
+        draw();
+      }
+    }
+  });
+
+  canvas.addEventListener("mousemove", (e) => {
+    if (state.panning) {
+      state.tx += e.clientX - state._px; state.ty += e.clientY - state._py;
+      state._px = e.clientX; state._py = e.clientY; draw(); return;
+    }
+    if (!state.bitmap) return;
+    const [ix, iy] = imgCoords(e);
+    if (state.drawing) {
+      [state.drawing.x1, state.drawing.y1] = clampToImage(ix, iy); draw(); return;
+    }
+    if (!state.drag || state.selected < 0) return;
+    const a = state.anns[state.selected];
+    if (state.drag.kind === "move") {
+      const dx = ix - state.drag.ix, dy = iy - state.drag.iy;
+      state.drag.ix = ix; state.drag.iy = iy;
+      if (a.segmentation && a.segmentation.length) {
+        const pts = a.segmentation[0];
+        for (let k = 0; k < pts.length; k += 2) { pts[k] += dx; pts[k + 1] += dy; }
+        a.bbox = polyBbox(pts);
+      } else {
+        a.bbox = [a.bbox[0] + dx, a.bbox[1] + dy, a.bbox[2], a.bbox[3]];
+      }
+      state.drag.moved = true; draw();
+    } else if (state.drag.kind === "vertex") {
+      const pts = a.segmentation[0];
+      [pts[state.drag.index], pts[state.drag.index + 1]] = clampToImage(ix, iy);
+      a.bbox = polyBbox(pts);
+      state.drag.moved = true; draw();
+    } else if (state.drag.kind === "handle") {
+      resizeBox(a, state.drag.index, ...clampToImage(ix, iy));
+      state.drag.moved = true; draw();
+    }
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (state.panning) { state.panning = false; canvas.classList.remove("panning"); return; }
+    if (state.drawing) {
+      const d = state.drawing; state.drawing = null;
+      const w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
+      if (w >= 3 && h >= 3 && state.currentClass != null) {
+        mutate(() => state.anns.push({
+          id: 0, category_id: state.currentClass,
+          bbox: [Math.min(d.x0, d.x1), Math.min(d.y0, d.y1), w, h], segmentation: [],
+        }));
+        state.selected = state.anns.length - 1;
+      } else draw();
+      return;
+    }
+    if (state.drag) {
+      const changed = state.drag.moved;
+      const before = state.drag.startAnns;
+      state.drag = null;
+      if (changed) {
+        state.undoStack.push(before);
+        if (state.undoStack.length > 50) state.undoStack.shift();
+        save();
+      }
+    }
+  });
+
+  canvas.addEventListener("dblclick", () => {
+    if (state.mode === "polygon" && state.polyPoints.length >= 6) closePolygon();
+  });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  window.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.code === "Space") { state.spaceHeld = true; e.preventDefault(); return; }
+    if (e.key === "?") { toggleHelp(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault(); undo(); return;
+    }
+    if (e.key >= "1" && e.key <= "9") {
+      const cat = state.categories[Number(e.key) - 1];
+      if (!cat) return;
+      if (state.selected >= 0 && state.mode === "select") {
+        mutate(() => { state.anns[state.selected].category_id = cat.id; });
+      }
+      state.currentClass = cat.id; renderClasses(); draw(); return;
+    }
+    switch (e.key.toLowerCase()) {
+      case "v": setMode("select"); break;
+      case "w": setMode("box"); break;
+      case "p": setMode("polygon"); break;
+      case "d": openImage(state.index + 1); break;
+      case "a": openImage(state.index - 1); break;
+      case "0": fitToView(); break;
+      case "escape":
+        if (state.polyPoints.length) { state.polyPoints = []; draw(); }
+        else if (state.drawing) { state.drawing = null; draw(); }
+        else { state.selected = -1; draw(); }
+        break;
+      case "backspace": case "delete":
+        e.preventDefault();
+        if (state.mode === "polygon" && state.polyPoints.length) {
+          state.polyPoints.splice(-2); draw();
+        } else if (state.selected >= 0) {
+          mutate(() => { state.anns.splice(state.selected, 1); state.selected = -1; });
+        }
+        break;
+      case "enter":
+        if (state.mode === "polygon" && state.polyPoints.length >= 6) closePolygon();
+        break;
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space") state.spaceHeld = false;
+  });
+}
+
+function closePolygon() {
+  const pts = state.polyPoints.slice();
+  state.polyPoints = [];
+  if (pts.length < 6 || state.currentClass == null) { draw(); return; }
+  mutate(() => state.anns.push({
+    id: 0, category_id: state.currentClass, bbox: polyBbox(pts), segmentation: [pts],
+  }));
+  state.selected = state.anns.length - 1;
+}
+
+function resizeBox(a, handleIndex, ix, iy) {
+  let [x, y, w, h] = a.bbox;
+  let x2 = x + w, y2 = y + h;
+  // handles: 0 tl, 1 tm, 2 tr, 3 mr, 4 br, 5 bm, 6 bl, 7 ml
+  if ([0, 6, 7].includes(handleIndex)) x = ix;
+  if ([2, 3, 4].includes(handleIndex)) x2 = ix;
+  if ([0, 1, 2].includes(handleIndex)) y = iy;
+  if ([4, 5, 6].includes(handleIndex)) y2 = iy;
+  a.bbox = [Math.min(x, x2), Math.min(y, y2), Math.abs(x2 - x), Math.abs(y2 - y)];
+}
+
+// ------------------------------------------------------------------ sidebar
+function renderClasses() {
+  const counts = {};
+  state.anns.forEach((a) => { counts[a.category_id] = (counts[a.category_id] || 0) + 1; });
+  $("class-list").innerHTML = state.categories.map((c, i) => `
+    <div class="cls ${c.id === state.currentClass ? "active" : ""}" data-id="${c.id}">
+      <span class="chip" style="background:${c.color}"></span>
+      <span>${c.name}</span>
+      <span class="cnt">${counts[c.id] || ""}</span>
+      <span class="key">${i < 9 ? i + 1 : ""}</span>
+    </div>`).join("");
+  [...$("class-list").children].forEach((el) => {
+    el.onclick = () => { state.currentClass = Number(el.dataset.id); renderClasses(); };
+    el.ondblclick = () => renameClassFlow(Number(el.dataset.id));
+  });
+}
+async function addClassFlow() {
+  const name = prompt("New class name:");
+  if (!name) return;
+  try {
+    const cat = await api("/categories", json("POST", { name }));
+    state.categories.push(cat);
+    if (state.currentClass == null) state.currentClass = cat.id;
+    renderClasses();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function renameClassFlow(id) {
+  const cat = catById(id);
+  const name = prompt(`Rename class '${cat.name}' (empty to keep):`, cat.name);
+  if (!name || name === cat.name) return;
+  try {
+    const updated = await api(`/categories/${id}`, json("PATCH", { name }));
+    Object.assign(cat, updated); renderClasses(); draw();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function renderImageList() {
+  $("image-list").innerHTML = state.queue.map((item, i) => `
+    <div class="img ${i === state.index ? "current" : ""}" data-i="${i}"
+         title="${item.image.file_name}">
+      <span class="mark">${item.claimed_by ? "🔒" : item.annotated ? "✓" : "·"}</span>
+      ${item.image.file_name}
+    </div>`).join("");
+  [...$("image-list").children].forEach((el) => {
+    el.onclick = () => openImage(Number(el.dataset.i));
+  });
+  const current = $("image-list").querySelector(".current");
+  if (current) current.scrollIntoView({ block: "nearest" });
+}
+
+function toggleHelp() {
+  const el = $("help");
+  el.style.display = el.style.display === "flex" ? "none" : "flex";
+}
+
+boot().catch((e) => toast("Failed to load: " + e.message, "err", 8000));
+</script>
+</body>
+</html>

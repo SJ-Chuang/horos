@@ -21,3 +21,8 @@ bp = Blueprint(
 @bp.get("/")
 def index():
     return render_template("index.html")
+
+
+@bp.get("/annotate")
+def annotate():
+    return render_template("annotate.html")
