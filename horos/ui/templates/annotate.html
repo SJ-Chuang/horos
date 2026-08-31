@@ -299,7 +299,9 @@ const Page = {
     $("btn-save").onclick = () => this.saveAnnotations();
     $("auto-save").onchange = (e) => this.toggleAutoSave(e.target.checked);
     document.querySelectorAll(".tool-btn").forEach((b) => {
-      b.onclick = () => this.setTool(b.dataset.tool);
+      // blur after click, or the browser focus ring stays on the last
+      // mouse-clicked button when tools are later switched via number keys
+      b.onclick = () => { this.setTool(b.dataset.tool); b.blur(); };
     });
     $("help-link").onclick = (e) => { e.preventDefault(); $("help-modal").style.display = "flex"; };
     $("help-modal").onclick = () => { $("help-modal").style.display = "none"; };
