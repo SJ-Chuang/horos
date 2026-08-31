@@ -21,8 +21,28 @@
   .btn:disabled { opacity: .45; cursor: default; }
   .btn.primary { border-color: var(--accent); color: var(--accent); }
   .btn.danger { border-color: var(--err); color: var(--err); }
-  select, input[type=text] { background: var(--panel); color: var(--text);
-    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  select, input[type=text], input[type=number] { background: var(--panel);
+    color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; font-size: 12px; }
+  select:focus, input[type=text]:focus, input[type=number]:focus {
+    outline: none; border-color: var(--accent); }
+  /* number inputs: no browser spinners, monospace value */
+  input[type=number] { appearance: textfield; -moz-appearance: textfield;
+    font-family: ui-monospace, SFMono-Regular, monospace; text-align: center; }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  /* range sliders: thin themed track, accent thumb */
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 4px;
+    border-radius: 2px; background: var(--line); outline: none; cursor: pointer; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
+    width: 14px; height: 14px; border-radius: 50%; background: var(--accent);
+    border: 3px solid var(--panel); box-shadow: 0 0 0 1px var(--accent); }
+  input[type=range]::-moz-range-thumb { width: 14px; height: 14px;
+    border-radius: 50%; background: var(--accent); border: 3px solid var(--panel);
+    box-shadow: 0 0 0 1px var(--accent); }
+  .conf-control { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .conf-control input[type=range] { flex: 1; }
+  .conf-control input[type=number] { width: 60px; padding: 4px 6px; flex: none; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
           padding: 14px; }
   h4 { margin: 0 0 8px; font-size: 11px; color: var(--dim); text-transform: uppercase;
@@ -189,13 +209,14 @@
         <div id="assist-panel" style="display:none;margin-top:10px">
           <input type="text" id="assist-input" placeholder="e.g. helmet, vest, person"
                  style="width:100%" title="Comma-separated object names — each becomes a class">
-          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--dim)">
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--dim)">
             <span>Confidence</span>
-            <input type="number" id="assist-conf" min="0.01" max="1" step="0.01" value="0.10"
-                   style="width:64px;padding:3px 6px">
-            <span style="flex:1"></span>
-            <button class="btn primary" id="assist-run">Apply</button>
+            <div class="conf-control">
+              <input type="range" id="assist-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
+              <input type="number" id="assist-conf" min="0.01" max="1" step="0.01" value="0.10">
+            </div>
           </div>
+          <button class="btn primary" id="assist-run" style="width:100%;margin-top:8px">Apply</button>
           <div id="assist-status" style="font-size:11px;color:var(--warn);margin-top:4px"></div>
         </div>
         <h4 style="margin-top:14px">Object Class</h4>
@@ -262,14 +283,16 @@
         One row per class. Prompts are comma-separated synonyms OWLv2 will look for.</p>
       <div id="prompt-rows"></div>
       <button class="btn" id="add-prompt-row" style="width:100%;margin:6px 0">+ add class</button>
-      <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim);margin:8px 0">
+      <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim);margin:10px 0 6px">
         <span>Confidence</span>
-        <input type="number" id="autolabel-conf" min="0.01" max="1" step="0.01" value="0.10"
-               style="width:70px;padding:3px 6px">
-        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
-          <input type="checkbox" id="autolabel-unannotated" checked> only unannotated images
-        </label>
+        <div class="conf-control">
+          <input type="range" id="autolabel-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
+          <input type="number" id="autolabel-conf" min="0.01" max="1" step="0.01" value="0.10">
+        </div>
       </div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--dim);margin-bottom:10px">
+        <input type="checkbox" id="autolabel-unannotated" checked> only unannotated images
+      </label>
       <button class="btn primary" id="autolabel-start" style="width:100%">Start</button>
     </div>
     <div id="autolabel-progress" style="display:none">
@@ -328,6 +351,26 @@ const session = (() => {
   }
   return s;
 })();
+function paintRange(slider) {
+  const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+  slider.style.background =
+    `linear-gradient(to right, var(--accent) ${pct}%, var(--line) ${pct}%)`;
+}
+function bindConf(sliderId, numberId) {
+  const slider = $(sliderId), num = $(numberId);
+  slider.oninput = () => {
+    num.value = Number(slider.value).toFixed(2);
+    paintRange(slider);
+  };
+  num.addEventListener("change", () => {
+    const v = Math.min(Math.max(Number(num.value) || Number(slider.min),
+                                Number(slider.min)), Number(slider.max));
+    num.value = v.toFixed(2);
+    slider.value = v;
+    paintRange(slider);
+  });
+  paintRange(slider);
+}
 function toast(msg, cls = "warn", ms = 2400) {
   const el = $("toast");
   el.textContent = msg; el.className = cls; el.style.display = "block";
@@ -382,11 +425,15 @@ const Page = {
     $("assist-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); this.runAssist(); }
     });
+    bindConf("autolabel-conf-slider", "autolabel-conf");
+    bindConf("assist-conf-slider", "assist-conf");
     $("review-threshold").oninput = (e) => {
       this.reviewThreshold = Number(e.target.value);
+      paintRange(e.target);
       this._syncReviewBar();
       this._drawCanvas();
     };
+    paintRange($("review-threshold"));
     $("review-accept").onclick = () => this.reviewAll("accept");
     $("review-reject").onclick = () => this.reviewAll("reject");
     $("help-link").onclick = (e) => { e.preventDefault(); $("help-modal").style.display = "flex"; };
@@ -472,6 +519,7 @@ const Page = {
       this.isDirty = false;
       this.reviewThreshold = 0;
       $("review-threshold").value = 0;
+      paintRange($("review-threshold"));
       this._resizeCanvas();
       this._setSaveState("", "");
       this._syncReviewBar();
