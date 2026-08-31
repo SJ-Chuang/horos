@@ -134,4 +134,4 @@ if [[ -z "$VIRTUAL_ENV" ]]; then
 fi
 echo "  horos init ./my_project"
 echo "  horos import <dataset dir or unzipped export> --project ./my_project"
-echo "  horos ui --project ./my_project    # open http://localhost:5000"
+echo "  horos ui ./my_project          # open http://localhost:5000"

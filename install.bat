@@ -113,7 +113,7 @@ echo Next steps:
 if not defined VIRTUAL_ENV echo   .venv\Scripts\activate
 echo   horos init .\my_project
 echo   horos import ^<dataset dir^> --project .\my_project
-echo   horos ui --project .\my_project    (open http://localhost:5000)
+echo   horos ui .\my_project          (open http://localhost:5000)
 exit /b 0
 
 :error

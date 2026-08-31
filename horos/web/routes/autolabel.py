@@ -16,7 +16,7 @@ def _project():
     if not root:
         raise ProjectError(
             "This server is not bound to a project. Start it with "
-            "'horos ui --project <dir>' or POST /api/v1/projects first."
+            "'horos ui <dir>' or POST /api/v1/projects first."
         )
     return api.open_project(root)
 

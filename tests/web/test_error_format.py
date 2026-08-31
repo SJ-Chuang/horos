@@ -25,7 +25,7 @@ def test_horos_errors_map_to_the_unified_shape(client):
     body = response.get_json()
     _assert_error_shape(body)
     assert body["error"]["code"] == "project_error"
-    assert "horos ui --project" in body["error"]["message"]
+    assert "horos ui" in body["error"]["message"]
 
 
 def test_missing_body_field_is_a_clear_400(client):
