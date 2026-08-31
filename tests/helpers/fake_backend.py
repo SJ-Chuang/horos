@@ -29,11 +29,25 @@ class FakeBackend(ModelBackend):
     family = "fake"
 
     def train(self, spec: TrainSpec) -> Iterator[Event]:
+        import time
+
         yield RunStarted(total=spec.epochs, config={"epochs": spec.epochs})
         for epoch in range(spec.epochs):
+            # spec.extra is the expert passthrough; the fakes read pacing and
+            # failure switches from it so subprocess tests can steer behavior.
+            if spec.extra.get("sleep_per_epoch"):
+                time.sleep(float(spec.extra["sleep_per_epoch"]))
             yield ProgressUpdated(current=epoch + 1, total=spec.epochs, phase="train")
             yield MetricsUpdated(step=epoch + 1, metrics={"loss": 1.0 / (epoch + 1)})
-        yield RunCompleted(result={"checkpoint": str(spec.output_dir / "best.fake")})
+        if spec.extra.get("fail"):
+            from horos.backends.base import RunFailed
+
+            yield RunFailed(error_code="backend_error", message="simulated failure")
+            return
+        spec.output_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint = spec.output_dir / "best.fake"
+        checkpoint.write_bytes(b"fake-weights")
+        yield RunCompleted(result={"checkpoint": str(checkpoint)})
 
     def infer_one(self, image: Path, *, threshold: float = 0.5) -> ImagePrediction:
         return ImagePrediction(

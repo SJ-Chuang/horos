@@ -103,6 +103,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also pre-label images that already have confirmed annotations",
     )
 
+    p = sub.add_parser(
+        "train", help="Train a model (runs in a worker subprocess, streams events)"
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--model", default="rfdetr-nano")
+    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--batch-size", type=int, default=4)
+    p.add_argument("--resolution", type=int)
+    p.add_argument("--device", choices=["cuda", "mps", "cpu"])
+    p.add_argument("--seed", type=int)
+    p.add_argument("--resume-from", help="Checkpoint path to continue training from")
+
     sub.add_parser("models", help="List available models (with licenses)")
     sub.add_parser("capabilities", help="Show what this platform supports")
 
@@ -204,6 +216,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failed = failed or event.type == "failed"
             if failed:
                 return 2
+        elif args.command == "train":
+            import time as time_mod
+
+            from horos.api.train import TrainRunConfig
+
+            project = api.open_project(args.project)
+            record = api.start_training(
+                project,
+                TrainRunConfig(
+                    model=args.model,
+                    epochs=args.epochs,
+                    batch_size=args.batch_size,
+                    resolution=args.resolution,
+                    device=args.device,
+                    seed=args.seed,
+                    resume_from=args.resume_from,
+                ),
+            )
+            print(f"run {record.run_id} started (pid {record.pid})", file=sys.stderr)  # noqa: T201
+            seen = 0
+            try:
+                while True:
+                    status = api.training_status(project, record.run_id, after=seen)
+                    for event in status.events:
+                        sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
+                        sys.stdout.flush()
+                    seen = status.num_events
+                    if status.run.state not in ("pending", "running"):
+                        _emit(status.run.model_dump())
+                        return 0 if status.run.state == "completed" else 2
+                    time_mod.sleep(1.0)
+            except KeyboardInterrupt:
+                api.stop_training(project, record.run_id)
+                print(f"stopping run {record.run_id} ...", file=sys.stderr)  # noqa: T201
+                return 130
         elif args.command == "models":
             _emit([m.model_dump() for m in api.list_models()])
         elif args.command == "capabilities":

@@ -84,3 +84,55 @@ def test_version_flag(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["--version"])
     assert exc_info.value.code == 0
+
+
+def test_train_streams_events_and_exits_by_state(tmp_path, capsys, monkeypatch):
+    """`horos train` runs in the foreground: it starts a run, prints the event
+    stream as JSONL, and its exit code mirrors the terminal state (E5/E9-S3)."""
+    import os
+
+    from helpers.data import write_sample_coco_dir as _make
+
+    import horos.api as api
+    from horos.api.train import TrainRunConfig
+    from horos.cli import main as cli_main
+
+    tests_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    existing = os.environ.get("PYTHONPATH", "")
+    monkeypatch.setenv(
+        "PYTHONPATH", tests_root + (os.pathsep + existing if existing else "")
+    )
+
+    proj_dir = tmp_path / "proj"
+    project = api.create_project(proj_dir)
+    api.import_dataset(project, _make(tmp_path / "coco"))
+
+    # the CLI builds the config itself; reroute it onto the fake backend
+    original = api.start_training
+
+    def with_fake(project, config):
+        patched = TrainRunConfig(
+            **config.model_dump(exclude={"entrypoint_override"}),
+            entrypoint_override="helpers.fake_backend:FakeBackend",
+        )
+        return original(project, patched)
+
+    monkeypatch.setattr(api, "start_training", with_fake)
+
+    code = cli_main(["train", "--project", str(proj_dir), "--epochs", "2"])
+    out = capsys.readouterr().out
+    # events stream as one-line JSON; the final run record is pretty-printed —
+    # decode the concatenated stream object by object
+    decoder, pos, payloads = json.JSONDecoder(), 0, []
+    while pos < len(out):
+        remainder = out[pos:].lstrip()
+        if not remainder:
+            break
+        obj, consumed = decoder.raw_decode(remainder)
+        payloads.append(obj)
+        pos += (len(out[pos:]) - len(remainder)) + consumed
+    assert code == 0
+    types = [p.get("type") for p in payloads]
+    assert "started" in types and "completed" in types
+    # the last JSON payload is the final run record
+    assert payloads[-1]["state"] == "completed"

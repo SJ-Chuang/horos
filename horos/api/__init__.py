@@ -48,6 +48,15 @@ from horos.api.system import (
     list_models,
     platform_capabilities,
 )
+from horos.api.train import (
+    RunRecord,
+    TrainRunConfig,
+    TrainStatus,
+    list_runs,
+    start_training,
+    stop_training,
+    training_status,
+)
 
 __all__ = [
     "AnnotationProgress",
@@ -61,6 +70,9 @@ __all__ = [
     "PlatformCapabilities",
     "PromptSpec",
     "QueueItem",
+    "RunRecord",
+    "TrainRunConfig",
+    "TrainStatus",
     "add_category",
     "annotation_progress",
     "assist_image",
@@ -83,6 +95,7 @@ __all__ = [
     "list_capabilities",
     "list_images",
     "list_models",
+    "list_runs",
     "open_project",
     "pending_summary",
     "platform_capabilities",
@@ -91,6 +104,9 @@ __all__ = [
     "review_pending",
     "save_annotations",
     "start_autolabel",
+    "start_training",
+    "stop_training",
+    "training_status",
     "update_category",
     "validate_project",
 ]
