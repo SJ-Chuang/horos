@@ -20,3 +20,28 @@ def detect_format(root: Path) -> DatasetFormat | None:
     if len(json_files) == 1:
         return "coco"
     return None
+
+
+_IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+
+def unsupported_format_hint(root: Path) -> str | None:
+    """Name the format an unrecognized dataset looks like, for error messages (E1-S4).
+
+    Only called after detect_format() returned None, so a data.yaml is known
+    to be absent.
+    """
+    root = Path(root)
+    if any(root.rglob("_darknet.labels")):
+        return "Darknet"
+    for xml_path in root.rglob("*.xml"):
+        try:
+            head = xml_path.read_text(encoding="utf-8", errors="ignore")[:2048]
+        except OSError:
+            continue
+        if "<annotation" in head:
+            return "Pascal VOC"
+    for txt in root.rglob("*.txt"):
+        if any(txt.with_suffix(ext).exists() for ext in _IMAGE_SUFFIXES):
+            return "Darknet-style YOLO (label .txt files without a data.yaml)"
+    return None

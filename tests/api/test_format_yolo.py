@@ -105,3 +105,36 @@ def test_write_skips_missing_source_images(tmp_path):
     assert not (tmp_path / "out" / "train" / "images" / "b.png").exists()
     # labels are still written for every record
     assert (tmp_path / "out" / "train" / "labels" / "b.txt").exists()
+
+
+def _rewrite_yaml_roboflow_style(root):
+    """Rewrite data.yaml paths the way Roboflow exports them: ../<split>/images
+    relative to an assumed enclosing datasets dir, with the yaml actually at
+    the dataset root."""
+    yaml_path = root / "data.yaml"
+    config = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    for key in ("train", "val", "test"):
+        if key in config:
+            config[key] = "../" + str(config[key]).removeprefix("./")
+    yaml_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+
+def test_roboflow_parent_relative_paths(tmp_path):
+    # Regression: Roboflow zips fail with "missing directory: ../train/images"
+    write_sample_yolo_dir(tmp_path)
+    expected, _ = read_yolo(tmp_path)
+    _rewrite_yaml_roboflow_style(tmp_path)
+    dataset, image_paths = read_yolo(tmp_path)
+    assert len(dataset.images) == len(expected.images)
+    assert len(dataset.annotations) == len(expected.annotations)
+    assert all(p.is_file() for p in image_paths.values())
+
+
+def test_missing_split_dir_is_still_explicit(tmp_path):
+    write_sample_yolo_dir(tmp_path)
+    yaml_path = tmp_path / "data.yaml"
+    config = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    config["train"] = "../nowhere/images"
+    yaml_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    with pytest.raises(DatasetFormatError, match="missing directory"):
+        read_yolo(tmp_path)

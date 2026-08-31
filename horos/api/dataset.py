@@ -47,10 +47,17 @@ class ImportSummary(BaseModel):
 def _read_any(source: Path, format: str | None) -> tuple[str, Dataset, dict[int, Path]]:
     detected = format or formats.detect_format(source)
     if detected is None:
+        hint = formats.unsupported_format_hint(source)
+        looks_like = (
+            f"This looks like a {hint} export, which horos does not support — "
+            f"re-export it as COCO JSON or YOLO (with a data.yaml). "
+            if hint
+            else ""
+        )
         raise DatasetFormatError(
-            f"Could not detect a dataset format under {source}. Expected a COCO "
-            f"'_annotations.coco.json' (flat or in train/valid/test subdirectories) "
-            f"or a YOLO 'data.yaml'."
+            f"Could not detect a supported dataset format under {source}. {looks_like}"
+            f"Expected a COCO '_annotations.coco.json' (flat or in train/valid/test "
+            f"subdirectories) or a YOLO 'data.yaml'."
         )
     if detected == "coco":
         dataset, image_paths = coco_format.read_coco(source)
@@ -74,17 +81,27 @@ def import_dataset(
     *,
     format: str | None = None,
     copy_images: bool = True,
+    boundary: Path | None = None,
 ) -> ImportSummary:
     """Import a dataset directory (or annotation file) into the project.
 
     Categories are merged by name with any the project already has. Images are
     copied into the project by default; copy_images=False stores absolute-path
-    references instead.
+    references instead. When `boundary` is given, any annotation-referenced
+    file resolving outside that directory is refused — import_zip passes the
+    extraction dir so an uploaded archive cannot pull in server-side files.
     """
     source = Path(source)
     if not source.exists():
         raise DatasetFormatError(f"Dataset source does not exist: {source}")
     detected, dataset, image_paths = _read_any(source, format)
+    if boundary is not None:
+        bound = boundary.resolve()
+        for path in image_paths.values():
+            if not path.is_relative_to(bound):
+                raise DatasetFormatError(
+                    f"Dataset references a file outside the archive: {path}"
+                )
 
     # merge categories by name
     categories = list(project.categories)
@@ -193,7 +210,7 @@ def import_zip(project: Project, zip_path: Path | str) -> ImportSummary:
         raise DatasetFormatError(f"{zip_path} is not a valid zip archive")
     with tempfile.TemporaryDirectory(prefix="horos_upload_") as tmp:
         _safe_extract(zip_path, Path(tmp))
-        return import_dataset(project, Path(tmp), copy_images=True)
+        return import_dataset(project, Path(tmp), copy_images=True, boundary=Path(tmp))
 
 
 @capability(

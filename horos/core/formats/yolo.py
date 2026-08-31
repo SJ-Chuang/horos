@@ -59,15 +59,27 @@ def _parse_names(raw) -> list[str]:
     raise DatasetFormatError(f"data.yaml 'names' must be a list or dict, got {type(raw)}")
 
 
+def _strip_parent_prefix(value: str) -> str:
+    while value.startswith(("../", "..\\")):
+        value = value[3:]
+    return value
+
+
 def _resolve_dir(yaml_path: Path, base: str | None, value: str) -> Path:
     root = yaml_path.parent / base if base else yaml_path.parent
-    candidate = (root / value).resolve()
-    if candidate.is_dir():
-        return candidate
+    candidates = [root / value]
     # tolerate paths written relative to the yaml itself
-    fallback = (yaml_path.parent / value).resolve()
-    if fallback.is_dir():
-        return fallback
+    candidates.append(yaml_path.parent / value)
+    # Roboflow exports put data.yaml at the dataset root but write paths like
+    # `../train/images` (relative to an assumed enclosing datasets dir) —
+    # retry with the leading ../ segments stripped, anchored at the yaml.
+    stripped = _strip_parent_prefix(value)
+    if stripped != value:
+        candidates.append(yaml_path.parent / stripped)
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate.is_dir():
+            return candidate
     raise DatasetFormatError(f"data.yaml points at missing directory: {value}")
 
 

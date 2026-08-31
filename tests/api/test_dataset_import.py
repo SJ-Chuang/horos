@@ -103,3 +103,67 @@ def test_convert_to_same_format_is_rejected(tmp_path):
     coco_dir = write_sample_coco_dir(tmp_path / "coco")
     with pytest.raises(DatasetFormatError, match="already in format"):
         convert_dataset(coco_dir, tmp_path / "out", to_format="coco")
+
+
+def test_import_zip_roboflow_layout(tmp_path):
+    # Regression: Roboflow YOLO zips (data.yaml with ../<split>/images paths)
+    from test_format_yolo import _rewrite_yaml_roboflow_style
+
+    yolo_dir = write_sample_yolo_dir(tmp_path / "yolo")
+    _rewrite_yaml_roboflow_style(yolo_dir)
+    zip_path = tmp_path / "upload.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for path in yolo_dir.rglob("*"):
+            if path.is_file():
+                zf.write(path, path.relative_to(yolo_dir))
+    project = create_project(tmp_path / "proj")
+    summary = import_zip(project, zip_path)
+    assert summary.format == "yolo"
+    assert summary.num_images == 3
+
+
+def test_import_zip_refuses_files_outside_archive(tmp_path):
+    # A crafted data.yaml must not be able to pull server-side files into the project
+    from helpers.data import make_image
+
+    outside = tmp_path / "outside" / "images"
+    make_image(outside / "secret.png")
+    zip_path = tmp_path / "evil.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("data.yaml", f"train: {outside}\nnames: ['x']\n")
+    project = create_project(tmp_path / "proj")
+    with pytest.raises(DatasetFormatError, match="outside the archive"):
+        import_zip(project, zip_path)
+
+
+def test_import_zip_voc_gets_targeted_error(tmp_path):
+    from helpers.data import make_image
+
+    src = tmp_path / "voc"
+    make_image(src / "img1.png")
+    (src / "img1.xml").write_text(
+        "<annotation><filename>img1.png</filename></annotation>", encoding="utf-8"
+    )
+    zip_path = tmp_path / "voc.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for path in src.rglob("*"):
+            zf.write(path, path.relative_to(src))
+    project = create_project(tmp_path / "proj")
+    with pytest.raises(DatasetFormatError, match="Pascal VOC"):
+        import_zip(project, zip_path)
+
+
+def test_import_zip_darknet_gets_targeted_error(tmp_path):
+    from helpers.data import make_image
+
+    src = tmp_path / "darknet"
+    make_image(src / "img1.png")
+    (src / "img1.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    (src / "_darknet.labels").write_text("helmet\n", encoding="utf-8")
+    zip_path = tmp_path / "darknet.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for path in src.rglob("*"):
+            zf.write(path, path.relative_to(src))
+    project = create_project(tmp_path / "proj")
+    with pytest.raises(DatasetFormatError, match="Darknet"):
+        import_zip(project, zip_path)
