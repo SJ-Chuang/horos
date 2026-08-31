@@ -152,10 +152,17 @@ _RUNTIME_DEPS: list[tuple[str, str]] = [
     ("transformers", "transformers>=5.1,<6"),
     ("torch", "torch"),
     ("torchvision", "torchvision"),
-    ("rfdetr", "rfdetr==1.9.4"),
+    ("rfdetr", "rfdetr[train]==1.9.4"),
+    # the [train] extra's marker package — missing means rfdetr was installed
+    # without its training stack and horos cannot train
+    ("pytorch_lightning", "rfdetr[train]==1.9.4"),
 ]
 
-_IMPORT_TO_DIST = {"yaml": "PyYAML", "PIL": "pillow"}
+_IMPORT_TO_DIST = {
+    "yaml": "PyYAML",
+    "PIL": "pillow",
+    "pytorch_lightning": "pytorch-lightning",
+}
 
 
 def _installed_version(import_name: str) -> str | None:
@@ -194,17 +201,40 @@ def _plan_fixes(
             )
         else:
             commands.append(["torch", "torchvision"])
-    if "rfdetr" in missing:
+    if "rfdetr" in missing or "pytorch_lightning" in missing:
         if platform.is_jetson:
-            # --no-deps so rfdetr cannot drag a PyPI torch in behind our back
-            commands.append(["rfdetr==1.9.4", "--no-deps"])
-            commands.append(["supervision", "pycocotools"])
+            # --no-deps so rfdetr cannot drag a PyPI torch in behind our back;
+            # the training stack is then spelled out explicitly. Several of
+            # those packages declare torch as a dependency, so they are only
+            # safe to install once the JetPack torch is in place.
+            if "rfdetr" in missing:
+                commands.append(["rfdetr==1.9.4", "--no-deps"])
+            if needs_torch:
+                manual.append(
+                    "After installing the JetPack torch, re-run 'horos doctor "
+                    "--fix' to install the training stack (pytorch_lightning "
+                    "and friends declare torch as a dependency and would pull "
+                    "the PyPI build in if installed first)."
+                )
+            else:
+                commands.append(
+                    [
+                        "supervision",
+                        "pycocotools",
+                        "pytorch_lightning>=2.6,!=2.6.2,!=2.6.3,<3",
+                        "torchmetrics[detection]>=1.2",
+                        "faster-coco-eval>=1.7.2",
+                        "scipy",
+                        "peft",
+                    ]
+                )
         else:
-            commands.append(["rfdetr==1.9.4"])
+            commands.append(["rfdetr[train]==1.9.4"])
     if "transformers" in missing:
         commands.append(["transformers>=5.1,<6"])
     for name in missing:
-        if name in ("torch", "torchvision", "rfdetr", "transformers"):
+        if name in ("torch", "torchvision", "rfdetr", "pytorch_lightning",
+                    "transformers"):
             continue
         spec = dict(_RUNTIME_DEPS)[name]
         commands.append([spec])

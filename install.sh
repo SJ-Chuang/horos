@@ -107,7 +107,11 @@ if [[ "$IS_JETSON" == "yes" ]]; then
     "$VPY" -m pip install "pydantic>=2.6,<3" "flask>=3.0,<4" "pyyaml>=6.0" "pillow>=10.0" \
         "transformers>=5.1.0,<6"
     "$VPY" -m pip install "rfdetr==1.9.4" --no-deps
-    "$VPY" -m pip install supervision pycocotools
+    # rfdetr's [train] stack, spelled out so pip cannot pull a PyPI torch in.
+    # Safe here: the JetPack torch is already visible in this venv.
+    "$VPY" -m pip install supervision pycocotools scipy peft \
+        "pytorch_lightning>=2.6,!=2.6.2,!=2.6.3,<3" \
+        "torchmetrics[detection]>=1.2" "faster-coco-eval>=1.7.2"
 else
     echo "Installing horos with its dependencies (rfdetr, transformers) ..."
     "$VPY" -m pip install -e .

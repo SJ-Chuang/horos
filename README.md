@@ -64,8 +64,13 @@ Doing it by hand:
 
 ```bash
 pip install horos --no-deps
-pip install pydantic flask pyyaml pillow "transformers>=5.1,<6" supervision
-# torch/torchvision: use the NVIDIA wheel matching your JetPack version
+pip install pydantic flask pyyaml pillow "transformers>=5.1,<6"
+# torch/torchvision: use the NVIDIA wheel matching your JetPack version — FIRST,
+# because the training stack below declares torch as a dependency
+pip install "rfdetr==1.9.4" --no-deps
+pip install supervision pycocotools scipy peft \
+    "pytorch_lightning>=2.6,!=2.6.2,!=2.6.3,<3" \
+    "torchmetrics[detection]>=1.2" "faster-coco-eval>=1.7.2"
 ```
 
 `horos` warns at backend load time if it detects a Jetson platform where

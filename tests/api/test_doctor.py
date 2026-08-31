@@ -19,9 +19,15 @@ def test_report_on_current_env():
     assert report.fix_commands == [] and report.manual_actions == []
 
 
-def test_missing_rfdetr_plans_pinned_install():
+def test_missing_rfdetr_plans_pinned_install_with_training_stack():
     commands, manual = _plan_fixes(["rfdetr"], _plat())
-    assert ["rfdetr==1.9.4"] in commands and manual == []
+    assert ["rfdetr[train]==1.9.4"] in commands and manual == []
+
+
+def test_missing_training_stack_alone_reinstalls_the_extra():
+    # rfdetr installed without [train] (e.g. an old horos env): fix via the extra
+    commands, manual = _plan_fixes(["pytorch_lightning"], _plat())
+    assert ["rfdetr[train]==1.9.4"] in commands and manual == []
 
 
 def test_jetson_never_automates_torch():
