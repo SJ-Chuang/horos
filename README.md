@@ -9,6 +9,30 @@ End-to-end tooling for perception tasks: annotate → train → evaluate → dep
 
 ## Install
 
+The install scripts detect your platform (OS, NVIDIA GPU, Jetson) and install the
+matching torch build plus horos into `./.venv`:
+
+```bash
+# Ubuntu / macOS / Jetson
+./install.sh
+
+# Windows
+install.bat
+```
+
+What they decide for you:
+
+| Platform | torch source |
+|---|---|
+| Linux + NVIDIA GPU | PyPI (Linux wheels bundle CUDA) |
+| Linux without GPU | PyTorch CPU index (saves ~2 GB) |
+| macOS | PyPI universal build (MPS) |
+| Windows + NVIDIA GPU | PyTorch index matching your CUDA (cu118/cu124/cu126) — the PyPI Windows wheel is CPU-only |
+| Windows without GPU | PyPI (CPU) |
+| Jetson | **never installed by the script** — see below |
+
+Manual install works too:
+
 ```bash
 pip install horos
 ```
@@ -20,7 +44,11 @@ no CUDA support on Jetson, and a plain `pip install horos` may silently replace 
 CUDA-enabled torch with a CPU-only build — everything still runs, just an order of
 magnitude slower.
 
-Install without dependencies and provide the environment yourself:
+`./install.sh` handles this automatically on Jetson: it creates the venv with
+`--system-site-packages`, verifies the existing torch has CUDA (warning loudly if
+not), and installs horos with `--no-deps` so pip can never swap torch out.
+
+Doing it by hand:
 
 ```bash
 pip install horos --no-deps

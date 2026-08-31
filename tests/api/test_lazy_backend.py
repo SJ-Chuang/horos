@@ -1,5 +1,6 @@
 """E4-T11: backends resolve lazily from registry entrypoint strings."""
 
+import subprocess
 import sys
 
 import pytest
@@ -80,9 +81,12 @@ def test_malformed_entrypoint_gives_clear_error(register_fake):
 
 
 def test_importing_horos_backends_does_not_import_ml_deps():
-    # Cheap in-process guard; the authoritative subprocess check is E4-T10 in
-    # tests/test_invariants.py.
-    import horos.backends  # noqa: F401
-
-    for mod in ("torch", "rfdetr", "transformers"):
-        assert mod not in sys.modules, f"{mod} leaked in via horos.backends"
+    # Must run in a subprocess: with the ML deps installed, other tests in
+    # this process (the real-inference smoke test) legitimately import torch,
+    # which would false-positive an in-process sys.modules check.
+    code = (
+        "import sys; import horos.backends; "
+        "leaked = [m for m in ('torch', 'rfdetr', 'transformers') if m in sys.modules]; "
+        "sys.exit(f'leaked via horos.backends: {leaked}' if leaked else 0)"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
