@@ -531,6 +531,12 @@ const Page = {
     const [view] = await Promise.all([
       api(`/images/${item.image.id}/annotations`), this._claim(item.image.id),
     ]);
+    // another session (or a background job) may have added classes since this
+    // page loaded — refresh before an unknown id would render as a number
+    const known = new Set(this.categories.map((c) => c.id));
+    if (view.annotations.some((a) => !known.has(a.category_id))) {
+      this.categories = (await api("/project")).categories;
+    }
     this.version = view.version;
     this.editorImage = new Image();
     this.editorImage.onload = () => {
@@ -1286,6 +1292,10 @@ const Page = {
   async _refetch() {
     const item = this.queue[this.currentIdx];
     const view = await api(`/images/${item.image.id}/annotations`);
+    const known = new Set(this.categories.map((c) => c.id));
+    if (view.annotations.some((a) => !known.has(a.category_id))) {
+      this.categories = (await api("/project")).categories;
+    }
     this.version = view.version;
     this.editorShapes = view.annotations.map((a) => this._toShape(a));
     const confirmed = view.annotations.filter((a) => a.status === "confirmed");
@@ -1444,6 +1454,9 @@ const Page = {
         }
         toast(`Auto-label finished: ${result.annotations || 0} pre-label(s) — review them in "Needs review" mode.`, "warn", 5000);
         this.closeAutolabelModal();
+        // the job may have created classes server-side; a stale list would
+        // render their pre-labels as bare category ids
+        this.categories = (await api("/project")).categories;
         $("queue-mode").value = "pending";
         await this.loadImages(1);
       } else if (body.state === "cancelled") {
