@@ -276,7 +276,9 @@
       <div id="job-bar" style="background:var(--line);height:8px;border-radius:4px;overflow:hidden;margin:10px 0">
         <div style="background:var(--accent);height:100%;width:0"></div>
       </div>
-      <div id="job-text" style="font-size:12px;color:var(--dim)">starting…</div>
+      <div id="job-text" title=""
+           style="font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+        starting…</div>
       <button class="btn danger" id="autolabel-cancel" style="width:100%;margin-top:10px">Cancel</button>
     </div>
   </div>
@@ -1348,8 +1350,9 @@ const Page = {
         if (event.type === "progress") {
           const pct = event.total ? (100 * event.current) / event.total : 0;
           $("job-bar").firstElementChild.style.width = pct + "%";
-          $("job-text").textContent =
-            `${event.current}/${event.total ?? "?"} — ${event.message || event.phase}`;
+          const line = `${event.current}/${event.total ?? "?"} — ${event.message || event.phase}`;
+          $("job-text").textContent = line;
+          $("job-text").title = line;  // ellipsized, hover shows the full name
         } else if (event.type === "failed") {
           $("job-text").textContent = "failed: " + event.message;
         }
