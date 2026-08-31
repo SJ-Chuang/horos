@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "horos"
+version = "0.1.0"
+description = "End-to-end tooling for perception tasks: annotate, train, evaluate, deploy."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Bruce Chuang" }]
+dependencies = [
+    "pydantic>=2.6,<3",
+    "flask>=3.0,<4",
+    "pyyaml>=6.0",
+    "pillow>=10.0",
+    # R5: rfdetr is pinned exactly. The package has had silent annotation-corruption
+    # bugs under specific augmentation settings; a floating version makes training
+    # runs unreproducible. Upgrading is a standalone task with a full regression run.
+    "rfdetr==1.9.4",
+    # transformers hosts the OWLv2 backend; range chosen to match rfdetr 1.9.4's
+    # own constraint (>=5.1.0,<6).
+    "transformers>=5.1.0,<6",
+]
+
+[project.scripts]
+horos = "horos.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["horos*"]
+
+[tool.setuptools.package-data]
+"horos.ui" = ["templates/*.html", "static/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

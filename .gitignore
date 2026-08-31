@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+
+# horos runtime artifacts — never commit weights, datasets, or caches (§10)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+.horos/
+demo_project/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
