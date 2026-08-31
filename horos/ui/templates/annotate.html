@@ -434,7 +434,7 @@ const Page = {
     document.querySelectorAll(".tool-btn").forEach((b) => {
       // blur after click, or the browser focus ring stays on the last
       // mouse-clicked button when tools are later switched via number keys
-      b.onclick = () => { this.setTool(b.dataset.tool); b.blur(); };
+      b.onclick = () => { this.setTool(b.dataset.tool, true); b.blur(); };
     });
     $("btn-autolabel").onclick = () => this.openAutolabelModal();
     $("autolabel-close").onclick = () => this.closeAutolabelModal();
@@ -770,12 +770,15 @@ const Page = {
         return;
       }
       switch (code) {
-        case "KeyA": this.prevImage(); break;
-        case "KeyD": this.nextImage(); break;
+        case "KeyA": e.preventDefault(); this.prevImage(); break;
+        case "KeyD": e.preventDefault(); this.nextImage(); break;
         case "Digit1": case "Numpad1": this.setTool("select"); break;
         case "Digit2": case "Numpad2": this.setTool("rect"); break;
         case "Digit3": case "Numpad3": this.setTool("poly"); break;
-        case "Digit4": case "Numpad4": this.setTool("ai-text"); break;
+        case "Digit4": case "Numpad4":
+          e.preventDefault();  // focus moves into the prompt — don't type the "4"
+          this.setTool("ai-text", true);
+          break;
         case "Delete": case "Backspace":
           if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
           break;
@@ -789,12 +792,15 @@ const Page = {
   },
 
   // ---------------------------------------------------------------- tools
-  setTool(tool) {
+  setTool(tool, focusAssist = false) {
     this.activeTool = tool;
     document.querySelectorAll(".tool-btn").forEach((b) =>
       b.classList.toggle("active", b.dataset.tool === tool));
     $("assist-panel").style.display = tool === "ai-text" ? "block" : "none";
-    if (tool === "ai-text") $("assist-input").focus();
+    // focus only on an explicit tool pick — openEditor re-applies the tool on
+    // every image switch, and focusing there makes the browser type the A/D
+    // navigation keystroke into the prompt input
+    if (tool === "ai-text" && focusAssist) $("assist-input").focus();
     this.isDrawing = false;
     this.currentPoints = [];
     if (tool !== "select") this.selectedShapeIdx = -1;
