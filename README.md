@@ -37,6 +37,13 @@ Manual install works too:
 pip install horos
 ```
 
+**Use a dedicated environment.** horos pins `rfdetr` exactly (upstream has had
+silent annotation-corruption bugs; reproducibility wins) and requires
+`transformers >= 5.1` — installing into a shared ML environment will upgrade
+`transformers`, `supervision`, `huggingface-hub` and friends, which can break
+other projects living in that environment. The install scripts create an
+isolated `./.venv` for exactly this reason.
+
 ### Jetson (read this — it matters)
 
 On Jetson, torch **must** come from NVIDIA's JetPack-matched wheel. The PyPI torch has
