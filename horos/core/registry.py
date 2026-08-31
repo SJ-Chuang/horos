@@ -1,0 +1,201 @@
+"""Model registry: static metadata only (E4-T1).
+
+R3: license metadata is a first-class field, recorded separately for code and
+weights — a permissive codebase does not imply permissive weights.
+
+R1b: this module must stay importable without any backend dependency. Backends
+are referenced by entrypoint strings ("module:ClassName") and resolved lazily
+by `horos.backends.get_backend` (E4-T11).
+
+§9: only Apache-licensed RF-DETR sizes (Nano/Small/Medium/Large) are listed in
+the public registry. XL / 2XL (PML 1.0) live in a separate gated table and can
+only be loaded with `acknowledge_non_apache=True` (E4-T9).
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel
+
+from horos.errors import UnknownModelError
+
+Task = Literal["detection", "instance_segmentation"]
+
+APACHE_2_0 = "Apache-2.0"
+
+
+class ModelInfo(BaseModel):
+    """Static metadata for one loadable model. No backend imports allowed here."""
+
+    key: str
+    family: str
+    display_name: str
+    task: Task
+    code_license: str
+    weights_license: str
+    license_url: str
+    input_resolution: int
+    params_millions: float
+    latency_hint: str
+    entrypoint: str  # "horos.backends.<family>:<ClassName>", resolved lazily
+    hf_id: str | None = None  # HuggingFace hub id, for transformers-hosted weights
+    notes: str = ""
+
+    @property
+    def license(self) -> str:
+        """Display license: weights license governs what users can ship."""
+        return self.weights_license
+
+    @property
+    def requires_acknowledgement(self) -> bool:
+        return self.weights_license != APACHE_2_0 or self.code_license != APACHE_2_0
+
+
+_RFDETR_ENTRYPOINT = "horos.backends.rfdetr:RFDETRBackend"
+_RFDETR_LICENSE_URL = "https://github.com/roboflow/rf-detr/blob/main/LICENSE"
+_OWLV2_ENTRYPOINT = "horos.backends.owlv2:OWLv2Backend"
+
+# rfdetr==1.9.4 (pinned, R5). Sizes/params from the upstream release notes.
+_MODELS: dict[str, ModelInfo] = {
+    m.key: m
+    for m in [
+        ModelInfo(
+            key="rfdetr-nano",
+            family="rfdetr",
+            display_name="RF-DETR Nano",
+            task="detection",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=384,
+            params_millions=30.5,
+            latency_hint="fastest — Jetson-friendly real-time",
+            entrypoint=_RFDETR_ENTRYPOINT,
+        ),
+        ModelInfo(
+            key="rfdetr-small",
+            family="rfdetr",
+            display_name="RF-DETR Small",
+            task="detection",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=512,
+            params_millions=32.1,
+            latency_hint="fast — good default for Jetson",
+            entrypoint=_RFDETR_ENTRYPOINT,
+        ),
+        ModelInfo(
+            key="rfdetr-medium",
+            family="rfdetr",
+            display_name="RF-DETR Medium",
+            task="detection",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=576,
+            params_millions=33.7,
+            latency_hint="balanced accuracy/latency",
+            entrypoint=_RFDETR_ENTRYPOINT,
+        ),
+        ModelInfo(
+            key="rfdetr-large",
+            family="rfdetr",
+            display_name="RF-DETR Large",
+            task="detection",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=704,
+            params_millions=129.0,
+            latency_hint="highest accuracy — desktop GPU recommended",
+            entrypoint=_RFDETR_ENTRYPOINT,
+        ),
+        ModelInfo(
+            key="owlv2-base",
+            family="owlv2",
+            display_name="OWLv2 Base (open-vocabulary autolabel)",
+            task="detection",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url="https://huggingface.co/google/owlv2-base-patch16-ensemble",
+            input_resolution=960,
+            params_millions=155.0,
+            latency_hint="zero-shot autolabeling, not for deployment",
+            entrypoint=_OWLV2_ENTRYPOINT,
+            hf_id="google/owlv2-base-patch16-ensemble",
+        ),
+        ModelInfo(
+            key="owlv2-large",
+            family="owlv2",
+            display_name="OWLv2 Large (open-vocabulary autolabel)",
+            task="detection",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url="https://huggingface.co/google/owlv2-large-patch14-ensemble",
+            input_resolution=1008,
+            params_millions=437.0,
+            latency_hint="best zero-shot quality, slow — batch use only",
+            entrypoint=_OWLV2_ENTRYPOINT,
+            hf_id="google/owlv2-large-patch14-ensemble",
+        ),
+    ]
+}
+
+# Known but license-gated (E4-T9). Never shown by list_models(); loading requires
+# acknowledge_non_apache=True AND the rfdetr[plus] extra installed.
+_GATED_MODELS: dict[str, ModelInfo] = {
+    m.key: m
+    for m in [
+        ModelInfo(
+            key="rfdetr-xl",
+            family="rfdetr",
+            display_name="RF-DETR XL",
+            task="detection",
+            code_license="PML-1.0",
+            weights_license="PML-1.0",
+            license_url="https://github.com/roboflow/rf-detr/blob/main/LICENSE_PLUS",
+            input_resolution=700,
+            params_millions=0.0,  # not published for the gated sizes
+            latency_hint="requires rfdetr[plus]",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            notes="Roboflow PML 1.0 — not Apache. Commercial use restrictions apply.",
+        ),
+        ModelInfo(
+            key="rfdetr-2xl",
+            family="rfdetr",
+            display_name="RF-DETR 2XL",
+            task="detection",
+            code_license="PML-1.0",
+            weights_license="PML-1.0",
+            license_url="https://github.com/roboflow/rf-detr/blob/main/LICENSE_PLUS",
+            input_resolution=880,
+            params_millions=0.0,
+            latency_hint="requires rfdetr[plus]",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            notes="Roboflow PML 1.0 — not Apache. Commercial use restrictions apply.",
+        ),
+    ]
+}
+
+
+def list_models(task: Task | None = None) -> list[ModelInfo]:
+    """All openly registered models (Apache-licensed only), optionally by task."""
+    models = list(_MODELS.values())
+    if task is not None:
+        models = [m for m in models if m.task == task]
+    return models
+
+
+def get_model_info(key: str) -> ModelInfo:
+    """Look up one registered model. Raises UnknownModelError for unknown keys.
+
+    Gated (non-Apache) models resolve here too so the license guard can explain
+    *why* they are blocked instead of pretending they do not exist.
+    """
+    info = _MODELS.get(key) or _GATED_MODELS.get(key)
+    if info is None:
+        known = ", ".join(sorted(_MODELS))
+        raise UnknownModelError(f"Unknown model '{key}'. Registered models: {known}")
+    return info
