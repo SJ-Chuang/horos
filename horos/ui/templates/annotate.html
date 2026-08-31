@@ -65,6 +65,11 @@
               cursor: pointer; }
   .tool-btn:hover { border-color: var(--accent); }
   .tool-btn.active { color: var(--accent); border-color: var(--accent); }
+  .tool-btn.ai { color: var(--ok); }
+  .tool-btn.ai.active { color: var(--ok); border-color: var(--ok); }
+  .prompt-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .prompt-row input:first-child { width: 110px; }
+  .prompt-row input:last-child { flex: 1; }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
           border: 1px solid var(--line); border-radius: 20px; cursor: pointer;
@@ -125,6 +130,7 @@
       <option value="file_name">File name order</option>
       <option value="unannotated">Only unannotated</option>
       <option value="annotated">Only annotated</option>
+      <option value="pending">Needs review (uncertain first)</option>
     </select>
     <select id="split-filter">
       <option value="">All splits</option>
@@ -138,6 +144,7 @@
       <option value="100">100 / page</option>
     </select>
     <button class="btn" id="btn-classes">Manage Classes</button>
+    <button class="btn primary" id="btn-autolabel">Auto-label…</button>
   </div>
   <div class="image-grid" id="image-grid"></div>
   <div class="pagination" id="pagination"></div>
@@ -176,12 +183,40 @@
             title="Rectangle — drag from one corner to the opposite corner. (shortcut 2)">▭</button>
           <button class="tool-btn" data-tool="poly"
             title="Polygon — click to add each vertex; double-click or click the first point to finish. (shortcut 3)">⬠</button>
+          <button class="tool-btn ai" data-tool="ai-text"
+            title="AI text prompt — type object names (e.g. helmet, vest), then Apply. OWLv2 pre-labels them on this image. (shortcut 4)">T</button>
+        </div>
+        <div id="assist-panel" style="display:none;margin-top:10px">
+          <input type="text" id="assist-input" placeholder="e.g. helmet, vest, person"
+                 style="width:100%" title="Comma-separated object names — each becomes a class">
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--dim)">
+            <span>Confidence</span>
+            <input type="number" id="assist-conf" min="0.01" max="1" step="0.01" value="0.10"
+                   style="width:64px;padding:3px 6px">
+            <span style="flex:1"></span>
+            <button class="btn primary" id="assist-run">Apply</button>
+          </div>
+          <div id="assist-status" style="font-size:11px;color:var(--warn);margin-top:4px"></div>
         </div>
         <h4 style="margin-top:14px">Object Class</h4>
         <input type="text" id="class-input" placeholder="e.g. car, person" style="width:100%">
         <div class="chips" id="class-chips"></div>
         <div class="zoom-hint">Use the mouse wheel to zoom and the right mouse button
           to drag zoomed images.</div>
+      </div>
+      <div class="card" id="review-card" style="display:none">
+        <h4>Review pre-labels</h4>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)">
+          <span id="review-count"></span>
+          <span style="flex:1"></span>
+          <span id="review-threshold-label">≥ 0.00</span>
+        </div>
+        <input type="range" id="review-threshold" min="0" max="1" step="0.01" value="0"
+               style="width:100%;margin:6px 0">
+        <div style="display:flex;gap:6px">
+          <button class="btn primary" id="review-accept" style="flex:1">Accept</button>
+          <button class="btn danger" id="review-reject" style="flex:1">Reject all</button>
+        </div>
       </div>
       <div class="card shapes-card">
         <div class="switch-row">
@@ -215,12 +250,44 @@
   </div>
 </div>
 
+<!-- autolabel modal -->
+<div class="modal" id="autolabel-modal">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h4 style="margin:0">Auto-label with text prompts</h4>
+      <button class="btn" id="autolabel-close">✕</button>
+    </div>
+    <div id="autolabel-form">
+      <p style="color:var(--dim);font-size:12px;margin:0 0 8px">
+        One row per class. Prompts are comma-separated synonyms OWLv2 will look for.</p>
+      <div id="prompt-rows"></div>
+      <button class="btn" id="add-prompt-row" style="width:100%;margin:6px 0">+ add class</button>
+      <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim);margin:8px 0">
+        <span>Confidence</span>
+        <input type="number" id="autolabel-conf" min="0.01" max="1" step="0.01" value="0.10"
+               style="width:70px;padding:3px 6px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="autolabel-unannotated" checked> only unannotated images
+        </label>
+      </div>
+      <button class="btn primary" id="autolabel-start" style="width:100%">Start</button>
+    </div>
+    <div id="autolabel-progress" style="display:none">
+      <div id="job-bar" style="background:var(--line);height:8px;border-radius:4px;overflow:hidden;margin:10px 0">
+        <div style="background:var(--accent);height:100%;width:0"></div>
+      </div>
+      <div id="job-text" style="font-size:12px;color:var(--dim)">starting…</div>
+      <button class="btn danger" id="autolabel-cancel" style="width:100%;margin-top:10px">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- shortcuts modal -->
 <div class="modal" id="help-modal">
   <div class="card">
     <h4>Keyboard shortcuts</h4>
     <table>
-      <tr><td>1 / 2 / 3</td><td>Select ✎ / Rectangle ▭ / Polygon ⬠ tool</td></tr>
+      <tr><td>1 / 2 / 3 / 4</td><td>Select ✎ / Rectangle ▭ / Polygon ⬠ / AI prompt T tool</td></tr>
       <tr><td>A / D</td><td>previous / next image</td></tr>
       <tr><td>Ctrl+S</td><td>save annotations</td></tr>
       <tr><td>Ctrl+Z</td><td>undo</td></tr>
@@ -277,6 +344,7 @@ const Page = {
   history: [], clipboardShape: null,
   autoSave: true, isDirty: false, _saveTimer: null, _claimTimer: null,
   classCounts: {}, sessionNames: new Set(),
+  reviewThreshold: 0, _jobTimer: null,
 
   // ------------------------------------------------------------------ boot
   async init() {
@@ -303,6 +371,22 @@ const Page = {
       // mouse-clicked button when tools are later switched via number keys
       b.onclick = () => { this.setTool(b.dataset.tool); b.blur(); };
     });
+    $("btn-autolabel").onclick = () => this.openAutolabelModal();
+    $("autolabel-close").onclick = () => this.closeAutolabelModal();
+    $("add-prompt-row").onclick = () => this.addPromptRow();
+    $("autolabel-start").onclick = () => this.startAutolabel();
+    $("autolabel-cancel").onclick = () => this.cancelAutolabel();
+    $("assist-run").onclick = () => this.runAssist();
+    $("assist-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); this.runAssist(); }
+    });
+    $("review-threshold").oninput = (e) => {
+      this.reviewThreshold = Number(e.target.value);
+      this._syncReviewBar();
+      this._drawCanvas();
+    };
+    $("review-accept").onclick = () => this.reviewAll("accept");
+    $("review-reject").onclick = () => this.reviewAll("reject");
     $("help-link").onclick = (e) => { e.preventDefault(); $("help-modal").style.display = "flex"; };
     $("help-modal").onclick = () => { $("help-modal").style.display = "none"; };
     const saved = (() => { try { return localStorage.getItem("horos_autosave"); } catch (e) { return null; } })();
@@ -341,7 +425,9 @@ const Page = {
       <div class="thumb" data-i="${start + i}">
         <img loading="lazy" src="/api/v1/images/${item.image.id}/file" alt="">
         <div class="meta">
-          <span class="badge">${item.claimed_by ? "🔒" : item.annotated ? "✓" : "·"}</span>
+          <span class="badge">${item.claimed_by ? "🔒"
+            : item.num_pending ? `<span style="color:var(--warn)">◌${item.num_pending}</span>`
+            : item.annotated ? "✓" : "·"}</span>
           <span class="fname" title="${item.image.file_name}">${item.image.file_name}</span>
         </div>
       </div>`).join("");
@@ -382,8 +468,11 @@ const Page = {
       this.zoom = 1;
       this.editorShapes = view.annotations.map((a) => this._toShape(a));
       this.isDirty = false;
+      this.reviewThreshold = 0;
+      $("review-threshold").value = 0;
       this._resizeCanvas();
       this._setSaveState("", "");
+      this._syncReviewBar();
       this.renderChips();
     };
     this.editorImage.src = `/api/v1/images/${item.image.id}/file`;
@@ -416,30 +505,37 @@ const Page = {
     $("btn-next").disabled = this.currentIdx >= this.queue.length - 1;
   },
 
-  // shapes {label, shape_type, points[[x,y],..]} <-> horos annotations
+  // shapes {label, shape_type, points[[x,y],..], status, score} <-> annotations
   _toShape(a) {
     const cat = this.categories.find((c) => c.id === a.category_id);
     const label = cat ? cat.name : String(a.category_id);
+    const meta = { id: a.id, status: a.status || "confirmed",
+                   source: a.source || "manual", score: a.score ?? null };
     if (a.segmentation && a.segmentation.length) {
       const pts = [];
       for (let k = 0; k < a.segmentation[0].length; k += 2)
         pts.push([a.segmentation[0][k], a.segmentation[0][k + 1]]);
-      return { label, shape_type: "polygon", points: pts };
+      return { label, shape_type: "polygon", points: pts, ...meta };
     }
     const [x, y, w, h] = a.bbox;
-    return { label, shape_type: "rectangle", points: [[x, y], [x + w, y + h]] };
+    return { label, shape_type: "rectangle",
+             points: [[x, y], [x + w, y + h]], ...meta };
   },
   async _toAnnotations() {
     const anns = [];
     for (const s of this.editorShapes) {
       const cat = await this._resolveCategory(s.label);
+      // status/source/score survive edits — moving a pending pre-label must
+      // not silently confirm it; accepting is an explicit review action
+      const meta = { status: s.status || "confirmed",
+                     source: s.source || "manual", score: s.score ?? null };
       if (s.shape_type === "rectangle") {
         const [[x1, y1], [x2, y2]] = s.points;
-        anns.push({ category_id: cat.id,
+        anns.push({ ...meta, category_id: cat.id,
           bbox: [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)],
           segmentation: [] });
       } else {
-        anns.push({ category_id: cat.id, segmentation: [s.points.flat()] });
+        anns.push({ ...meta, category_id: cat.id, segmentation: [s.points.flat()] });
       }
     }
     return anns;
@@ -512,9 +608,16 @@ const Page = {
         json("PUT", { expected_version: this.version, annotations }));
       this.version = view.version;
       this.isDirty = false;
-      item.num_annotations = view.annotations.length;
-      item.annotated = view.annotations.length > 0;
+      // rebuild from the server response so shape ids stay in sync for the
+      // per-shape review actions (order is preserved, selection stays valid)
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      const confirmed = view.annotations.filter((a) => a.status === "confirmed");
+      item.num_annotations = confirmed.length;
+      item.annotated = confirmed.length > 0;
+      item.num_pending = view.annotations.length - confirmed.length;
       this._setSaveState("saved", "saved");
+      this._syncReviewBar();
+      this._drawCanvas();
     } catch (e) {
       if (e.code === "annotation_conflict") {
         const view = await api(`/images/${item.image.id}/annotations`);
@@ -578,6 +681,8 @@ const Page = {
           if (this.clipboardShape) {
             this._pushHistory();
             const s = JSON.parse(JSON.stringify(this.clipboardShape));
+            // a pasted copy is the user's own shape, not a pre-label
+            s.status = "confirmed"; s.source = "manual"; s.score = null; delete s.id;
             const off = 20 / (this.baseScale * this.zoom);
             s.points = s.points.map((p) => [p[0] + off, p[1] + off]);
             this._clampShapePoints(s);
@@ -594,6 +699,7 @@ const Page = {
         case "Digit1": case "Numpad1": this.setTool("select"); break;
         case "Digit2": case "Numpad2": this.setTool("rect"); break;
         case "Digit3": case "Numpad3": this.setTool("poly"); break;
+        case "Digit4": case "Numpad4": this.setTool("ai-text"); break;
         case "Delete": case "Backspace":
           if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
           break;
@@ -611,6 +717,8 @@ const Page = {
     this.activeTool = tool;
     document.querySelectorAll(".tool-btn").forEach((b) =>
       b.classList.toggle("active", b.dataset.tool === tool));
+    $("assist-panel").style.display = tool === "ai-text" ? "block" : "none";
+    if (tool === "ai-text") $("assist-input").focus();
     this.isDrawing = false;
     this.currentPoints = [];
     if (tool !== "select") this.selectedShapeIdx = -1;
@@ -820,11 +928,19 @@ const Page = {
     this.editorShapes.forEach((shape, i) => {
       const isSelected = i === this.selectedShapeIdx;
       const isHovered = i === this.hoverShapeIdx;
+      const isPending = shape.status === "pending";
+      // pre-labels under the review threshold ghost out (E3-S2)
+      const ghosted = isPending && (shape.score ?? 0) < this.reviewThreshold;
       const color = this._getColor(shape.label);
-      const fillAlpha = isSelected ? 0.38 : isHovered ? 0.3 : 0.2;
+      const alphaScale = ghosted ? 0.25 : 1;
+      const fillAlpha = (isSelected ? 0.38 : isHovered ? 0.3 : 0.2) * alphaScale;
       const lineW = (isSelected ? 3.5 : isHovered ? 3 : 2) * inv;
       const stroke = () => {
-        ctx.globalAlpha = 1; ctx.lineWidth = lineW; ctx.strokeStyle = color; ctx.stroke();
+        ctx.globalAlpha = ghosted ? 0.35 : 1;
+        ctx.lineWidth = lineW; ctx.strokeStyle = color;
+        if (isPending) ctx.setLineDash([6 * inv, 4 * inv]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       };
       if (shape.shape_type === "rectangle" && shape.points.length === 2) {
         const [x1, y1] = shape.points[0], [x2, y2] = shape.points[1];
@@ -836,14 +952,17 @@ const Page = {
         ctx.closePath();
         ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
       }
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = ghosted ? 0.35 : 1;
       ctx.font = `600 ${14 * inv}px system-ui, sans-serif`;
+      const text = isPending && shape.score != null
+        ? `${shape.label} ${Number(shape.score).toFixed(2)}` : shape.label;
       const lx = shape.points[0][0], ly = shape.points[0][1] - 6 * inv;
-      const tw = ctx.measureText(shape.label).width;
+      const tw = ctx.measureText(text).width;
       ctx.fillStyle = "rgba(0,0,0,0.66)";
       ctx.fillRect(lx - 4 * inv, ly - 13 * inv, tw + 8 * inv, 18 * inv);
       ctx.fillStyle = isSelected ? "#ffffff" : color;
-      ctx.fillText(shape.label, lx, ly);
+      ctx.fillText(text, lx, ly);
+      ctx.globalAlpha = 1;
       const faint = !isSelected;
       shape.points.forEach((p, j) =>
         drawPoint(p[0], p[1],
@@ -887,13 +1006,24 @@ const Page = {
     el.innerHTML = this.editorShapes.map((s, i) => `
       <div class="shape-item ${i === this.selectedShapeIdx ? "on" : ""}" data-i="${i}">
         <span><span class="dot" style="background:${this._getColor(s.label)}"></span>
-          ${s.label} <small>(${s.shape_type})</small></span>
-        <button class="del" data-i="${i}">×</button>
+          ${s.label} <small>${s.status === "pending"
+            ? `pending ${s.score != null ? Number(s.score).toFixed(2) : ""}`
+            : `(${s.shape_type})`}</small></span>
+        <span style="display:flex;gap:2px">
+          ${s.status === "pending" && s.id
+            ? `<button class="del" style="color:var(--ok)" data-accept="${s.id}" title="Accept">✓</button>`
+            : ""}
+          <button class="del" data-i="${i}" title="Delete">×</button>
+        </span>
       </div>`).join("");
     [...el.children].forEach((row) => {
       row.onclick = () => this.selectShape(Number(row.dataset.i));
-      row.querySelector(".del").onclick = (e) => {
-        e.stopPropagation(); this.deleteShape(Number(row.dataset.i));
+      row.querySelector("[data-i]").onclick = (e) => {
+        e.stopPropagation(); this.deleteShape(Number(e.currentTarget.dataset.i));
+      };
+      const accept = row.querySelector("[data-accept]");
+      if (accept) accept.onclick = (e) => {
+        e.stopPropagation(); this.reviewOne(Number(accept.dataset.accept), "accept");
       };
     });
   },
@@ -1080,6 +1210,173 @@ const Page = {
     }
     this.currentPoints = [];
     this._drawCanvas();
+  },
+
+  // ------------------------------------------------------ review + assist
+  async _refetch() {
+    const item = this.queue[this.currentIdx];
+    const view = await api(`/images/${item.image.id}/annotations`);
+    this.version = view.version;
+    this.editorShapes = view.annotations.map((a) => this._toShape(a));
+    const confirmed = view.annotations.filter((a) => a.status === "confirmed");
+    item.num_annotations = confirmed.length;
+    item.annotated = confirmed.length > 0;
+    item.num_pending = view.annotations.length - confirmed.length;
+    this.selectedShapeIdx = -1; this.history = []; this.isDirty = false;
+    this._syncReviewBar();
+    this.renderChips();
+    this._drawCanvas();
+  },
+  _pendingShapes() {
+    return this.editorShapes.filter((s) => s.status === "pending");
+  },
+  _syncReviewBar() {
+    const pendings = this._pendingShapes();
+    $("review-card").style.display = pendings.length ? "block" : "none";
+    if (!pendings.length) return;
+    const keep = pendings.filter((s) => (s.score ?? 0) >= this.reviewThreshold).length;
+    $("review-count").textContent =
+      `${pendings.length} pending · ${keep} above threshold`;
+    $("review-threshold-label").textContent = `≥ ${this.reviewThreshold.toFixed(2)}`;
+    $("review-accept").textContent =
+      this.reviewThreshold > 0 ? `Accept ≥ ${this.reviewThreshold.toFixed(2)}` : "Accept all";
+  },
+  async reviewAll(action) {
+    const item = this.queue[this.currentIdx];
+    if (!item) return;
+    const body = { action };
+    if (action === "accept" && this.reviewThreshold > 0)
+      body.min_score = this.reviewThreshold;
+    try {
+      await api(`/images/${item.image.id}/review`, json("POST", body));
+      await this._refetch();
+    } catch (e) { toast(e.message, "err"); }
+  },
+  async reviewOne(annId, action) {
+    const item = this.queue[this.currentIdx];
+    try {
+      await api(`/images/${item.image.id}/review`,
+        json("POST", { action, ann_ids: [annId] }));
+      await this._refetch();
+    } catch (e) { toast(e.message, "err"); }
+  },
+
+  _parsePrompts(text) {
+    // "helmet, safety vest" — each term is both the class name and its prompt
+    const prompts = {};
+    text.split(",").map((t) => t.trim()).filter(Boolean)
+      .forEach((term) => { prompts[term] = [term]; });
+    return prompts;
+  },
+  async runAssist() {
+    const item = this.queue[this.currentIdx];
+    const prompts = this._parsePrompts($("assist-input").value);
+    if (!item || !Object.keys(prompts).length) return;
+    const btn = $("assist-run");
+    btn.disabled = true;
+    $("assist-status").textContent =
+      "running… (the first call loads the model and may download weights)";
+    try {
+      const result = await api(`/images/${item.image.id}/assist`, json("POST", {
+        prompts, threshold: Number($("assist-conf").value) || 0.1,
+      }));
+      const project = await api("/project");
+      this.categories = project.categories;  // assist may have created classes
+      this.version = result.version;
+      this.editorShapes = result.annotations.map((a) => this._toShape(a));
+      const n = this._pendingShapes().length;
+      $("assist-status").textContent = n ? "" : "no objects found — lower the confidence?";
+      await this._refetch();
+    } catch (e) {
+      $("assist-status").textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  // -------------------------------------------------------- autolabel job
+  openAutolabelModal() {
+    $("autolabel-modal").style.display = "flex";
+    $("autolabel-form").style.display = "block";
+    $("autolabel-progress").style.display = "none";
+    if (!$("prompt-rows").children.length) this.addPromptRow();
+  },
+  closeAutolabelModal() {
+    clearTimeout(this._jobTimer);
+    $("autolabel-modal").style.display = "none";
+  },
+  addPromptRow(cls = "", prompts = "") {
+    const row = document.createElement("div");
+    row.className = "prompt-row";
+    row.innerHTML = `
+      <input type="text" placeholder="class" value="${cls}">
+      <input type="text" placeholder="prompts, comma-separated (default: the class name)"
+             value="${prompts}">`;
+    $("prompt-rows").appendChild(row);
+    row.firstElementChild.focus();
+  },
+  async startAutolabel() {
+    const prompts = {};
+    [...$("prompt-rows").children].forEach((row) => {
+      const [clsInput, promptInput] = row.querySelectorAll("input");
+      const cls = clsInput.value.trim();
+      if (!cls) return;
+      const plist = promptInput.value.split(",").map((t) => t.trim()).filter(Boolean);
+      prompts[cls] = plist.length ? plist : [cls];
+    });
+    if (!Object.keys(prompts).length) { toast("Add at least one class", "warn"); return; }
+    try {
+      const { job_id } = await api("/autolabel", json("POST", {
+        prompts,
+        threshold: Number($("autolabel-conf").value) || 0.1,
+        only_unannotated: $("autolabel-unannotated").checked,
+      }));
+      this._jobId = job_id;
+      this._jobEvents = 0;
+      $("autolabel-form").style.display = "none";
+      $("autolabel-progress").style.display = "block";
+      $("job-text").textContent = "starting… (the first run may download weights)";
+      $("job-bar").firstElementChild.style.width = "0";
+      this.pollJob();
+    } catch (e) { toast(e.message, "err", 4000); }
+  },
+  async pollJob() {
+    try {
+      const body = await api(`/jobs/${this._jobId}?after=${this._jobEvents}`);
+      this._jobEvents = body.num_events;
+      for (const event of body.events) {
+        if (event.type === "progress") {
+          const pct = event.total ? (100 * event.current) / event.total : 0;
+          $("job-bar").firstElementChild.style.width = pct + "%";
+          $("job-text").textContent =
+            `${event.current}/${event.total ?? "?"} — ${event.message || event.phase}`;
+        } else if (event.type === "failed") {
+          $("job-text").textContent = "failed: " + event.message;
+        }
+      }
+      if (body.state === "running") {
+        this._jobTimer = setTimeout(() => this.pollJob(), 800);
+        return;
+      }
+      if (body.state === "completed") {
+        const done = body.events.find((e) => e.type === "completed");
+        toast(`Auto-label finished: ${done && done.result ? done.result.annotations : 0} pre-label(s) — review them in "Needs review" mode.`, "warn", 5000);
+        this.closeAutolabelModal();
+        $("queue-mode").value = "pending";
+        await this.loadImages(1);
+      } else if (body.state === "cancelled") {
+        toast("Auto-label cancelled — finished images keep their pre-labels.", "warn");
+        this.closeAutolabelModal();
+        await this.loadImages(1);
+      }
+    } catch (e) {
+      $("job-text").textContent = "polling failed: " + e.message;
+      this._jobTimer = setTimeout(() => this.pollJob(), 2000);
+    }
+  },
+  async cancelAutolabel() {
+    try { await api(`/jobs/${this._jobId}/cancel`, json("POST", {})); }
+    catch (e) { toast(e.message, "err"); }
   },
 
   // ----------------------------------------------------------- class modal
