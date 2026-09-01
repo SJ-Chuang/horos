@@ -115,6 +115,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int)
     p.add_argument("--resume-from", help="Checkpoint path to continue training from")
 
+    p = sub.add_parser("infer", help="Run a trained run's model on image(s)")
+    p.add_argument("images", nargs="+")
+    p.add_argument("--project", required=True)
+    p.add_argument("--run", required=True, dest="run_id")
+    p.add_argument("--threshold", type=float, default=0.5)
+
+    p = sub.add_parser(
+        "evaluate", help="COCO metrics for a run on its held-out split"
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--run", required=True, dest="run_id")
+    p.add_argument("--split", choices=["train", "valid", "test"], default="test")
+
     sub.add_parser("models", help="List available models (with licenses)")
     sub.add_parser("capabilities", help="Show what this platform supports")
 
@@ -253,6 +266,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 api.stop_training(project, record.run_id)
                 print(f"stopping run {record.run_id} ...", file=sys.stderr)  # noqa: T201
                 return 130
+        elif args.command == "infer":
+            project = api.open_project(args.project)
+            for image in args.images:
+                prediction = api.infer_image(
+                    project, args.run_id, image, threshold=args.threshold
+                )
+                sys.stdout.write(prediction.model_dump_json() + "\n")
+                sys.stdout.flush()
+        elif args.command == "evaluate":
+            from horos.api.evaluate import evaluation_events
+            from horos.backends.base import dump_event
+
+            failed = False
+            for event in evaluation_events(
+                api.open_project(args.project), args.run_id, split=args.split
+            ):
+                sys.stdout.write(dump_event(event) + "\n")  # JSONL stream (R4)
+                sys.stdout.flush()
+                failed = failed or event.type == "failed"
+            if failed:
+                return 2
         elif args.command == "models":
             _emit([m.model_dump() for m in api.list_models()])
         elif args.command == "capabilities":

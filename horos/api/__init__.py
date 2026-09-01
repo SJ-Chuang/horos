@@ -36,6 +36,13 @@ from horos.api.dataset import (
     resplit,
     validate_project,
 )
+from horos.api.evaluate import (
+    ClassEval,
+    EvalReport,
+    get_eval_report,
+    infer_image,
+    start_evaluation,
+)
 from horos.api.hparams import DerivedValue, HyperparameterPlan
 from horos.api.jobs import JobStatus, cancel_job, job_status
 from horos.api.labels import add_category, delete_category, update_category
@@ -67,8 +74,10 @@ __all__ = [
     "AssistResult",
     "Capability",
     "ClaimResult",
+    "ClassEval",
     "DerivedValue",
     "DoctorReport",
+    "EvalReport",
     "Finding",
     "HyperparameterPlan",
     "ImportSummary",
@@ -95,10 +104,12 @@ __all__ = [
     "export_dataset",
     "get_annotations",
     "get_capability",
+    "get_eval_report",
     "image_file_path",
     "image_queue",
     "import_dataset",
     "import_zip",
+    "infer_image",
     "job_status",
     "list_capabilities",
     "list_images",
@@ -113,6 +124,7 @@ __all__ = [
     "run_verdict",
     "save_annotations",
     "start_autolabel",
+    "start_evaluation",
     "start_training",
     "stop_training",
     "training_status",

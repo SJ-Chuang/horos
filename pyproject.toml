@@ -28,6 +28,9 @@ dependencies = [
     # transformers hosts the OWLv2 backend; range chosen to match rfdetr 1.9.4's
     # own constraint (>=5.1.0,<6).
     "transformers>=5.1.0,<6",
+    # E6 imports it directly for COCO metrics (also a member of rfdetr's train
+    # stack); torch-free, so safe on every platform including Jetson (BSD).
+    "pycocotools>=2.0",
 ]
 
 [project.optional-dependencies]
