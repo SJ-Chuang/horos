@@ -31,3 +31,8 @@ def annotate():
 @bp.get("/train")
 def train():
     return render_template("train.html")
+
+
+@bp.get("/evaluate")
+def evaluate():
+    return render_template("evaluate.html")

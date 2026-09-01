@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>horos — evaluate</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #1a2129; --line: #2a333e;
+    --text: #e6edf3; --dim: #8b98a5; --accent: #4dabf7; --ok: #51cf66; --err: #ff6b6b;
+    --warn: #fcc419;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 10px 24px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; gap: 14px; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
+  header .project { color: var(--dim); }
+  header nav { margin-left: auto; display: flex; gap: 8px; }
+  header nav a { position: relative; display: flex; align-items: center;
+                 justify-content: center; width: 34px; height: 34px;
+                 border: 1px solid var(--line); border-radius: 8px;
+                 color: var(--dim); }
+  header nav a:hover { border-color: var(--accent); color: var(--accent); }
+  header nav a[aria-current] { color: var(--text); border-color: var(--accent);
+                               background: rgba(77, 171, 247, .12); }
+  header nav a::after { content: attr(data-tip); position: absolute;
+                        top: calc(100% + 8px); right: 0; z-index: 10;
+                        background: var(--panel); border: 1px solid var(--line);
+                        border-radius: 6px; padding: 3px 10px; font-size: 12px;
+                        color: var(--text); white-space: nowrap; opacity: 0;
+                        pointer-events: none; transition: opacity .12s; }
+  header nav a:hover::after { opacity: 1; }
+  header nav svg { width: 18px; height: 18px; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 10px; padding: 18px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
+              text-transform: uppercase; letter-spacing: .08em; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  select, input[type=number] { background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+    font: inherit; }
+  select:focus { outline: none; border-color: var(--accent); }
+  button { background: var(--bg); color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 6px 14px; cursor: pointer; font: inherit; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  #dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 28px;
+              text-align: center; color: var(--dim); cursor: pointer;
+              transition: border-color .15s, color .15s; margin-bottom: 12px; }
+  #dropzone.hover, #dropzone:hover { border-color: var(--accent); color: var(--text); }
+  #dropzone input { display: none; }
+  #preview-wrap { position: relative; display: none; }
+  #preview { max-width: 100%; border-radius: 8px; display: block; }
+  input[type=range] { -webkit-appearance: none; appearance: none; flex: 1;
+    height: 4px; border-radius: 2px; background: var(--line); outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
+    appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); border: 3px solid var(--panel);
+    box-shadow: 0 0 0 1px var(--accent); cursor: pointer; }
+  input[type=range]::-moz-range-thumb { width: 14px; height: 14px;
+    border-radius: 50%; background: var(--accent); border: 3px solid var(--panel);
+    box-shadow: 0 0 0 1px var(--accent); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  #status { min-height: 20px; color: var(--dim); }
+  #status.error { color: var(--err); }
+  #status.ok { color: var(--ok); }
+  .bar { background: var(--line); border-radius: 4px; height: 8px; overflow: hidden;
+         flex: 1; min-width: 160px; }
+  .bar > div { background: var(--accent); height: 100%; width: 0;
+               transition: width .4s; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+           gap: 12px; margin-bottom: 14px; }
+  .card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+          padding: 14px; }
+  .card .num { font-size: 24px; font-weight: 600; }
+  .card .label { color: var(--dim); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  .apbar { background: var(--line); border-radius: 4px; height: 8px; overflow: hidden; }
+  .apbar > div { background: var(--ok); height: 100%; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>horos</h1>
+  <span class="project" id="project-name">—</span>
+  <nav>
+    <a href="/" data-tip="Dataset">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5" rx="8" ry="3"/>
+        <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/>
+        <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg></a>
+    <a href="/annotate" data-tip="Annotator">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+        <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
+    <a href="/train" data-tip="Training">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></a>
+    <a href="/evaluate" data-tip="Evaluate" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="12" y1="1" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="1" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="23" y2="12"/></svg></a>
+  </nav>
+</header>
+<main>
+  <section class="panel">
+    <h2>Model under test</h2>
+    <div class="row">
+      <label for="run-select">Run</label>
+      <select id="run-select"></select>
+      <span id="run-meta" style="color:var(--dim);font-size:13px"></span>
+    </div>
+    <p id="no-runs" class="hidden" style="color:var(--dim)">
+      No completed training runs yet — train a model first.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Try it on a photo</h2>
+    <div id="dropzone">
+      <input type="file" id="file-input" accept="image/*">
+      <p><strong>Drop an image here</strong> or click to choose one</p>
+    </div>
+    <div id="preview-wrap"><canvas id="preview"></canvas></div>
+    <div class="row" style="margin-top:12px">
+      <label for="conf">Confidence</label>
+      <input type="range" id="conf" min="0.05" max="0.95" step="0.05" value="0.5">
+      <span id="conf-value" class="mono" style="min-width:34px">0.50</span>
+      <span id="det-count" style="color:var(--dim);font-size:13px"></span>
+    </div>
+    <p id="status"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Metrics on a held-out split</h2>
+    <div class="row" style="margin-bottom:12px">
+      <label for="split-select">Split</label>
+      <select id="split-select">
+        <option value="test">test</option>
+        <option value="valid">valid</option>
+      </select>
+      <button class="primary" id="eval-btn">Run evaluation</button>
+      <div class="bar hidden" id="eval-bar-wrap"><div id="eval-bar"></div></div>
+      <span id="eval-status" style="color:var(--dim);font-size:13px"></span>
+    </div>
+    <div id="report" class="hidden">
+      <div class="cards">
+        <div class="card"><div class="num" id="m-map">—</div>
+          <div class="label">mAP@[.5:.95]</div></div>
+        <div class="card"><div class="num" id="m-map50">—</div>
+          <div class="label">mAP@50</div></div>
+        <div class="card"><div class="num" id="m-map75">—</div>
+          <div class="label">mAP@75</div></div>
+        <div class="card"><div class="num" id="m-mar">—</div>
+          <div class="label">mAR@100</div></div>
+      </div>
+      <table>
+        <thead><tr><th>class</th><th>instances</th><th>AP@50</th>
+          <th>AP@[.5:.95]</th><th style="width:35%"></th></tr></thead>
+        <tbody id="per-class"></tbody>
+      </table>
+      <p id="report-meta" style="color:var(--dim);font-size:12px"></p>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error((data.error && data.error.message) || r.statusText);
+  }
+  return data;
+});
+
+let categories = {};        // id -> {name, color}
+let lastPrediction = null;  // raw low-threshold prediction; slider filters it
+let lastImage = null;       // HTMLImageElement of the uploaded photo
+
+function classColor(id) {
+  if (categories[id] && categories[id].color) return categories[id].color;
+  return `hsl(${(id * 47) % 360}, 75%, 55%)`;
+}
+function className(id) {
+  return categories[id] ? categories[id].name : String(id);
+}
+function setStatus(text, cls) {
+  $("status").textContent = text;
+  $("status").className = cls || "";
+}
+
+// ------------------------------------------------------------ single image
+async function inferUpload(file) {
+  const run = $("run-select").value;
+  if (!run) { setStatus("Train a model first — no completed run.", "error"); return; }
+  setStatus("Running inference on " + file.name + "…", "");
+  const body = new FormData();
+  body.append("file", file);
+  body.append("threshold", "0.05");  // fetch low; the slider filters instantly
+  try {
+    const [prediction, image] = await Promise.all([
+      api(`/train/runs/${run}/infer`, { method: "POST", body }),
+      loadImage(file),
+    ]);
+    lastPrediction = prediction;
+    lastImage = image;
+    setStatus(`${prediction.instances.length} detection(s) above 0.05`, "ok");
+    drawOverlay();
+  } catch (e) {
+    setStatus("Inference failed: " + e.message, "error");
+  }
+}
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function drawOverlay() {
+  if (!lastImage) return;
+  const threshold = Number($("conf").value);
+  const canvas = $("preview");
+  const wrap = $("preview-wrap");
+  wrap.style.display = "block";
+  const maxW = wrap.clientWidth || 880;
+  const scale = Math.min(1, maxW / lastImage.naturalWidth);
+  canvas.width = lastImage.naturalWidth * scale;
+  canvas.height = lastImage.naturalHeight * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(lastImage, 0, 0, canvas.width, canvas.height);
+  let shown = 0;
+  ctx.font = "12px system-ui";
+  for (const inst of (lastPrediction ? lastPrediction.instances : [])) {
+    if (inst.score < threshold) continue;
+    shown += 1;
+    const [x, y, w, h] = inst.bbox.map((v) => v * scale);
+    const color = classColor(inst.category_id);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    const label = `${className(inst.category_id)} ${inst.score.toFixed(2)}`;
+    const tw = ctx.measureText(label).width + 8;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, Math.max(y - 17, 0), tw, 17);
+    ctx.fillStyle = "#101418";
+    ctx.fillText(label, x + 4, Math.max(y - 4, 12));
+  }
+  $("det-count").textContent =
+    lastPrediction ? `${shown} shown at ≥ ${threshold.toFixed(2)}` : "";
+}
+
+$("conf").oninput = () => {
+  $("conf-value").textContent = Number($("conf").value).toFixed(2);
+  drawOverlay();  // E6-S3: instant, no server round-trip
+};
+
+const zone = $("dropzone");
+zone.addEventListener("click", () => $("file-input").click());
+$("file-input").addEventListener("change", (e) => {
+  if (e.target.files[0]) inferUpload(e.target.files[0]);
+});
+["dragover", "dragenter"].forEach((t) =>
+  zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add("hover"); }));
+["dragleave", "drop"].forEach((t) =>
+  zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove("hover"); }));
+zone.addEventListener("drop", (e) => {
+  if (e.dataTransfer.files[0]) inferUpload(e.dataTransfer.files[0]);
+});
+
+// --------------------------------------------------------------- evaluation
+$("eval-btn").onclick = async () => {
+  const run = $("run-select").value;
+  if (!run) return;
+  const split = $("split-select").value;
+  $("eval-btn").disabled = true;
+  $("eval-bar-wrap").classList.remove("hidden");
+  $("eval-bar").style.width = "0";
+  $("eval-status").textContent = "starting…";
+  try {
+    const { job_id } = await api(`/train/runs/${run}/evaluate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ split }),
+    });
+    await pollJob(job_id);
+    await showReport(run, split);
+    $("eval-status").textContent = "done";
+  } catch (e) {
+    $("eval-status").textContent = e.message;
+  } finally {
+    $("eval-btn").disabled = false;
+    $("eval-bar-wrap").classList.add("hidden");
+  }
+};
+
+function pollJob(jobId) {
+  return new Promise((resolve, reject) => {
+    let seen = 0;
+    const tick = async () => {
+      let job;
+      try { job = await api(`/jobs/${jobId}?after=${seen}`); }
+      catch (e) { return reject(e); }
+      seen = job.num_events;
+      for (const ev of job.events) {
+        if (ev.type === "progress" && ev.total) {
+          $("eval-bar").style.width = (100 * ev.current / ev.total) + "%";
+          $("eval-status").textContent = `${ev.current}/${ev.total} images`;
+        }
+        if (ev.type === "failed") return reject(new Error(ev.message));
+      }
+      if (job.state === "running") setTimeout(tick, 800);
+      else if (job.state === "completed") resolve();
+      else reject(new Error("evaluation " + job.state));
+    };
+    tick();
+  });
+}
+
+async function showReport(run, split) {
+  let report;
+  try { report = await api(`/train/runs/${run}/eval/${split}`); }
+  catch (e) { $("report").classList.add("hidden"); return; }
+  const pct = (v) => (100 * v).toFixed(1) + "%";
+  $("m-map").textContent = pct(report.map_5095);
+  $("m-map50").textContent = pct(report.map_50);
+  $("m-map75").textContent = pct(report.map_75);
+  $("m-mar").textContent = pct(report.mar_100);
+  $("per-class").innerHTML = report.per_class
+    .map((c) => `<tr><td>${c.name}</td><td>${c.instances}</td>
+      <td>${pct(c.ap50)}</td><td>${pct(c.ap)}</td>
+      <td><div class="apbar"><div style="width:${100 * c.ap50}%"></div></div></td></tr>`)
+    .join("");
+  $("report-meta").textContent =
+    `${report.num_images} images · ${report.num_instances} ground-truth boxes · ` +
+    `evaluated ${new Date(report.created_at).toLocaleString()}`;
+  $("report").classList.remove("hidden");
+}
+
+// -------------------------------------------------------------------- boot
+async function init() {
+  api("/project").then((p) => {
+    $("project-name").textContent = p.name;
+    $("project-name").title = p.root;
+    for (const c of p.categories || []) categories[c.id] = c;
+  }).catch(() => { $("project-name").textContent = "(no project bound)"; });
+
+  const runs = (await api("/train/runs")).filter((r) => r.state === "completed");
+  $("no-runs").classList.toggle("hidden", runs.length > 0);
+  $("run-select").innerHTML = runs
+    .map((r) => `<option value="${r.run_id}">${r.run_id} · ${r.model}</option>`)
+    .join("");
+  const updateMeta = () => {
+    const r = runs.find((x) => x.run_id === $("run-select").value);
+    $("run-meta").textContent = r
+      ? `${r.dataset_images} training images · ${new Date(r.created_at).toLocaleDateString()}`
+      : "";
+    if (r) showReport(r.run_id, $("split-select").value);
+  };
+  $("run-select").onchange = updateMeta;
+  $("split-select").onchange = updateMeta;
+  updateMeta();
+}
+init();
+</script>
+</body>
+</html>
