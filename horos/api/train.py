@@ -97,6 +97,8 @@ class RunRecord(BaseModel):
     checkpoint: str | None = None
     error: str | None = None
     dataset_images: int = 0
+    #: split sizes at training time — the verdict rules read these
+    dataset_splits: dict[str, int] = Field(default_factory=dict)
 
 
 class TrainStatus(BaseModel):
@@ -162,6 +164,24 @@ def _worker_alive(record: RunRecord) -> bool:
     if process is not None:
         return process.poll() is None
     return _pid_alive(record.pid)
+
+
+def _split_counts(run_dir: Path, record: RunRecord) -> dict[str, int]:
+    """Split sizes at training time; older runs predate the recorded field,
+    so fall back to counting the images exported into the run directory."""
+    if record.dataset_splits:
+        return record.dataset_splits
+    from horos.core.formats import IMAGE_SUFFIXES
+
+    counts = {}
+    for split in ("train", "valid", "test"):
+        split_dir = run_dir / "dataset" / split
+        counts[split] = (
+            sum(1 for p in split_dir.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES)
+            if split_dir.is_dir()
+            else 0
+        )
+    return counts
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -282,8 +302,11 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
         )
 
     dataset = project.to_dataset()
-    train_count = len(dataset.images_in_split("train"))
-    valid_count = len(dataset.images_in_split("valid"))
+    split_counts = {
+        split: len(dataset.images_in_split(split))
+        for split in ("train", "valid", "test")
+    }
+    train_count, valid_count = split_counts["train"], split_counts["valid"]
     if train_count == 0 or valid_count == 0:
         raise ProjectError(
             f"Training needs a non-empty train and valid split (found "
@@ -326,6 +349,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
         hparam_notes=plan.notes,
         device=config.device,
         dataset_images=len(dataset.images),
+        dataset_splits=split_counts,
     )
     write_record(run_dir, record)
 

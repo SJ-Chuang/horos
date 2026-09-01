@@ -90,6 +90,15 @@
                       white-space: nowrap; }
   .hidden { display: none; }
   #run-error { color: var(--err); white-space: pre-wrap; }
+  .finding { border-left: 3px solid var(--dim); background: var(--bg);
+             border-radius: 0 8px 8px 0; padding: 10px 14px; margin-bottom: 8px; }
+  .finding.warning { border-left-color: var(--warn); }
+  .finding.critical { border-left-color: var(--err); }
+  .finding .f-title { font-weight: 600; margin-bottom: 2px; }
+  .finding.warning .f-title { color: var(--warn); }
+  .finding.critical .f-title { color: var(--err); }
+  .finding .f-detail { color: var(--dim); font-size: 13px; }
+  .finding .f-suggest { font-size: 13px; margin-top: 4px; }
   #runs-table tr.selectable { cursor: pointer; }
   #runs-table tr.selectable:hover td { background: rgba(77, 171, 247, .06); }
   #runs-table tr.active td { background: rgba(77, 171, 247, .12); }
@@ -161,6 +170,11 @@
     <div class="chips" id="metric-chips"></div>
     <p id="run-checkpoint" class="mono" style="color:var(--dim)"></p>
     <p id="run-error" class="hidden"></p>
+    <div id="verdict" class="hidden">
+      <h2 style="margin-top:16px">Conclusion &amp; suggestions</h2>
+      <p id="verdict-summary" style="margin:0 0 10px;font-weight:600"></p>
+      <div id="verdict-findings"></div>
+    </div>
     <details id="run-hparams-details" style="margin-top:10px">
       <summary style="cursor:pointer;color:var(--dim)">Hyperparameters used (with reasons)</summary>
       <table style="margin-top:8px"><tbody id="run-hparams"></tbody></table>
@@ -267,6 +281,7 @@ function attach(runId, { live }) {
   warnings = [];
   $("run-panel").classList.remove("hidden");
   $("run-error").classList.add("hidden");
+  $("verdict").classList.add("hidden");
   $("run-checkpoint").textContent = "";
   $("run-bar").style.width = "0";
   $("run-phase").textContent = live ? "starting worker…" : "";
@@ -289,8 +304,24 @@ async function poll() {
   if (s.run.state === "pending" || s.run.state === "running") {
     pollTimer = setTimeout(poll, 1500);
   } else {
+    loadVerdict(s.run.run_id);
     refreshRuns();
   }
+}
+
+async function loadVerdict(runId) {
+  try {
+    const v = await api(`/train/runs/${runId}/verdict`);
+    if (runId !== activeRun) return;   // user switched runs while loading
+    $("verdict-summary").textContent = v.summary;
+    $("verdict-findings").innerHTML = v.findings
+      .map((f) => `<div class="finding ${f.severity}">
+        <div class="f-title">${f.title}</div>
+        <div class="f-detail">${f.detail}</div>
+        <div class="f-suggest">${f.suggestion}</div></div>`)
+      .join("");
+    $("verdict").classList.remove("hidden");
+  } catch (e) { /* verdict is advisory; never block the run view */ }
 }
 
 function handleEvent(ev) {

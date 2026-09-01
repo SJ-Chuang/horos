@@ -51,3 +51,8 @@ def training_status(run_id: str):
 @bp.post("/train/runs/<run_id>/stop")
 def stop_training(run_id: str):
     return jsonify({"stopped": api.stop_training(_project(), run_id)})
+
+
+@bp.get("/train/runs/<run_id>/verdict")
+def run_verdict(run_id: str):
+    return jsonify(api.run_verdict(_project(), run_id).model_dump())

@@ -245,6 +245,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     seen = status.num_events
                     if status.run.state not in ("pending", "running"):
                         _emit(status.run.model_dump())
+                        # the conclusion, checked even when numbers look perfect
+                        _emit(api.run_verdict(project, record.run_id).model_dump())
                         return 0 if status.run.state == "completed" else 2
                     time_mod.sleep(1.0)
             except KeyboardInterrupt:

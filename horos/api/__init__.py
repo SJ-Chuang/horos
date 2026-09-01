@@ -59,6 +59,7 @@ from horos.api.train import (
     stop_training,
     training_status,
 )
+from horos.api.verdict import Finding, RunVerdict, run_verdict
 
 __all__ = [
     "AnnotationProgress",
@@ -68,6 +69,7 @@ __all__ = [
     "ClaimResult",
     "DerivedValue",
     "DoctorReport",
+    "Finding",
     "HyperparameterPlan",
     "ImportSummary",
     "JobStatus",
@@ -75,6 +77,7 @@ __all__ = [
     "PromptSpec",
     "QueueItem",
     "RunRecord",
+    "RunVerdict",
     "TrainRunConfig",
     "TrainStatus",
     "add_category",
@@ -107,6 +110,7 @@ __all__ = [
     "release_claim",
     "resplit",
     "review_pending",
+    "run_verdict",
     "save_annotations",
     "start_autolabel",
     "start_training",

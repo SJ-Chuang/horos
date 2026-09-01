@@ -83,3 +83,18 @@ def test_derive_preview_over_http(client):
     assert batch["overridden"] is True
     epochs = next(d for d in plan["derivations"] if d["name"] == "epochs")
     assert epochs["overridden"] is False and epochs["reason"]
+
+
+def test_verdict_over_http(client):
+    response = client.post(
+        "/api/v1/train", json={"entrypoint_override": FAKE, "epochs": 2}
+    )
+    run_id = response.get_json()["run_id"]
+    _wait_terminal(client, run_id)
+    verdict = client.get(f"/api/v1/train/runs/{run_id}/verdict")
+    assert verdict.status_code == 200
+    payload = verdict.get_json()
+    assert payload["run_id"] == run_id and payload["summary"]
+    for finding in payload["findings"]:
+        assert finding["severity"] in ("info", "warning", "critical")
+        assert finding["title"] and finding["suggestion"]
