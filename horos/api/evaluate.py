@@ -189,6 +189,14 @@ def evaluation_events(
 
     def stream():
         images = gt["images"]
+        # Predictions identify classes by NAME (backends emit their own label
+        # indices — rfdetr's are 0-based and unrelated to COCO category ids);
+        # map names onto this split's category ids. A prediction whose class
+        # is not in the ground truth stays under an id no gt category uses,
+        # so it can never be scored as a match by accident.
+        id_by_name = {c["name"]: c["id"] for c in gt.get("categories", [])}
+        unmatched_id = min(id_by_name.values(), default=1) - 1
+
         yield RunStarted(
             run_id=run_id, total=len(images), config={"split": split}
         )
@@ -203,10 +211,14 @@ def evaluation_events(
                     image_path, threshold=_EVAL_THRESHOLD
                 )
                 for inst in prediction.instances:
+                    if inst.category_name is not None:
+                        category_id = id_by_name.get(inst.category_name, unmatched_id)
+                    else:  # backend without names: ids are trusted as-is
+                        category_id = inst.category_id
                     detections.append(
                         {
                             "image_id": info["id"],
-                            "category_id": inst.category_id,
+                            "category_id": category_id,
                             "bbox": list(inst.bbox),
                             "score": inst.score,
                         }

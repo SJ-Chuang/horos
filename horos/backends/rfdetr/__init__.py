@@ -81,19 +81,30 @@ def _train_kwargs(spec: TrainSpec) -> dict[str, Any]:
     return kwargs
 
 
-def _detections_to_instances(detections: Any) -> list[PredictedInstance]:
-    """supervision.Detections (xyxy) → PredictedInstance list (COCO xywh)."""
+def _detections_to_instances(
+    detections: Any, class_names: list[str] | None = None
+) -> list[PredictedInstance]:
+    """supervision.Detections (xyxy) → PredictedInstance list (COCO xywh).
+
+    Fine-tuned rfdetr emits 0-based indices into its class list — NOT the
+    training dataset's COCO category ids. The name is the portable identity,
+    so it is attached to every instance (see PredictedInstance)."""
     instances: list[PredictedInstance] = []
     xyxy = detections.xyxy
     confidence = detections.confidence
     class_id = detections.class_id
     for i in range(len(xyxy)):
         x1, y1, x2, y2 = (float(v) for v in xyxy[i])
+        label = int(class_id[i]) if class_id is not None else 0
+        name = None
+        if class_names is not None and 0 <= label < len(class_names):
+            name = class_names[label]
         instances.append(
             PredictedInstance(
                 bbox=(x1, y1, max(x2 - x1, 0.0), max(y2 - y1, 0.0)),
                 score=float(confidence[i]) if confidence is not None else 1.0,
-                category_id=int(class_id[i]) if class_id is not None else 0,
+                category_id=label,
+                category_name=name,
             )
         )
     return instances
@@ -309,11 +320,12 @@ class RFDETRBackend(ModelBackend):
             with Image.open(image) as im:
                 width, height = im.size
             detections = model.predict(str(image), threshold=threshold)
+            class_names = list(getattr(model, "class_names", None) or [])
             return ImagePrediction(
                 image=str(image),
                 width=width,
                 height=height,
-                instances=_detections_to_instances(detections),
+                instances=_detections_to_instances(detections, class_names or None),
             )
 
     def infer_batch(

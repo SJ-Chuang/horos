@@ -185,15 +185,22 @@ const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
 });
 
 let categories = {};        // id -> {name, color}
+let colorByName = {};       // name -> project color
 let lastPrediction = null;  // raw low-threshold prediction; slider filters it
 let lastImage = null;       // HTMLImageElement of the uploaded photo
 
-function classColor(id) {
-  if (categories[id] && categories[id].color) return categories[id].color;
-  return `hsl(${(id * 47) % 360}, 75%, 55%)`;
+// predictions identify classes by NAME (backend label ids are model-internal)
+function instLabel(inst) {
+  if (inst.category_name) return inst.category_name;
+  return categories[inst.category_id]
+    ? categories[inst.category_id].name : String(inst.category_id);
 }
-function className(id) {
-  return categories[id] ? categories[id].name : String(id);
+function instColor(inst) {
+  const name = instLabel(inst);
+  if (colorByName[name]) return colorByName[name];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return `hsl(${Math.abs(hash) % 360}, 75%, 55%)`;
 }
 function setStatus(text, cls) {
   $("status").textContent = text;
@@ -249,11 +256,11 @@ function drawOverlay() {
     if (inst.score < threshold) continue;
     shown += 1;
     const [x, y, w, h] = inst.bbox.map((v) => v * scale);
-    const color = classColor(inst.category_id);
+    const color = instColor(inst);
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, w, h);
-    const label = `${className(inst.category_id)} ${inst.score.toFixed(2)}`;
+    const label = `${instLabel(inst)} ${inst.score.toFixed(2)}`;
     const tw = ctx.measureText(label).width + 8;
     ctx.fillStyle = color;
     ctx.fillRect(x, Math.max(y - 17, 0), tw, 17);
@@ -356,7 +363,10 @@ async function init() {
   api("/project").then((p) => {
     $("project-name").textContent = p.name;
     $("project-name").title = p.root;
-    for (const c of p.categories || []) categories[c.id] = c;
+    for (const c of p.categories || []) {
+      categories[c.id] = c;
+      if (c.color) colorByName[c.name] = c.color;
+    }
   }).catch(() => { $("project-name").textContent = "(no project bound)"; });
 
   const runs = (await api("/train/runs")).filter((r) => r.state === "completed");

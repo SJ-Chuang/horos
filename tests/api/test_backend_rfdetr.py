@@ -119,3 +119,18 @@ def test_epoch_metrics_skip_unconvertible_values():
         {"val/loss": "not-a-number", "val/mAP": 0.5}, train_side=False
     )
     assert picked == {"val/mAP": 0.5}
+
+
+def test_detections_carry_class_names():
+    """Fine-tuned rfdetr emits 0-based label indices, not dataset category
+    ids — the class NAME is the portable identity and must ride along."""
+    detections = SimpleNamespace(
+        xyxy=[(1.0, 1.0, 2.0, 2.0), (3.0, 3.0, 4.0, 4.0)],
+        confidence=[0.9, 0.8],
+        class_id=[0, 7],  # 7 is out of range for a 1-class model
+    )
+    instances = _detections_to_instances(detections, ["balloon"])
+    assert instances[0].category_name == "balloon"
+    assert instances[1].category_name is None  # unknown label stays nameless
+    unnamed = _detections_to_instances(detections, None)
+    assert all(i.category_name is None for i in unnamed)

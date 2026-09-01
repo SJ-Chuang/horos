@@ -113,3 +113,47 @@ def test_report_before_any_evaluation_is_a_clear_error(trained):
     project, run_id = trained
     with pytest.raises(ProjectError, match="no persisted evaluation"):
         get_eval_report(project, run_id, "test")
+
+
+def test_evaluation_maps_predictions_by_class_name(trained, monkeypatch):
+    """The gt uses COCO category ids; backends emit their own label indices.
+    A backend that names its classes must be scored by name (the balloon-det
+    bug: label 0 vs category id 1 made every real detection score zero)."""
+    import json
+
+    from horos.backends.base import ImagePrediction, PredictedInstance
+
+    project, run_id = trained
+    gt_path = project.root / "runs" / run_id / "dataset" / "valid" / "_annotations.coco.json"
+    gt = json.loads(gt_path.read_text("utf-8"))
+    ann_by_image = {}
+    for ann in gt["annotations"]:
+        ann_by_image.setdefault(ann["image_id"], []).append(ann)
+    name_by_id = {c["id"]: c["name"] for c in gt["categories"]}
+    file_to_id = {i["file_name"]: i["id"] for i in gt["images"]}
+
+    class EchoGtBackend:
+        """Perfect predictions — but identified by NAME with label ids 0-based."""
+
+        def infer_one(self, image, *, threshold=0.5):
+            image_id = file_to_id[image.name]
+            instances = [
+                PredictedInstance(
+                    bbox=tuple(a["bbox"]),
+                    score=0.99,
+                    category_id=0,  # model-internal label, deliberately wrong as an id
+                    category_name=name_by_id[a["category_id"]],
+                )
+                for a in ann_by_image.get(image_id, [])
+            ]
+            return ImagePrediction(image=str(image), instances=instances)
+
+    import horos.api.evaluate as evaluate_module
+
+    monkeypatch.setattr(
+        evaluate_module, "_load_run_backend",
+        lambda project, run_id, device=None: (EchoGtBackend(), None),
+    )
+    events = list(evaluate_module.evaluation_events(project, run_id, split="valid"))
+    report = events[-1].result
+    assert report["map_50"] == pytest.approx(1.0)  # names matched, ids ignored

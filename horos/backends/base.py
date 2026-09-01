@@ -28,11 +28,17 @@ if TYPE_CHECKING:
 
 
 class PredictedInstance(BaseModel):
-    """One predicted object. bbox is absolute-pixel COCO xywh."""
+    """One predicted object. bbox is absolute-pixel COCO xywh.
+
+    `category_id` is in the backend's own label space (e.g. rfdetr emits
+    0-based indices into its class list); `category_name` is the portable
+    identity — callers matching predictions against a dataset must map by
+    name, never by raw id."""
 
     bbox: tuple[float, float, float, float]
     score: float
     category_id: int
+    category_name: str | None = None
     segmentation: list[list[float]] | None = None
 
 
