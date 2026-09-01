@@ -1,7 +1,8 @@
 """Dataset format codecs. Each format reads to / writes from `horos.core.dataset.Dataset`.
 
-COCO and YOLO support read and write; Pascal VOC and Darknet are import-only
-(design decision: users bring legacy data in, horos exports COCO/YOLO).
+COCO and YOLO support read and write; Pascal VOC, Darknet, and VIA (VGG Image
+Annotator) are import-only (design decision: users bring legacy data in,
+horos exports COCO/YOLO).
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-DatasetFormat = Literal["coco", "yolo", "voc", "darknet"]
+DatasetFormat = Literal["coco", "yolo", "voc", "darknet", "via"]
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
@@ -61,6 +62,10 @@ def detect_format(root: Path) -> DatasetFormat | None:
         return "coco"
     if any(root.rglob("data.yaml")) or any(root.rglob("data.yml")):
         return "yolo"
+    from . import via as via_format
+
+    if via_format.find_via_files(root):
+        return "via"
     if _looks_like_voc(root):
         return "voc"
     if _looks_like_darknet(root):

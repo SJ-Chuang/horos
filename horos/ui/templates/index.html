@@ -114,7 +114,8 @@
       <input type="file" id="file-input" accept=".zip">
       <p><strong>Drop a dataset .zip here</strong> or click to choose a file</p>
       <p>COCO (<code>_annotations.coco.json</code>), YOLO (<code>data.yaml</code>),
-         Pascal VOC, or Darknet — format is detected automatically</p>
+         Pascal VOC, Darknet, or VIA (<code>via_region_data.json</code>) —
+         format is detected automatically</p>
     </div>
     <p id="status"></p>
   </section>
@@ -134,8 +135,8 @@
 
   <dialog id="class-names-dialog">
     <h3>Class names needed</h3>
-    <p>This Darknet dataset has no <code>_darknet.labels</code> file.
-       Edit the class names below (defaults are the class indices).</p>
+    <p>This dataset doesn't name its classes.
+       Edit the class names below before importing.</p>
     <div id="class-names-list"></div>
     <div class="actions">
       <button data-ok="">Cancel</button>

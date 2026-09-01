@@ -15,6 +15,7 @@ from horos.core import formats
 from horos.core.dataset import Category, Dataset, default_color
 from horos.core.formats import coco as coco_format
 from horos.core.formats import darknet as darknet_format
+from horos.core.formats import via as via_format
 from horos.core.formats import voc as voc_format
 from horos.core.formats import yolo as yolo_format
 from horos.core.project import Project
@@ -70,7 +71,8 @@ def _read_any(
         raise DatasetFormatError(
             f"Could not detect a supported dataset format under {source}. Expected "
             f"a COCO '_annotations.coco.json', a YOLO 'data.yaml', Pascal VOC "
-            f"<annotation> XML files, or Darknet label .txt files next to images."
+            f"<annotation> XML files, Darknet label .txt files next to images, "
+            f"or a VIA 'via_region_data.json'."
         )
     if detected == "coco":
         dataset, image_paths = coco_format.read_coco(source)
@@ -80,6 +82,8 @@ def _read_any(
         dataset, image_paths = voc_format.read_voc(source)
     elif detected == "darknet":
         dataset, image_paths = darknet_format.read_darknet(source, class_names=class_names)
+    elif detected == "via":
+        dataset, image_paths = via_format.read_via(source, class_names=class_names)
     else:
         raise DatasetFormatError(f"Unsupported dataset format '{detected}'")
     return detected, dataset, image_paths
@@ -157,6 +161,18 @@ def import_dataset(
         pre_warnings.append(
             f"No _darknet.labels found — class indices 0..{len(dataset.categories) - 1} "
             f"used as class names; rename them later or re-import with class_names"
+        )
+    if (
+        detected == "via"
+        and class_names is None
+        and require_class_names
+        and not via_format.has_class_attributes(source)
+    ):
+        # same prompt flow as Darknet: the WebUI shows an editable name list
+        raise ClassNamesRequiredError(
+            "This VIA dataset has no class attribute on its regions — name "
+            "the class to import it.",
+            default_names=[c.name for c in dataset.categories],
         )
 
     # drop categories nothing references (e.g. Roboflow's auto-added empty
