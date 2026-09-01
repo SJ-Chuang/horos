@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from horos.api.dataset import dataset_stats, export_dataset
+from horos.api.dataset import dataset_stats, export_dataset, filter_dataset_categories
 from horos.api.hparams import DerivedValue, HyperparameterPlan, derive_plan
 from horos.api.manifest import capability
 from horos.api.system import ensure_supported
@@ -74,6 +74,9 @@ class TrainRunConfig(BaseModel):
     device: str | None = None
     seed: int | None = None
     resume_from: str | None = None
+    #: category names to train on; None = all. Unselected classes' objects
+    #: become background in this run's dataset snapshot.
+    categories: list[str] | None = None
     acknowledge_non_apache: bool = False
     #: expert passthrough to the backend's own knobs — applied last, wins (E5-S5)
     extra: dict[str, Any] = Field(default_factory=dict)
@@ -254,8 +257,17 @@ def derive_hyperparameters(
     except UnknownModelError:
         model_info = None  # testing backends: derive without model metadata
     memory = probe_memory(config.device.partition(":")[0] if config.device else None)
+    if config.categories is not None:
+        # the rules must see the data this run will actually train on
+        from horos.core.stats import compute_stats
+
+        stats = compute_stats(
+            filter_dataset_categories(project.to_dataset(), config.categories)
+        )
+    else:
+        stats = dataset_stats(project)
     return derive_plan(
-        dataset_stats(project),
+        stats,
         model=config.model,
         model_info=model_info,
         memory=memory,
@@ -302,6 +314,10 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
         )
 
     dataset = project.to_dataset()
+    if config.categories is not None:
+        dataset = filter_dataset_categories(dataset, config.categories)
+    # allocation follows the project's split assignment (the Dataset page):
+    # train trains, valid validates, test stays untouched for later evaluation
     split_counts = {
         split: len(dataset.images_in_split(split))
         for split in ("train", "valid", "test")
@@ -310,9 +326,16 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     if train_count == 0 or valid_count == 0:
         raise ProjectError(
             f"Training needs a non-empty train and valid split (found "
-            f"train={train_count}, valid={valid_count}). Use resplit() or "
-            f"'horos split' to create them."
+            f"train={train_count}, valid={valid_count}). Re-split on the "
+            f"Dataset page (or resplit() / 'horos split') first."
         )
+    if config.categories is not None:
+        train_ids = {i.id for i in dataset.images_in_split("train")}
+        if not any(a.image_id in train_ids for a in dataset.annotations):
+            raise ProjectError(
+                f"The selected categories {config.categories} have no "
+                f"annotations in the train split — nothing to learn from."
+            )
 
     # Fill every unset hyperparameter from the rule-based plan (E5-T1) and
     # hand the worker a fully resolved config; the plan (values + reasons)
@@ -336,7 +359,9 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     # The run keeps the exact data it trained on — reproducible by design,
     # at the cost of copying images per run (dataset fingerprints in E7 will
     # let identical exports be shared).
-    export_dataset(project, run_dir / "dataset", format="coco")
+    export_dataset(
+        project, run_dir / "dataset", format="coco", categories=config.categories
+    )
 
     (run_dir / _CONFIG_JSON).write_text(resolved.model_dump_json(indent=2), "utf-8")
     record = RunRecord(

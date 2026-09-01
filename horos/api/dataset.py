@@ -376,6 +376,32 @@ def import_zip(
         )
 
 
+def filter_dataset_categories(dataset: Dataset, names: list[str]) -> Dataset:
+    """Keep only the named categories and their annotations.
+
+    Every image stays — pictures whose objects all belong to unselected
+    classes become negatives (their other-class objects are background as far
+    as the filtered dataset is concerned)."""
+    known = {c.name for c in dataset.categories}
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise ProjectError(
+            f"Unknown categor{'y' if len(unknown) == 1 else 'ies'} "
+            f"{unknown} — available: {sorted(known)}"
+        )
+    if not names:
+        raise ProjectError("Select at least one category")
+    keep_ids = {c.id for c in dataset.categories if c.name in names}
+    return dataset.model_copy(
+        update={
+            "categories": [c for c in dataset.categories if c.id in keep_ids],
+            "annotations": [
+                a for a in dataset.annotations if a.category_id in keep_ids
+            ],
+        }
+    )
+
+
 @capability(
     "dataset.export",
     summary="Export the project's dataset as COCO or YOLO",
@@ -384,10 +410,17 @@ def import_zip(
     cli="export",
 )
 def export_dataset(
-    project: Project, out_dir: Path | str, *, format: str = "coco"
+    project: Project,
+    out_dir: Path | str,
+    *,
+    format: str = "coco",
+    categories: list[str] | None = None,
 ) -> Path:
-    """Write the project dataset to `out_dir` in the requested format."""
+    """Write the project dataset to `out_dir` in the requested format,
+    optionally restricted to the named categories."""
     dataset = project.to_dataset()
+    if categories is not None:
+        dataset = filter_dataset_categories(dataset, categories)
     image_paths = {i.id: project.image_path(i) for i in dataset.images}
     out_dir = Path(out_dir)
     if format == "coco":

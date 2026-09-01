@@ -157,6 +157,29 @@
       <thead><tr><th>class</th><th>instances</th><th>images</th><th style="width:40%"></th></tr></thead>
       <tbody></tbody>
     </table>
+    <h2 style="margin-top:18px">Splits</h2>
+    <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
+      Training uses this allocation: <code>train</code> trains,
+      <code>valid</code> validates and picks the best checkpoint,
+      <code>test</code> is never touched by training.</p>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label>train % <input type="number" id="split-train" value="80" min="1" max="100"
+        style="width:64px;background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:6px;padding:5px 8px"></label>
+      <label>valid % <input type="number" id="split-valid" value="10" min="0" max="99"
+        style="width:64px;background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:6px;padding:5px 8px"></label>
+      <label>test % <input type="number" id="split-test" value="10" min="0" max="99"
+        style="width:64px;background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:6px;padding:5px 8px"></label>
+      <label>seed <input type="number" id="split-seed" value="42"
+        style="width:74px;background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:6px;padding:5px 8px"></label>
+      <button id="split-btn" style="background:var(--bg);color:var(--accent);
+        border:1px solid var(--accent);border-radius:6px;padding:6px 14px;cursor:pointer">
+        Re-split</button>
+      <span id="split-status" style="color:var(--dim);font-size:13px"></span>
+    </div>
   </section>
 
   <section class="panel hidden" id="issues-panel">
@@ -307,6 +330,35 @@ $("file-input").addEventListener("change", (e) => {
   zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove("hover"); }));
 zone.addEventListener("drop", (e) => {
   if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+});
+
+$("split-btn").addEventListener("click", async () => {
+  const pct = (id) => Number($(id).value) || 0;
+  const total = pct("split-train") + pct("split-valid") + pct("split-test");
+  const status = $("split-status");
+  if (total !== 100) {
+    status.textContent = `percentages sum to ${total}, need 100`;
+    return;
+  }
+  if (!confirm("Re-assign every image to a new split? Existing splits are replaced.")) return;
+  status.textContent = "re-splitting…";
+  try {
+    const counts = await api("/dataset/split", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        train: pct("split-train") / 100,
+        valid: pct("split-valid") / 100,
+        test: pct("split-test") / 100,
+        seed: Number($("split-seed").value) || 42,
+      }),
+    });
+    status.textContent =
+      `done: ${counts.train} / ${counts.valid} / ${counts.test}`;
+    await refreshStats();
+  } catch (e) {
+    status.textContent = "failed: " + e.message;
+  }
 });
 
 api("/models").then((models) => {

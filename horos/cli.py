@@ -116,6 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", choices=["cuda", "mps", "cpu"])
     p.add_argument("--seed", type=int)
     p.add_argument("--resume-from", help="Checkpoint path to continue training from")
+    p.add_argument(
+        "--classes",
+        help="Comma-separated category names to train on (default: all); "
+        "objects of unselected classes become background",
+    )
 
     p = sub.add_parser("infer", help="Run a trained run's model on image(s)")
     p.add_argument("images", nargs="+")
@@ -247,6 +252,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     device=args.device,
                     seed=args.seed,
                     resume_from=args.resume_from,
+                    categories=(
+                        [c.strip() for c in args.classes.split(",")]
+                        if args.classes
+                        else None
+                    ),
                 ),
             )
             print(f"run {record.run_id} started (pid {record.pid})", file=sys.stderr)  # noqa: T201
