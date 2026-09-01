@@ -50,7 +50,10 @@
   .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
             border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .site-header { display: flex; align-items: center; gap: 14px;
-                 padding: 10px 24px; border-bottom: 1px solid var(--line); }
+                 padding: 10px 24px; border-bottom: 1px solid var(--line);
+                 /* the annotator body runs at 13px for density; the shared
+                    header must render identically on every page */
+                 font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   .site-header h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
   .site-header .project { color: var(--dim); }
   .site-header .page-nav { margin-left: auto; }
