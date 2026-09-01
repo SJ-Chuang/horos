@@ -40,8 +40,11 @@
   input[type=range]::-moz-range-thumb { width: 14px; height: 14px;
     border-radius: 50%; background: var(--accent); border: 3px solid var(--panel);
     box-shadow: 0 0 0 1px var(--accent); }
-  .conf-control { display: flex; align-items: center; gap: 10px; flex: 1; }
-  .conf-control input[type=range] { flex: 1; }
+  /* min-width: 0 on the flex items — a range input has a large intrinsic
+     minimum width and would otherwise push the number box out of the panel */
+  .conf-control { display: flex; align-items: center; gap: 10px; flex: 1;
+                  min-width: 0; }
+  .conf-control input[type=range] { flex: 1; min-width: 0; }
   .conf-control input[type=number] { width: 60px; padding: 4px 6px; flex: none; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
           padding: 14px; }
