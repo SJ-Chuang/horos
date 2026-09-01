@@ -31,23 +31,33 @@ class FakeBackend(ModelBackend):
     def train(self, spec: TrainSpec) -> Iterator[Event]:
         import time
 
+        from horos.backends.base import RunFailed
+
         yield RunStarted(total=spec.epochs, config={"epochs": spec.epochs})
+        # spec.extra is the expert passthrough; the fakes read pacing and
+        # failure switches from it so subprocess tests can steer behavior.
+        oom_above = spec.extra.get("oom_above_batch")
+        if oom_above is not None and spec.batch_size > int(oom_above):
+            yield RunFailed(
+                error_code="backend_out_of_memory",
+                message=f"simulated OOM at batch {spec.batch_size}",
+            )
+            return
         for epoch in range(spec.epochs):
-            # spec.extra is the expert passthrough; the fakes read pacing and
-            # failure switches from it so subprocess tests can steer behavior.
             if spec.extra.get("sleep_per_epoch"):
                 time.sleep(float(spec.extra["sleep_per_epoch"]))
             yield ProgressUpdated(current=epoch + 1, total=spec.epochs, phase="train")
             yield MetricsUpdated(step=epoch + 1, metrics={"loss": 1.0 / (epoch + 1)})
         if spec.extra.get("fail"):
-            from horos.backends.base import RunFailed
-
             yield RunFailed(error_code="backend_error", message="simulated failure")
             return
         spec.output_dir.mkdir(parents=True, exist_ok=True)
         checkpoint = spec.output_dir / "best.fake"
         checkpoint.write_bytes(b"fake-weights")
-        yield RunCompleted(result={"checkpoint": str(checkpoint)})
+        result = {"checkpoint": str(checkpoint), "batch_size": spec.batch_size}
+        if spec.resume_from is not None:
+            result["resumed_from"] = str(spec.resume_from)
+        yield RunCompleted(result=result)
 
     def infer_one(self, image: Path, *, threshold: float = 0.5) -> ImagePrediction:
         return ImagePrediction(
@@ -143,3 +153,37 @@ class FakeRefinerBackend:
             else:
                 out.append([x, y, x + w, y, x + w / 2, y + h])
         return out
+
+
+def _spawn_probe_child(marker_path: str) -> None:
+    """Runs in a spawn-context child process — must be module-level picklable."""
+    Path(marker_path).write_text("spawned-child-ran", encoding="utf-8")
+
+
+class SpawnProbeBackend(FakeBackend):
+    """Mimics a DataLoader worker: starts a spawn-context child during
+    training (E5-T6b). If the training worker were not `__main__`-guarded,
+    the spawn re-import would re-execute it and the run would corrupt itself.
+    """
+
+    family = "fake-spawn"
+
+    def train(self, spec: TrainSpec) -> Iterator[Event]:
+        import multiprocessing
+
+        yield RunStarted(total=spec.epochs, config={"epochs": spec.epochs})
+        spec.output_dir.mkdir(parents=True, exist_ok=True)
+        marker = spec.output_dir / "spawn_marker.txt"
+        ctx = multiprocessing.get_context("spawn")  # the Windows/macOS default
+        child = ctx.Process(target=_spawn_probe_child, args=(str(marker),))
+        child.start()
+        child.join(30)
+        if not marker.is_file():
+            from horos.backends.base import RunFailed
+
+            yield RunFailed(error_code="backend_error",
+                            message="spawned child never ran")
+            return
+        checkpoint = spec.output_dir / "best.fake"
+        checkpoint.write_bytes(b"fake-weights")
+        yield RunCompleted(result={"checkpoint": str(checkpoint)})

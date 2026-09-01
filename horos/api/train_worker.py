@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = Path(argv[0]).resolve()
 
     from horos.api.train import TrainRunConfig, read_record, write_record
-    from horos.backends.base import RunFailed, TrainSpec, dump_event
+    from horos.backends.base import RunFailed, TrainSpec, WarningRaised, dump_event
 
     config = TrainRunConfig.model_validate_json(
         (run_dir / "config.json").read_text("utf-8")
@@ -79,28 +79,60 @@ def main(argv: list[str] | None = None) -> int:
             log.flush()
 
         try:
-            backend = _load_backend(config)
-            spec = TrainSpec(
-                dataset_dir=run_dir / "dataset",
-                output_dir=run_dir / "checkpoints",
-                epochs=config.epochs,
-                batch_size=config.batch_size,
-                resolution=config.resolution,
-                device=config.device,
-                seed=config.seed,
-                resume_from=Path(config.resume_from) if config.resume_from else None,
-                extra=config.extra,
-            )
-            final_state, checkpoint, error = "failed", None, "no terminal event"
-            for event in backend.train(spec):
-                emit(event)
-                if event.type == "completed":
-                    final_state = "completed"
-                    checkpoint = event.result.get("checkpoint")
-                    error = None
-                elif event.type == "failed":
-                    final_state = "failed"
-                    error = event.message
+            # E5-T6/E5-S7: on OOM, halve the batch size and retry with a fresh
+            # backend instance (the failed one may hold poisoned device state).
+            # Gradient accumulation is doubled alongside so the effective batch
+            # — and with it the tuned learning-rate schedule — stays the same.
+            batch = config.batch_size
+            extra = dict(config.extra)
+            while True:
+                backend = _load_backend(config)
+                spec = TrainSpec(
+                    dataset_dir=run_dir / "dataset",
+                    output_dir=run_dir / "checkpoints",
+                    epochs=config.epochs,
+                    batch_size=batch,
+                    resolution=config.resolution,
+                    device=config.device,
+                    seed=config.seed,
+                    resume_from=(
+                        Path(config.resume_from) if config.resume_from else None
+                    ),
+                    extra=extra,
+                )
+                final_state, checkpoint, error = "failed", None, "no terminal event"
+                error_code = None
+                for event in backend.train(spec):
+                    emit(event)
+                    if event.type == "completed":
+                        final_state = "completed"
+                        checkpoint = event.result.get("checkpoint")
+                        error = None
+                    elif event.type == "failed":
+                        final_state = "failed"
+                        error = event.message
+                        error_code = event.error_code
+
+                oom = final_state == "failed" and error_code == "backend_out_of_memory"
+                if not (oom and batch is not None and batch > 1):
+                    break
+                new_batch = batch // 2
+                message = f"Out of memory at batch {batch} — retrying with {new_batch}"
+                if "grad_accum_steps" in extra:
+                    extra["grad_accum_steps"] = int(extra["grad_accum_steps"]) * 2
+                    message += (
+                        f" (gradient accumulation doubled to "
+                        f"{extra['grad_accum_steps']} so the effective batch "
+                        f"is unchanged)"
+                    )
+                emit(WarningRaised(message=message))
+                batch = new_batch
+                # keep run.json honest about what actually trained (E5-S7)
+                current = read_record(run_dir)
+                current.config["batch_size"] = batch
+                current.config["extra"] = extra
+                write_record(run_dir, current)
+
             settle(final_state, checkpoint=checkpoint, error=error)
             return 0 if final_state == "completed" else 1
         except Exception as exc:  # noqa: BLE001 — last-resort net under the stream

@@ -325,7 +325,14 @@ async function loadVerdict(runId) {
 }
 
 function handleEvent(ev) {
-  if (ev.type === "progress") {
+  if (ev.type === "started") {
+    // an OOM backoff restarts training in the same run: fresh curves,
+    // and the previous attempt's failure is no longer the current state
+    series = {};
+    $("run-error").classList.add("hidden");
+    drawChart();
+    renderMetricChips();
+  } else if (ev.type === "progress") {
     if (ev.total) $("run-bar").style.width = (100 * ev.current / ev.total) + "%";
     if (ev.phase) $("run-phase").textContent = ev.phase;
   } else if (ev.type === "metrics") {
