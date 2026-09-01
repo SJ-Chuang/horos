@@ -26,3 +26,8 @@ def index():
 @bp.get("/annotate")
 def annotate():
     return render_template("annotate.html")
+
+
+@bp.get("/train")
+def train():
+    return render_template("train.html")

@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>horos — training</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #1a2129; --line: #2a333e;
+    --text: #e6edf3; --dim: #8b98a5; --accent: #4dabf7; --ok: #51cf66; --err: #ff6b6b;
+    --warn: #fcc419;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: baseline; gap: 14px; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
+  header .project { color: var(--dim); }
+  header nav { margin-left: auto; display: flex; gap: 16px; }
+  header nav a { color: var(--accent); text-decoration: none; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 10px; padding: 18px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
+              text-transform: uppercase; letter-spacing: .08em; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  td.reason { color: var(--dim); font-size: 13px; }
+  .license { color: var(--ok); font-size: 12px; border: 1px solid var(--ok);
+             border-radius: 4px; padding: 1px 6px;
+             display: inline-block; white-space: nowrap; }
+  select, input[type="number"] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; font: inherit; }
+  input[type="number"] { width: 110px; }
+  input.overridden { border-color: var(--accent); }
+  select:focus, input:focus { outline: none; border-color: var(--accent); }
+  button { background: var(--bg); color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 6px 14px; cursor: pointer; font: inherit; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button.danger { border-color: var(--err); color: var(--err); }
+  button.reset { padding: 2px 8px; font-size: 12px; color: var(--dim); margin-left: 6px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .note { color: var(--warn); font-size: 13px; }
+  #status { min-height: 20px; color: var(--dim); }
+  #status.error { color: var(--err); }
+  #status.ok { color: var(--ok); }
+  .state { font-size: 12px; border-radius: 4px; padding: 1px 8px; border: 1px solid;
+           display: inline-block; white-space: nowrap; text-transform: uppercase; }
+  .state.running, .state.pending { color: var(--accent); border-color: var(--accent); }
+  .state.completed { color: var(--ok); border-color: var(--ok); }
+  .state.failed { color: var(--err); border-color: var(--err); }
+  .state.stopped { color: var(--dim); border-color: var(--dim); }
+  .bar { background: var(--line); border-radius: 4px; height: 8px; overflow: hidden;
+         flex: 1; min-width: 160px; }
+  .bar > div { background: var(--accent); height: 100%; width: 0;
+               transition: width .4s; }
+  #chart { width: 100%; height: 230px; display: block; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 6px;
+            font-size: 12px; color: var(--dim); }
+  .legend .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px;
+                 vertical-align: middle; margin-right: 6px; }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .chip { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+          padding: 8px 12px; }
+  .chip .k { color: var(--dim); font-size: 11px; }
+  .chip .v { font-size: 16px; font-weight: 600; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .overridden-badge { color: var(--accent); font-size: 11px; border: 1px solid var(--accent);
+                      border-radius: 4px; padding: 0 5px; margin-left: 6px;
+                      white-space: nowrap; }
+  .hidden { display: none; }
+  #run-error { color: var(--err); white-space: pre-wrap; }
+  #runs-table tr.selectable { cursor: pointer; }
+  #runs-table tr.selectable:hover td { background: rgba(77, 171, 247, .06); }
+  #runs-table tr.active td { background: rgba(77, 171, 247, .12); }
+</style>
+</head>
+<body>
+<header>
+  <h1>horos</h1>
+  <span class="project" id="project-name">—</span>
+  <nav>
+    <a href="/">← Dataset</a>
+    <a href="/annotate">Annotator</a>
+    <a href="/train" style="color:var(--text)">Training</a>
+  </nav>
+</header>
+<main>
+  <section class="panel">
+    <h2>Start a training run</h2>
+    <div class="row" style="margin-bottom:14px">
+      <label for="model-select">Model</label>
+      <select id="model-select"></select>
+      <span id="model-license" class="license hidden"></span>
+      <span id="model-hint" style="color:var(--dim);font-size:13px"></span>
+    </div>
+    <p id="platform-note" class="note hidden"></p>
+    <table id="hparams-table">
+      <thead><tr>
+        <th style="width:150px">hyperparameter</th>
+        <th style="width:190px">value</th>
+        <th>why this value</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="plan-notes"></div>
+    <div class="row" style="margin-top:14px">
+      <label for="seed-input">Seed</label>
+      <input type="number" id="seed-input" placeholder="random">
+      <button class="primary" id="start-btn" style="margin-left:auto">Start training</button>
+    </div>
+    <p id="status"></p>
+  </section>
+
+  <section class="panel hidden" id="run-panel">
+    <h2>Training run</h2>
+    <div class="row" style="margin-bottom:10px">
+      <span class="state" id="run-state">—</span>
+      <span class="mono" id="run-id"></span>
+      <span style="color:var(--dim)" id="run-model"></span>
+      <button class="danger hidden" id="stop-btn" style="margin-left:auto">Stop</button>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <div class="bar"><div id="run-bar"></div></div>
+      <span id="run-phase" style="color:var(--dim);font-size:13px;min-width:140px"></span>
+    </div>
+    <canvas id="chart"></canvas>
+    <div class="legend" id="chart-legend"></div>
+    <div class="chips" id="metric-chips"></div>
+    <p id="run-checkpoint" class="mono" style="color:var(--dim)"></p>
+    <p id="run-error" class="hidden"></p>
+    <details id="run-hparams-details" style="margin-top:10px">
+      <summary style="cursor:pointer;color:var(--dim)">Hyperparameters used (with reasons)</summary>
+      <table style="margin-top:8px"><tbody id="run-hparams"></tbody></table>
+      <div id="run-notes"></div>
+    </details>
+  </section>
+
+  <section class="panel hidden" id="runs-panel">
+    <h2>Run history</h2>
+    <table id="runs-table">
+      <thead><tr><th>run</th><th>model</th><th>state</th><th>started</th><th>checkpoint</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error((data.error && data.error.message) || r.statusText);
+    err.code = data.error && data.error.code;
+    throw err;
+  }
+  return data;
+});
+const post = (path, body) => api(path, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+// E5-T1/T2: which knobs the user can override from this page
+const EDITABLE = ["epochs", "batch_size", "resolution"];
+const overrides = { epochs: null, batch_size: null, resolution: null };
+let currentPlan = null;
+
+// ------------------------------------------------------------ derivation UI
+let deriveTimer = null;
+function scheduleDerive() {
+  clearTimeout(deriveTimer);
+  deriveTimer = setTimeout(derive, 300);
+}
+
+async function derive() {
+  const body = { model: $("model-select").value };
+  for (const k of EDITABLE) if (overrides[k] !== null) body[k] = overrides[k];
+  try {
+    currentPlan = await post("/train/derive", body);
+    renderPlan(currentPlan);
+    setStatus("", "");
+  } catch (e) {
+    setStatus("Could not derive hyperparameters: " + e.message, "error");
+  }
+}
+
+function renderPlan(plan) {
+  const rows = plan.derivations.map((d) => {
+    let cell;
+    if (EDITABLE.includes(d.name)) {
+      cell = `<input type="number" min="1" data-knob="${d.name}"
+                value="${d.value ?? ""}" class="${d.overridden ? "overridden" : ""}">`
+        + (d.overridden ? `<button class="reset" data-reset="${d.name}"
+             title="Back to the derived value">auto ↺</button>` : "");
+    } else {
+      cell = `<span>${d.value}</span>`;
+    }
+    return `<tr><td>${d.name}</td><td>${cell}</td>
+      <td class="reason">${d.overridden ? "user override" : d.reason}</td></tr>`;
+  });
+  $("hparams-table").querySelector("tbody").innerHTML = rows.join("");
+  $("plan-notes").innerHTML = (plan.notes || [])
+    .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
+
+  $("hparams-table").querySelectorAll("input[data-knob]").forEach((inp) => {
+    inp.onchange = () => {
+      const v = inp.value === "" ? null : Number(inp.value);
+      overrides[inp.dataset.knob] = Number.isFinite(v) ? v : null;
+      scheduleDerive();
+    };
+  });
+  $("hparams-table").querySelectorAll("button[data-reset]").forEach((btn) => {
+    btn.onclick = () => { overrides[btn.dataset.reset] = null; derive(); };
+  });
+}
+
+function setStatus(text, cls) {
+  $("status").textContent = text;
+  $("status").className = cls || "";
+}
+
+// --------------------------------------------------------------- run monitor
+let activeRun = null;
+let seenEvents = 0;
+let pollTimer = null;
+let series = {};   // metric key -> [[step, value], ...]
+let warnings = [];
+
+function attach(runId, { live }) {
+  clearTimeout(pollTimer);
+  activeRun = runId;
+  seenEvents = 0;
+  series = {};
+  warnings = [];
+  $("run-panel").classList.remove("hidden");
+  $("run-error").classList.add("hidden");
+  $("run-checkpoint").textContent = "";
+  $("run-bar").style.width = "0";
+  $("run-phase").textContent = live ? "starting worker…" : "";
+  drawChart();
+  poll();
+}
+
+async function poll() {
+  if (!activeRun) return;
+  let s;
+  try {
+    s = await api(`/train/runs/${activeRun}?after=${seenEvents}`);
+  } catch (e) {
+    setStatus("Lost contact with the run: " + e.message, "error");
+    return;
+  }
+  s.events.forEach(handleEvent);
+  seenEvents = s.num_events;
+  renderRun(s.run);
+  if (s.run.state === "pending" || s.run.state === "running") {
+    pollTimer = setTimeout(poll, 1500);
+  } else {
+    refreshRuns();
+  }
+}
+
+function handleEvent(ev) {
+  if (ev.type === "progress") {
+    if (ev.total) $("run-bar").style.width = (100 * ev.current / ev.total) + "%";
+    if (ev.phase) $("run-phase").textContent = ev.phase;
+  } else if (ev.type === "metrics") {
+    for (const [key, value] of Object.entries(ev.metrics || {})) {
+      if (!Number.isFinite(value)) continue;
+      (series[key] = series[key] || []).push([ev.step, value]);
+    }
+    drawChart();
+    renderMetricChips();
+  } else if (ev.type === "warning") {
+    warnings.push(ev.message);
+  } else if (ev.type === "failed") {
+    $("run-error").textContent = ev.message;
+    $("run-error").classList.remove("hidden");
+  }
+}
+
+function renderRun(run) {
+  $("run-state").textContent = run.state;
+  $("run-state").className = "state " + run.state;
+  $("run-id").textContent = run.run_id;
+  $("run-model").textContent = run.model + " · " + run.dataset_images + " images";
+  const active = run.state === "pending" || run.state === "running";
+  $("stop-btn").classList.toggle("hidden", !active);
+  $("start-btn").disabled = active;
+  if (run.state === "completed") {
+    $("run-bar").style.width = "100%";
+    $("run-phase").textContent = "done";
+  }
+  if (run.checkpoint) $("run-checkpoint").textContent = "checkpoint: " + run.checkpoint;
+  if (run.state === "failed" && run.error && $("run-error").classList.contains("hidden")) {
+    $("run-error").textContent = run.error;
+    $("run-error").classList.remove("hidden");
+  }
+  $("run-hparams").innerHTML = (run.hparams || [])
+    .map((d) => `<tr><td style="width:150px">${d.name}</td>
+      <td style="width:120px"><strong>${d.value}</strong>
+        ${d.overridden ? '<span class="overridden-badge">override</span>' : ""}</td>
+      <td class="reason">${d.reason}</td></tr>`)
+    .join("");
+  $("run-notes").innerHTML = (run.hparam_notes || [])
+    .concat(warnings)
+    .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
+}
+
+// rfdetr logs dozens of per-head series; the page shows the ones a user acts
+// on. Everything else still lands in events.jsonl for programmatic use.
+const CHIP_RE = /(mAP|mAR|F1|precision|recall)/i;
+
+function renderMetricChips() {
+  const latest = Object.entries(series)
+    .filter(([k]) => CHIP_RE.test(k) && !k.toLowerCase().includes("loss"))
+    .map(([k, pts]) => {
+      const value = pts[pts.length - 1][1];
+      return `<div class="chip"><div class="k">${k}</div>
+        <div class="v">${formatNumber(value)}</div></div>`;
+    });
+  $("metric-chips").innerHTML = latest.join("");
+}
+
+// primary curves only; the bare "loss" key is a fallback when the namespaced
+// train/val series are absent (e.g. a custom backend)
+function chartSeries() {
+  const main = ["train/loss", "val/loss"].filter((k) => series[k]);
+  if (main.length) return main.map((k) => [k, series[k]]);
+  return Object.entries(series).filter(([k]) => k.toLowerCase() === "loss");
+}
+const formatNumber = (v) =>
+  Math.abs(v) >= 100 ? v.toFixed(1) : Math.abs(v) >= 1 ? v.toFixed(3) : v.toPrecision(3);
+
+// ------------------------------------------------------------------- chart
+const PALETTE = ["#4dabf7", "#51cf66", "#fcc419", "#ff6b6b", "#b197fc", "#63e6be"];
+
+function drawChart() {
+  const canvas = $("chart");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || canvas.parentElement.clientWidth;
+  const h = 230;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const lossSeries = chartSeries();
+  const legend = $("chart-legend");
+  if (lossSeries.length === 0) {
+    ctx.fillStyle = "#8b98a5";
+    ctx.font = "13px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("loss curves appear after the first validation epoch", w / 2, h / 2);
+    legend.innerHTML = "";
+    return;
+  }
+
+  const pad = { left: 54, right: 12, top: 12, bottom: 26 };
+  const points = lossSeries.flatMap(([, pts]) => pts);
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs, xMin + 1);
+  const yMin = Math.min(...ys), yMaxRaw = Math.max(...ys);
+  const yMax = yMaxRaw === yMin ? yMin + 1 : yMaxRaw;
+  const X = (x) => pad.left + (w - pad.left - pad.right) * (x - xMin) / (xMax - xMin);
+  const Y = (y) => pad.top + (h - pad.top - pad.bottom) * (1 - (y - yMin) / (yMax - yMin));
+
+  ctx.strokeStyle = "#2a333e";
+  ctx.fillStyle = "#8b98a5";
+  ctx.font = "11px system-ui";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const yVal = yMin + (yMax - yMin) * i / 4;
+    const y = Y(yVal);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.fillText(formatNumber(yVal), pad.left - 6, y + 4);
+  }
+  ctx.textAlign = "left";
+  ctx.fillText("epoch " + xMin, pad.left, h - 8);
+  ctx.textAlign = "right";
+  ctx.fillText("epoch " + xMax, w - pad.right, h - 8);
+
+  lossSeries.forEach(([key, pts], i) => {
+    const color = PALETTE[i % PALETTE.length];
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    pts.forEach(([x, y], j) => (j === 0 ? ctx.moveTo(X(x), Y(y)) : ctx.lineTo(X(x), Y(y))));
+    ctx.stroke();
+    pts.forEach(([x, y]) => {
+      ctx.beginPath(); ctx.arc(X(x), Y(y), 2.5, 0, Math.PI * 2); ctx.fill();
+    });
+  });
+  legend.innerHTML = lossSeries
+    .map(([key], i) => `<span><span class="key"
+      style="background:${PALETTE[i % PALETTE.length]}"></span>${key}</span>`)
+    .join("");
+}
+window.addEventListener("resize", drawChart);
+
+// -------------------------------------------------------------------- actions
+$("start-btn").onclick = async () => {
+  const body = { model: $("model-select").value };
+  for (const k of EDITABLE) if (overrides[k] !== null) body[k] = overrides[k];
+  const seed = $("seed-input").value;
+  if (seed !== "") body.seed = Number(seed);
+  $("start-btn").disabled = true;
+  setStatus("Starting training run…", "");
+  try {
+    const record = await post("/train", body);
+    setStatus("Run " + record.run_id + " started.", "ok");
+    attach(record.run_id, { live: true });
+    refreshRuns();
+  } catch (e) {
+    $("start-btn").disabled = false;
+    setStatus("Could not start: " + e.message, "error");
+  }
+};
+
+$("stop-btn").onclick = async () => {
+  if (!activeRun) return;
+  if (!confirm("Stop this training run? The best checkpoint so far is kept.")) return;
+  try {
+    await post(`/train/runs/${activeRun}/stop`, {});
+    $("run-phase").textContent = "stopping…";
+  } catch (e) {
+    setStatus("Could not stop: " + e.message, "error");
+  }
+};
+
+// ---------------------------------------------------------------- run history
+async function refreshRuns() {
+  const runs = await api("/train/runs");
+  $("runs-panel").classList.toggle("hidden", runs.length === 0);
+  $("runs-table").querySelector("tbody").innerHTML = runs
+    .map((r) => `<tr class="selectable ${r.run_id === activeRun ? "active" : ""}"
+        data-run="${r.run_id}">
+      <td class="mono">${r.run_id}</td><td>${r.model}</td>
+      <td><span class="state ${r.state}">${r.state}</span></td>
+      <td>${new Date(r.created_at).toLocaleString()}</td>
+      <td class="mono">${r.checkpoint ? r.checkpoint.split(/[\\/]/).pop() : "—"}</td></tr>`)
+    .join("");
+  $("runs-table").querySelectorAll("tr.selectable").forEach((tr) => {
+    tr.onclick = () => attach(tr.dataset.run, { live: false });
+  });
+  return runs;
+}
+
+// -------------------------------------------------------------------- startup
+async function init() {
+  api("/project")
+    .then((p) => { $("project-name").textContent = p.name + " — " + p.root; })
+    .catch(() => { $("project-name").textContent = "(no project bound)"; });
+
+  const models = (await api("/models")).filter((m) => m.trainable);
+  $("model-select").innerHTML = models
+    .map((m) => `<option value="${m.key}">${m.display_name}</option>`).join("");
+  const updateModelMeta = () => {
+    const m = models.find((x) => x.key === $("model-select").value);
+    if (!m) return;
+    $("model-license").textContent = m.weights_license;
+    $("model-license").classList.remove("hidden");
+    $("model-hint").textContent = m.latency_hint;
+  };
+  $("model-select").onchange = () => { updateModelMeta(); derive(); };
+  updateModelMeta();
+
+  // platform capability drives the note and the button state (E4-T13, R2)
+  try {
+    const caps = await api("/capabilities");
+    const training = caps.features.find((f) => f.feature === "training");
+    if (training && training.level !== "full") {
+      $("platform-note").textContent = training.note;
+      $("platform-note").classList.remove("hidden");
+      if (training.level === "unavailable") $("start-btn").disabled = true;
+    }
+  } catch (e) { /* capabilities are advisory for this page */ }
+
+  await derive();
+  const runs = await refreshRuns();
+  const running = runs.find((r) => r.state === "running" || r.state === "pending");
+  if (running) attach(running.run_id, { live: true });
+  else if (runs.length) attach(runs[0].run_id, { live: false });
+}
+init();
+</script>
+</body>
+</html>

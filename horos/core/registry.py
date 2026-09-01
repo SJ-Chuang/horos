@@ -40,6 +40,8 @@ class ModelInfo(BaseModel):
     latency_hint: str
     entrypoint: str  # "horos.backends.<family>:<ClassName>", resolved lazily
     hf_id: str | None = None  # HuggingFace hub id, for transformers-hosted weights
+    #: can this model be fine-tuned through horos? (drives the training UI list)
+    trainable: bool = False
     notes: str = ""
 
     @property
@@ -72,6 +74,7 @@ _MODELS: dict[str, ModelInfo] = {
             params_millions=30.5,
             latency_hint="fastest — Jetson-friendly real-time",
             entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
         ),
         ModelInfo(
             key="rfdetr-small",
@@ -85,6 +88,7 @@ _MODELS: dict[str, ModelInfo] = {
             params_millions=32.1,
             latency_hint="fast — good default for Jetson",
             entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
         ),
         ModelInfo(
             key="rfdetr-medium",
@@ -98,6 +102,7 @@ _MODELS: dict[str, ModelInfo] = {
             params_millions=33.7,
             latency_hint="balanced accuracy/latency",
             entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
         ),
         ModelInfo(
             key="rfdetr-large",
@@ -111,6 +116,7 @@ _MODELS: dict[str, ModelInfo] = {
             params_millions=129.0,
             latency_hint="highest accuracy — desktop GPU recommended",
             entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
         ),
         ModelInfo(
             key="owlv2-base",
@@ -174,6 +180,7 @@ _GATED_MODELS: dict[str, ModelInfo] = {
             params_millions=0.0,  # not published for the gated sizes
             latency_hint="requires rfdetr[plus]",
             entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
             notes="Roboflow PML 1.0 — not Apache. Commercial use restrictions apply.",
         ),
         ModelInfo(
@@ -188,6 +195,7 @@ _GATED_MODELS: dict[str, ModelInfo] = {
             params_millions=0.0,
             latency_hint="requires rfdetr[plus]",
             entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
             notes="Roboflow PML 1.0 — not Apache. Commercial use restrictions apply.",
         ),
     ]
