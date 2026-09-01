@@ -94,3 +94,28 @@ def test_best_checkpoint_preference_order(tmp_path):
     assert _best_checkpoint(tmp_path).name == "checkpoint_best_ema.pth"
     (tmp_path / "checkpoint_best_total.pth").touch()
     assert _best_checkpoint(tmp_path).name == "checkpoint_best_total.pth"
+
+
+def test_epoch_metrics_split_train_and_val_sides():
+    from horos.backends.rfdetr import _epoch_metrics
+
+    snapshot = {
+        "val/loss": 9.2,
+        "val/mAP_50": 0.31,
+        "loss": 8.8,           # bare keys are validation-time aggregates
+        "train/loss": 7.1,
+        "train/lr": 1e-4,
+    }
+    val_side = _epoch_metrics(snapshot, train_side=False)
+    train_side = _epoch_metrics(snapshot, train_side=True)
+    assert set(val_side) == {"val/loss", "val/mAP_50", "loss"}
+    assert set(train_side) == {"train/loss", "train/lr"}
+
+
+def test_epoch_metrics_skip_unconvertible_values():
+    from horos.backends.rfdetr import _epoch_metrics
+
+    picked = _epoch_metrics(
+        {"val/loss": "not-a-number", "val/mAP": 0.5}, train_side=False
+    )
+    assert picked == {"val/mAP": 0.5}

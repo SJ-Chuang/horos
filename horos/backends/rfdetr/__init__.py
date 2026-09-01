@@ -99,6 +99,27 @@ def _detections_to_instances(detections: Any) -> list[PredictedInstance]:
     return instances
 
 
+def _epoch_metrics(callback_metrics: Any, *, train_side: bool) -> dict[str, float]:
+    """One epoch's Lightning callback_metrics, split into the train-side or
+    val-side slice.
+
+    Lightning runs validation BEFORE `on_train_epoch_end`, and the epoch-
+    aggregated `train/*` values are only published in that later hook — so a
+    relay that reads everything at validation end reports train metrics one
+    epoch late, misses epoch 0, and silently drops the final epoch. Each side
+    must be captured in its own hook.
+    """
+    picked: dict[str, float] = {}
+    for key, value in callback_metrics.items():
+        if key.startswith("train/") != train_side:
+            continue
+        try:
+            picked[key] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return picked
+
+
 def _best_checkpoint(output_dir: Path) -> Path | None:
     for name in _CHECKPOINT_PREFERENCE:
         candidate = output_dir / name
@@ -202,10 +223,9 @@ class RFDETRBackend(ModelBackend):
                     def on_validation_epoch_end(self, trainer, module):  # noqa: ANN001
                         if trainer.sanity_checking:
                             return
-                        metrics = {
-                            key: float(value)
-                            for key, value in trainer.callback_metrics.items()
-                        }
+                        metrics = _epoch_metrics(
+                            trainer.callback_metrics, train_side=False
+                        )
                         if metrics:
                             events.put(
                                 MetricsUpdated(
@@ -214,6 +234,17 @@ class RFDETRBackend(ModelBackend):
                             )
 
                     def on_train_epoch_end(self, trainer, module):  # noqa: ANN001
+                        # train/* is only published in this hook (see
+                        # _epoch_metrics) — capture it here, on its own epoch
+                        metrics = _epoch_metrics(
+                            trainer.callback_metrics, train_side=True
+                        )
+                        if metrics:
+                            events.put(
+                                MetricsUpdated(
+                                    step=trainer.current_epoch, metrics=metrics
+                                )
+                            )
                         events.put(
                             ProgressUpdated(
                                 current=trainer.current_epoch + 1,
