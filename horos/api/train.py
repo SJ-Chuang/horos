@@ -28,12 +28,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from horos.api.dataset import export_dataset
+from horos.api.dataset import dataset_stats, export_dataset
+from horos.api.hparams import DerivedValue, HyperparameterPlan, derive_plan
 from horos.api.manifest import capability
 from horos.api.system import ensure_supported
 from horos.core.project import Project
 from horos.core.registry import get_model_info
-from horos.errors import LicenseError, ProjectError
+from horos.errors import LicenseError, ProjectError, UnknownModelError
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ __all__ = [
     "TrainRunConfig",
     "RunRecord",
     "TrainStatus",
+    "derive_hyperparameters",
     "start_training",
     "training_status",
     "stop_training",
@@ -60,13 +62,14 @@ class TrainRunConfig(BaseModel):
     """User-facing training request. Only `model` semantics are horos-level;
     everything else maps onto the backend-neutral TrainSpec.
 
-    Rule-based hyperparameter derivation (E5-T1) will fill these from dataset
-    statistics later; until then the defaults are plain and explicit.
+    Hyperparameters left as None are derived from dataset statistics with a
+    recorded reason (E5-T1); a set value is a user override and is marked as
+    such in the plan without disturbing the other derivations (E5-T2).
     """
 
     model: str = "rfdetr-nano"
-    epochs: int = 10
-    batch_size: int = 4
+    epochs: int | None = None
+    batch_size: int | None = None
     resolution: int | None = None
     device: str | None = None
     seed: int | None = None
@@ -85,6 +88,10 @@ class RunRecord(BaseModel):
     state: RunState
     created_at: str
     config: dict[str, Any] = Field(default_factory=dict)
+    #: derivation trail: every hyperparameter with its value, reason, and
+    #: whether the user overrode it (E5-S2 — "why did the system pick this")
+    hparams: list[DerivedValue] = Field(default_factory=list)
+    hparam_notes: list[str] = Field(default_factory=list)
     device: str | None = None
     pid: int | None = None
     checkpoint: str | None = None
@@ -203,6 +210,44 @@ def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
 
 
 @capability(
+    "train.derive",
+    summary="Derive hyperparameters from dataset statistics, with reasons",
+    web_route="/api/v1/train/derive",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because=(
+        "'horos train' derives automatically and records the plan in run.json; "
+        "a standalone preview command ships with the training UI (E5-T8)."
+    ),
+)
+def derive_hyperparameters(
+    project: Project, config: TrainRunConfig | None = None
+) -> HyperparameterPlan:
+    """Rule-based plan (E5-T1): dataset statistics + model metadata + memory
+    probe in, values with reasons out. Values set on `config` are honored as
+    user overrides (E5-T2). The UI shows this plan before a run starts (E5-S2)."""
+    from horos.backends.memory import probe_memory
+
+    config = config or TrainRunConfig()
+    try:
+        model_info = get_model_info(config.model)
+    except UnknownModelError:
+        model_info = None  # testing backends: derive without model metadata
+    memory = probe_memory(config.device.partition(":")[0] if config.device else None)
+    return derive_plan(
+        dataset_stats(project),
+        model=config.model,
+        model_info=model_info,
+        memory=memory,
+        overrides={
+            "epochs": config.epochs,
+            "batch_size": config.batch_size,
+            "resolution": config.resolution,
+        },
+    )
+
+
+@capability(
     "train.start",
     summary="Start a training run in a dedicated worker subprocess",
     web_route="/api/v1/train",
@@ -246,6 +291,21 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
             f"'horos split' to create them."
         )
 
+    # Fill every unset hyperparameter from the rule-based plan (E5-T1) and
+    # hand the worker a fully resolved config; the plan (values + reasons)
+    # goes into the run metadata so the "why" survives with the run (E5-S2).
+    plan = derive_hyperparameters(project, config)
+    spec_values = plan.spec_fields()
+    resolved = config.model_copy(
+        update={
+            "epochs": spec_values["epochs"],
+            "batch_size": spec_values["batch_size"],
+            "resolution": spec_values.get("resolution", config.resolution),
+            # derived backend knobs ride in extra; the user's own extra wins
+            "extra": {**plan.extra_fields(), **config.extra},
+        }
+    )
+
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     run_dir = runs_root(project) / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -255,13 +315,15 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     # let identical exports be shared).
     export_dataset(project, run_dir / "dataset", format="coco")
 
-    (run_dir / _CONFIG_JSON).write_text(config.model_dump_json(indent=2), "utf-8")
+    (run_dir / _CONFIG_JSON).write_text(resolved.model_dump_json(indent=2), "utf-8")
     record = RunRecord(
         run_id=run_id,
         model=config.model,
         state="pending",
         created_at=datetime.now(timezone.utc).isoformat(),
-        config=config.model_dump(exclude={"entrypoint_override"}),
+        config=resolved.model_dump(exclude={"entrypoint_override"}),
+        hparams=plan.derivations,
+        hparam_notes=plan.notes,
         device=config.device,
         dataset_images=len(dataset.images),
     )

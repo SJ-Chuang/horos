@@ -24,6 +24,17 @@ def start_training():
     return jsonify(record.model_dump()), 202
 
 
+@bp.post("/train/derive")
+def derive_hyperparameters():
+    body = request.get_json(silent=True) or {}
+    try:
+        config = TrainRunConfig.model_validate(body)
+    except ValidationError as exc:
+        raise ProjectError(f"Invalid training config: {exc}") from exc
+    plan = api.derive_hyperparameters(_project(), config)
+    return jsonify(plan.model_dump())
+
+
 @bp.get("/train/runs")
 def list_runs():
     return jsonify([r.model_dump() for r in api.list_runs(_project())])

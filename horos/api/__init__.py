@@ -36,6 +36,7 @@ from horos.api.dataset import (
     resplit,
     validate_project,
 )
+from horos.api.hparams import DerivedValue, HyperparameterPlan
 from horos.api.jobs import JobStatus, cancel_job, job_status
 from horos.api.labels import add_category, delete_category, update_category
 from horos.api.manifest import Capability, get_capability, list_capabilities
@@ -52,6 +53,7 @@ from horos.api.train import (
     RunRecord,
     TrainRunConfig,
     TrainStatus,
+    derive_hyperparameters,
     list_runs,
     start_training,
     stop_training,
@@ -64,7 +66,9 @@ __all__ = [
     "AssistResult",
     "Capability",
     "ClaimResult",
+    "DerivedValue",
     "DoctorReport",
+    "HyperparameterPlan",
     "ImportSummary",
     "JobStatus",
     "PlatformCapabilities",
@@ -82,6 +86,7 @@ __all__ = [
     "create_project",
     "dataset_stats",
     "delete_category",
+    "derive_hyperparameters",
     "doctor_report",
     "ensure_supported",
     "export_dataset",

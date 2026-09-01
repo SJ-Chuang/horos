@@ -72,3 +72,14 @@ def test_unknown_run_is_404_shaped(client):
     response = client.get("/api/v1/train/runs/nope")
     assert response.status_code == 400
     assert "No such training run" in response.get_json()["error"]["message"]
+
+
+def test_derive_preview_over_http(client):
+    response = client.post("/api/v1/train/derive", json={"batch_size": 8})
+    assert response.status_code == 200
+    plan = response.get_json()
+    assert plan["values"]["batch_size"] == 8
+    batch = next(d for d in plan["derivations"] if d["name"] == "batch_size")
+    assert batch["overridden"] is True
+    epochs = next(d for d in plan["derivations"] if d["name"] == "epochs")
+    assert epochs["overridden"] is False and epochs["reason"]
