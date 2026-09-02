@@ -107,3 +107,32 @@ class Dataset(BaseModel):
 
     def next_category_id(self) -> int:
         return max((c.id for c in self.categories), default=0) + 1
+
+
+def clamp_to_image(annotation: Annotation, width: int, height: int) -> Annotation:
+    """Clip an annotation's bbox and polygons into the image bounds.
+
+    Detector and segmenter outputs (OWLv2 boxes in particular) routinely
+    extend a few pixels past the frame; the out-of-frame part describes
+    nothing photographable, so clipping loses no information. Returns a new
+    Annotation; a box entirely outside the image comes back with zero width
+    or height — callers decide whether that is a drop or an error.
+    """
+    x, y, w, h = annotation.bbox
+    x0 = min(max(x, 0.0), float(width))
+    y0 = min(max(y, 0.0), float(height))
+    x1 = min(max(x + w, 0.0), float(width))
+    y1 = min(max(y + h, 0.0), float(height))
+    segmentation = [
+        [
+            min(max(value, 0.0), float(width if i % 2 == 0 else height))
+            for i, value in enumerate(polygon)
+        ]
+        for polygon in annotation.segmentation
+    ]
+    return annotation.model_copy(
+        update={
+            "bbox": (x0, y0, max(x1 - x0, 0.0), max(y1 - y0, 0.0)),
+            "segmentation": segmentation,
+        }
+    )

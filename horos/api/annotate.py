@@ -20,7 +20,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from horos.api.manifest import capability
-from horos.core.dataset import Annotation, ImageRecord
+from horos.core.dataset import Annotation, ImageRecord, clamp_to_image
 from horos.core.project import Project, _write_json_atomic
 from horos.errors import DatasetValidationError, ProjectError
 
@@ -94,7 +94,11 @@ def _record(project: Project, image_id: int) -> ImageRecord:
 
 def _normalize(project: Project, raw: list[Annotation | dict], image_id: int) -> list[Annotation]:
     """Validate incoming annotations; derive a bbox from the polygon when the
-    client sends segmentation only. Explicit errors, never silent fixes."""
+    client sends segmentation only. Explicit errors — with one deliberate
+    normalization: coordinates are clipped into the image bounds (the
+    out-of-frame part of a box describes nothing photographable; a box left
+    entirely outside still errors as degenerate)."""
+    record = project.get_image(image_id)
     category_ids = {c.id for c in project.categories}
     out: list[Annotation] = []
     for n, item in enumerate(raw, start=1):
@@ -112,7 +116,9 @@ def _normalize(project: Project, raw: list[Annotation | dict], image_id: int) ->
             xs = segmentation[0][0::2]
             ys = segmentation[0][1::2]
             data["bbox"] = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-        ann = Annotation.model_validate(data)
+        ann = clamp_to_image(
+            Annotation.model_validate(data), record.width, record.height
+        )
         if ann.category_id not in category_ids:
             raise DatasetValidationError(
                 f"annotation #{n}: unknown category id {ann.category_id}"

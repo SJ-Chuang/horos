@@ -72,3 +72,38 @@ def test_dataset_serializes_roundtrip():
     ds = sample_dataset()
     clone = Dataset.model_validate_json(ds.model_dump_json())
     assert clone == ds
+
+
+def test_clamp_to_image_clips_bbox_and_polygons():
+    from horos.core.dataset import Annotation, clamp_to_image
+
+    ann = Annotation(
+        id=1, image_id=1, category_id=0,
+        bbox=(-2.2, 448.2, 901.8, 1133.2),           # the balloon-det case
+        segmentation=[[-3.0, 10.0, 50.0, -1.5, 50.0, 2000.0]],
+    )
+    clamped = clamp_to_image(ann, 2048, 1625)
+    x, y, w, h = clamped.bbox
+    assert (x, y) == (0.0, 448.2)
+    assert x + w <= 2048 and y + h <= 1625
+    assert w == pytest.approx(901.8 - 2.2)  # only the x<0 overshoot is cut
+    assert h == pytest.approx(1133.2)       # bottom was already inside
+    xs = clamped.segmentation[0][0::2]
+    ys = clamped.segmentation[0][1::2]
+    assert min(xs) >= 0 and max(xs) <= 2048
+    assert min(ys) >= 0 and max(ys) <= 1625
+
+
+def test_clamp_to_image_marks_fully_outside_as_degenerate():
+    from horos.core.dataset import Annotation, clamp_to_image
+
+    ann = Annotation(id=1, image_id=1, category_id=0, bbox=(300.0, 50.0, 40.0, 20.0))
+    clamped = clamp_to_image(ann, 200, 100)  # box entirely right of the frame
+    assert clamped.bbox[2] == 0.0  # zero width — caller drops or errors
+
+
+def test_in_bounds_annotation_is_unchanged():
+    from horos.core.dataset import Annotation, clamp_to_image
+
+    ann = Annotation(id=1, image_id=1, category_id=0, bbox=(10.0, 10.0, 30.0, 20.0))
+    assert clamp_to_image(ann, 100, 100).bbox == ann.bbox

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from horos.api.manifest import capability
-from horos.core.dataset import Annotation, Category, default_color
+from horos.core.dataset import Annotation, Category, clamp_to_image, default_color
 from horos.core.project import Project
 from horos.errors import DatasetValidationError, ProjectError
 
@@ -174,11 +174,14 @@ def _write_pending(
     detections) attaches a segmentation where the refiner produced one — a
     detection whose mask failed keeps its box, never gets dropped silently."""
     stored = project.load_annotations(image_id)
+    record = project.get_image(image_id)
     keep = [a for a in stored.annotations if a.status != "pending"]
     next_id = max((a.id for a in keep), default=0) + 1
     for n, (cls, bbox, score) in enumerate(detections):
         polygon = polygons[n] if polygons else None
-        keep.append(
+        # model outputs routinely overshoot the frame by a few pixels —
+        # clip into bounds; a detection entirely outside the image is noise
+        annotation = clamp_to_image(
             Annotation(
                 id=next_id,
                 image_id=image_id,
@@ -188,11 +191,16 @@ def _write_pending(
                 source="auto",
                 status="pending",
                 score=round(score, 4),
-            )
+            ),
+            record.width,
+            record.height,
         )
+        if annotation.bbox[2] <= 0 or annotation.bbox[3] <= 0:
+            continue
+        keep.append(annotation)
         next_id += 1
     project.save_annotations(image_id, keep, expected_version=stored.version)
-    return len(detections)
+    return sum(1 for a in keep if a.status == "pending")
 
 
 # ------------------------------------------------------------- batch (E3-T3)
