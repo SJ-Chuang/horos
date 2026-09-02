@@ -85,13 +85,18 @@ def test_status_pagination(project):
     assert len(tail.events) == 1 and tail.num_events == total
 
 
-def test_second_start_is_refused(project):
+def test_second_start_queues_instead_of_refusing(project):
+    """One run TRAINS at a time, but a second start is queued, not refused —
+    the full queue behavior lives in tests/api/test_train_queue.py."""
     record = start_training(
         project, _config(epochs=60, extra={"sleep_per_epoch": 0.5})
     )
     try:
-        with pytest.raises(ProjectError, match="already"):
-            start_training(project, _config())
+        queued = start_training(project, _config())
+        assert queued.state == "queued" and queued.pid is None
+        # cancel the queued run so nothing chains after run1 stops below
+        assert stop_training(project, queued.run_id) is True
+        assert training_status(project, queued.run_id).run.state == "stopped"
     finally:
         stop_training(project, record.run_id)
         _wait_terminal(project, record.run_id)

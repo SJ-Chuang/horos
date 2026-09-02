@@ -50,6 +50,12 @@ _CHECKPOINT_PREFERENCE = (
     "last.ckpt",
 )
 
+# EMA factor applied to the monitored mAP before best-checkpoint comparison
+# under the "smoothed_map" criterion (rfdetr's own smooth_alpha knob). Chosen
+# so one noisy validation spike on a tiny valid split cannot lock in a bad
+# checkpoint, while a real improvement still wins within ~2 epochs.
+_SMOOTH_ALPHA = 0.6
+
 
 def _train_kwargs(spec: TrainSpec) -> dict[str, Any]:
     """Map the backend-neutral TrainSpec onto rfdetr.train() keyword arguments.
@@ -77,6 +83,10 @@ def _train_kwargs(spec: TrainSpec) -> dict[str, Any]:
         kwargs["seed"] = spec.seed
     if spec.resume_from is not None:
         kwargs["resume"] = str(spec.resume_from)
+    if spec.checkpoint_criterion == "smoothed_map":
+        kwargs["smooth_alpha"] = _SMOOTH_ALPHA
+    # "loss" has no train kwarg — the checkpoint callback is re-pointed after
+    # build_trainer instead (see _repoint_checkpoint_monitor)
     kwargs.update(spec.extra)
     return kwargs
 
@@ -129,6 +139,62 @@ def _epoch_metrics(callback_metrics: Any, *, train_side: bool) -> dict[str, floa
         except (TypeError, ValueError):
             continue
     return picked
+
+
+def _repoint_checkpoint_monitor(callback: Any, monitor: str, mode: str) -> None:
+    """Re-target an already-constructed Lightning ModelCheckpoint.
+
+    rfdetr 1.9.4 hardcodes the best-model monitor to val mAP inside
+    build_trainer; the "loss" criterion needs val/loss with mode=min. Mode
+    lives in the parent's name-mangled init helper (kth_value must be reset
+    alongside), so it is re-run here — acceptable against a pinned version
+    (R5)."""
+    callback.monitor = monitor
+    callback._ModelCheckpoint__init_monitor_mode(mode)  # noqa: SLF001
+
+
+class _BestTracker:
+    """Answers "which epoch do the saved best weights come from" by watching
+    the actual BestModelCallback state each epoch — exact under every
+    criterion (raw, smoothed, loss) and across the regular/EMA tracks,
+    without re-implementing any comparison logic.
+    """
+
+    def __init__(self) -> None:
+        self.callback: Any = None
+        self._last_regular: float | None = None
+        self._last_ema: float | None = None
+        self._regular_epoch: int | None = None
+        self._ema_epoch: int | None = None
+        self._last_emitted: tuple[int, bool] | None = None
+
+    def observe(self, epoch: int) -> dict[str, float] | None:
+        """Metrics to publish when the best checkpoint changed, else None."""
+        cb = self.callback
+        if cb is None:
+            return None
+        score = getattr(cb, "best_model_score", None)
+        regular = float(score) if score is not None else None
+        ema = float(getattr(cb, "_best_ema", 0.0) or 0.0)
+        if regular is not None and regular != self._last_regular:
+            self._last_regular, self._regular_epoch = regular, epoch
+        if ema and ema != self._last_ema:
+            self._last_ema, self._ema_epoch = ema, epoch
+        # mirror on_fit_end's winner rule: EMA wins on strict >, compared
+        # against the raw (un-smoothed) regular value when smoothing is on
+        raw_regular = regular if not getattr(cb, "_smooth_alpha", 0.0) else None
+        if raw_regular is None:
+            raw_regular = float(getattr(cb, "_best_raw_regular", 0.0) or 0.0)
+        is_ema = (
+            getattr(cb, "_monitor_ema", None) is not None
+            and self._ema_epoch is not None
+            and ema > raw_regular
+        )
+        best_epoch = self._ema_epoch if is_ema else self._regular_epoch
+        if best_epoch is None or (best_epoch, is_ema) == self._last_emitted:
+            return None
+        self._last_emitted = (best_epoch, is_ema)
+        return {"best/epoch": float(best_epoch), "best/is_ema": float(is_ema)}
 
 
 def _default_weights_filename(model_class: Any) -> str | None:
@@ -277,6 +343,7 @@ class RFDETRBackend(ModelBackend):
                 yield from self._pretrained_weights_events()
                 model = self._model_class()(device=kwargs["device"])
                 events: queue_mod.Queue = queue_mod.Queue()
+                tracker = _BestTracker()
 
                 class _EventRelay(pl.Callback):
                     def on_train_epoch_start(self, trainer, module):  # noqa: ANN001
@@ -316,6 +383,15 @@ class RFDETRBackend(ModelBackend):
                                     step=trainer.current_epoch, metrics=metrics
                                 )
                             )
+                        # checkpointing ran during validation (before this
+                        # hook) — the tracker now sees the settled best state
+                        best = tracker.observe(trainer.current_epoch)
+                        if best:
+                            events.put(
+                                MetricsUpdated(
+                                    step=trainer.current_epoch, metrics=best
+                                )
+                            )
                         events.put(
                             ProgressUpdated(
                                 current=trainer.current_epoch + 1,
@@ -328,6 +404,21 @@ class RFDETRBackend(ModelBackend):
 
                 def build_trainer_with_relay(*args, **kw):  # noqa: ANN002, ANN003
                     trainer = original_build_trainer(*args, **kw)
+                    best_cb = next(
+                        (
+                            c
+                            for c in trainer.callbacks
+                            if isinstance(c, rf_training.BestModelCallback)
+                        ),
+                        None,
+                    )
+                    if best_cb is not None:
+                        if spec.checkpoint_criterion == "loss":
+                            _repoint_checkpoint_monitor(best_cb, "val/loss", "min")
+                            # the EMA track still measures mAP; comparing a
+                            # loss against an mAP for best_total is meaningless
+                            best_cb._monitor_ema = None  # noqa: SLF001
+                        tracker.callback = best_cb
                     trainer.callbacks.append(_EventRelay())
                     return trainer
 

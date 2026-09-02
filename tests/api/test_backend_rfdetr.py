@@ -10,12 +10,16 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from horos.backends.base import TrainSpec
 from horos.backends.rfdetr import (
     _MODEL_CLASSES,
     _best_checkpoint,
+    _BestTracker,
     _default_weights_filename,
     _detections_to_instances,
+    _repoint_checkpoint_monitor,
     _train_kwargs,
 )
 from horos.core.registry import list_models
@@ -155,3 +159,90 @@ def test_default_weights_filename_tolerates_missing_pieces():
         )
     )
     assert _default_weights_filename(none_default) is None
+
+
+def test_train_kwargs_checkpoint_criterion_mapping(tmp_path):
+    base = dict(dataset_dir=tmp_path, output_dir=tmp_path, epochs=1, batch_size=2)
+    default = _train_kwargs(TrainSpec(**base))
+    assert "smooth_alpha" not in default  # "map" keeps rfdetr's defaults
+
+    smoothed = _train_kwargs(TrainSpec(**base, checkpoint_criterion="smoothed_map"))
+    assert smoothed["smooth_alpha"] == pytest.approx(0.6)
+
+    # an expert extra override still wins (extra is applied last)
+    custom = _train_kwargs(
+        TrainSpec(**base, checkpoint_criterion="smoothed_map",
+                  extra={"smooth_alpha": 0.3})
+    )
+    assert custom["smooth_alpha"] == pytest.approx(0.3)
+
+    # "loss" is handled by re-pointing the checkpoint callback, not a kwarg
+    loss = _train_kwargs(TrainSpec(**base, checkpoint_criterion="loss"))
+    assert "smooth_alpha" not in loss
+
+
+def test_repoint_checkpoint_monitor_uses_the_mangled_init():
+    calls = {}
+
+    class ModelCheckpoint:  # the mangled name must match PL's class name
+        def __init_monitor_mode(self, mode):
+            calls["mode"] = mode
+
+    class Sub(ModelCheckpoint):
+        monitor = "val/mAP_50_95"
+
+    callback = Sub()
+    _repoint_checkpoint_monitor(callback, "val/loss", "min")
+    assert callback.monitor == "val/loss"
+    assert calls["mode"] == "min"
+
+
+def _fake_best_cb(**overrides):
+    defaults = dict(
+        best_model_score=None, _best_ema=0.0, _best_raw_regular=0.0,
+        _smooth_alpha=0.0, _monitor_ema=None,
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_best_tracker_reports_regular_improvements_once():
+    tracker = _BestTracker()
+    tracker.callback = _fake_best_cb(best_model_score=0.10)
+    assert tracker.observe(0) == {"best/epoch": 0.0, "best/is_ema": 0.0}
+    assert tracker.observe(1) is None  # unchanged: nothing new to report
+    tracker.callback.best_model_score = 0.30
+    assert tracker.observe(2) == {"best/epoch": 2.0, "best/is_ema": 0.0}
+
+
+def test_best_tracker_prefers_ema_on_strict_improvement():
+    tracker = _BestTracker()
+    tracker.callback = _fake_best_cb(
+        best_model_score=0.20, _monitor_ema="val/ema_mAP_50_95"
+    )
+    assert tracker.observe(0) == {"best/epoch": 0.0, "best/is_ema": 0.0}
+    tracker.callback._best_ema = 0.25  # EMA overtakes on strict >
+    assert tracker.observe(3) == {"best/epoch": 3.0, "best/is_ema": 1.0}
+    # a tie goes to the regular track (mirrors on_fit_end's strict >)
+    tracker.callback.best_model_score = 0.25
+    assert tracker.observe(4) == {"best/epoch": 4.0, "best/is_ema": 0.0}
+
+
+def test_best_tracker_loss_mode_never_picks_ema():
+    tracker = _BestTracker()
+    tracker.callback = _fake_best_cb(best_model_score=9.5)  # _monitor_ema=None
+    assert tracker.observe(1) == {"best/epoch": 1.0, "best/is_ema": 0.0}
+    tracker.callback.best_model_score = 8.2
+    assert tracker.observe(5) == {"best/epoch": 5.0, "best/is_ema": 0.0}
+
+
+def test_best_tracker_smoothing_compares_raw_regular():
+    tracker = _BestTracker()
+    tracker.callback = _fake_best_cb(
+        best_model_score=0.18,      # smoothed value
+        _best_raw_regular=0.30,     # raw value at the smoothed-best epoch
+        _smooth_alpha=0.6,
+        _monitor_ema="val/ema_mAP_50_95",
+        _best_ema=0.25,             # below the RAW regular: regular must win
+    )
+    assert tracker.observe(2) == {"best/epoch": 2.0, "best/is_ema": 0.0}

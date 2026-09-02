@@ -63,6 +63,15 @@ def main(argv: list[str] | None = None) -> int:
         current.checkpoint = checkpoint or current.checkpoint
         current.error = error
         write_record(run_dir, current)
+        # this run just reached a terminal state — chain into the next queued
+        # run so the queue advances even with no UI open to poll (the status
+        # poll stays as the fallback heartbeat for workers that die abruptly)
+        try:
+            from horos.api.train import advance_queue
+
+            advance_queue(run_dir.parent)
+        except Exception:  # noqa: BLE001 — chaining is best effort by design
+            pass
 
     def on_sigterm(signum, frame):  # noqa: ANN001, ARG001
         # Checkpoints from finished epochs are already on disk (E5-S4).
@@ -98,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
                     resume_from=(
                         Path(config.resume_from) if config.resume_from else None
                     ),
+                    checkpoint_criterion=config.checkpoint_criterion,
                     extra=extra,
                 )
                 final_state, checkpoint, error = "failed", None, "no terminal event"

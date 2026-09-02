@@ -50,12 +50,16 @@ __all__ = [
     "list_runs",
 ]
 
-RunState = Literal["pending", "running", "completed", "failed", "stopped"]
+# queued: created and waiting for the active run to finish (no worker yet);
+# pending: worker spawned but not yet reporting; the rest are terminal/live.
+RunState = Literal["queued", "pending", "running", "completed", "failed", "stopped"]
+ACTIVE_STATES = ("pending", "running")
 
 _RUN_JSON = "run.json"
 _CONFIG_JSON = "config.json"
 _EVENTS_JSONL = "events.jsonl"
 _STOP_FLAG = "stop.flag"
+_SPAWN_CLAIM = "spawn.claim"
 _WORKER_LOG = "worker.log"
 
 
@@ -78,6 +82,10 @@ class TrainRunConfig(BaseModel):
     #: category names to train on; None = all. Unselected classes' objects
     #: become background in this run's dataset snapshot.
     categories: list[str] | None = None
+    #: what "best checkpoint" means — "map" (detection quality, default),
+    #: "smoothed_map" (mAP smoothed before comparison; robust when a tiny
+    #: valid split makes per-epoch mAP noisy) or "loss" (lowest val loss)
+    checkpoint_criterion: Literal["map", "smoothed_map", "loss"] = "map"
     acknowledge_non_apache: bool = False
     #: expert passthrough to the backend's own knobs — applied last, wins (E5-S5)
     extra: dict[str, Any] = Field(default_factory=dict)
@@ -263,6 +271,8 @@ def _pid_alive(pid: int | None) -> bool:
 def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
     """A run that claims to be active but whose worker is gone died without a
     terminal event (killed, OOM-killed, machine crash). Settle its state."""
+    if record.state == "queued":
+        return record  # no worker yet by design — nothing to settle
     changed = False
     if not record.dataset_classes:  # backfill runs recorded before the field
         names = _run_class_names(run_dir)
@@ -294,6 +304,77 @@ def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
         )
     write_record(run_dir, record)
     return record
+
+
+# ----------------------------------------------------------------- the queue
+
+
+def _spawn_worker(run_dir: Path, record: RunRecord) -> RunRecord:
+    """Start the training worker for a prepared run directory."""
+    with (run_dir / _WORKER_LOG).open("ab") as log:
+        process = subprocess.Popen(  # noqa: S603 — our own module, our interpreter
+            [sys.executable, "-m", "horos.api.train_worker", str(run_dir)],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    _PROCESSES[record.run_id] = process
+    record.pid = process.pid
+    record.state = "running"
+    write_record(run_dir, record)
+    logger.info("training run %s started (pid %d)", record.run_id, process.pid)
+    return record
+
+
+def advance_queue(root: Path) -> str | None:
+    """Promote the oldest queued run when nothing is active; returns its id.
+
+    Takes the runs ROOT (not a Project) so the exiting worker can chain into
+    the next queued run with no project machinery. Callers race — the status
+    poll from the UI, the worker's exit hook, a CLI — so the actual spawn is
+    guarded by atomically creating `spawn.claim` in the run directory (O_EXCL:
+    works on every platform, unlike fcntl — R7). The claim is one-shot: a run
+    is only ever promoted once.
+    """
+    if not root.is_dir():
+        return None
+    queued: list[tuple[str, Path]] = []
+    for run_dir in root.iterdir():
+        if not (run_dir / _RUN_JSON).is_file():
+            continue
+        record = _reconcile(run_dir, read_record(run_dir))
+        if record.state in ACTIVE_STATES:
+            return None  # something is (still) training — nothing to promote
+        if record.state == "queued":
+            queued.append((record.created_at, run_dir))
+    # FIFO by creation TIME: run ids only carry second precision plus a random
+    # suffix, so two runs queued within the same second sort arbitrarily by id
+    for _, run_dir in sorted(queued):
+        try:
+            fd = os.open(run_dir / _SPAWN_CLAIM, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            # a concurrent caller claimed this one — it is about to become
+            # active, so promoting the NEXT queued run would double-train
+            return None
+        os.close(fd)
+        try:
+            record = read_record(run_dir)
+        except OSError:  # deleted between the scan and the claim
+            continue
+        if record.state != "queued":  # e.g. stopped between scan and claim
+            continue
+        if (run_dir / _STOP_FLAG).is_file():
+            record.state = "stopped"
+            write_record(run_dir, record)
+            continue
+        try:
+            record = _spawn_worker(run_dir, record)
+        except OSError as exc:  # spawn failed: fail the run, try the next one
+            record.state = "failed"
+            record.error = f"Could not start the training worker: {exc}"
+            write_record(run_dir, record)
+            continue
+        return record.run_id
+    return None
 
 
 # ---------------------------------------------------------------------- API
@@ -357,7 +438,10 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     """Export the dataset into a new run directory and spawn the worker.
 
     Returns immediately with the run's record; poll with `training_status`.
-    One active run per project — a second start is refused, never queued.
+    One run TRAINS at a time; starting while one is active queues the new run
+    (state "queued") — it is promoted when the active run reaches a terminal
+    state. The dataset snapshot and hyperparameter plan are fixed at enqueue
+    time, so what a queued run will train on is already decided and visible.
     """
     config = config or TrainRunConfig()
     ensure_supported("training")
@@ -371,14 +455,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
                 f"acknowledge_non_apache=True if you have reviewed and accept it."
             )
 
-    active = next(
-        (r for r in list_runs(project) if r.state in ("pending", "running")), None
-    )
-    if active is not None:
-        raise ProjectError(
-            f"Training run {active.run_id} is already {active.state}. horos runs "
-            f"one training at a time — stop it first or wait for it to finish."
-        )
+    busy = any(r.state in ACTIVE_STATES for r in list_runs(project))
 
     dataset = project.to_dataset()
     if config.categories is not None:
@@ -473,7 +550,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     record = RunRecord(
         run_id=run_id,
         model=config.model,
-        state="pending",
+        state="queued" if busy else "pending",
         created_at=datetime.now(timezone.utc).isoformat(),
         config=resolved.model_dump(exclude={"entrypoint_override"}),
         hparams=plan.derivations,
@@ -485,18 +562,12 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     )
     write_record(run_dir, record)
 
-    with (run_dir / _WORKER_LOG).open("ab") as log:
-        process = subprocess.Popen(  # noqa: S603 — our own module, our interpreter
-            [sys.executable, "-m", "horos.api.train_worker", str(run_dir)],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-    _PROCESSES[run_id] = process
-    record.pid = process.pid
-    record.state = "running"
-    write_record(run_dir, record)
-    logger.info("training run %s started (pid %d)", run_id, process.pid)
-    return record
+    if busy:
+        logger.info("training run %s queued behind the active run", run_id)
+        return record
+    # claim our own run so a concurrent advance_queue can never double-spawn it
+    (run_dir / _SPAWN_CLAIM).touch()
+    return _spawn_worker(run_dir, record)
 
 
 @capability(
@@ -508,6 +579,10 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     not_cli_because="'horos train' runs in the foreground and prints events directly.",
 )
 def training_status(project: Project, run_id: str, *, after: int = 0) -> TrainStatus:
+    # polling is also the queue's fallback heartbeat: if the finished worker's
+    # own exit hook missed its chance (crash, kill -9), the next status call
+    # promotes the oldest queued run
+    advance_queue(runs_root(project))
     run_dir = _run_dir(project, run_id)
     record = _reconcile(run_dir, read_record(run_dir))
     events, num_events = _read_events(run_dir, after)
@@ -527,7 +602,12 @@ def stop_training(project: Project, run_id: str) -> bool:
     terminating the worker only loses the epoch in flight."""
     run_dir = _run_dir(project, run_id)
     record = read_record(run_dir)
-    if record.state not in ("pending", "running"):
+    if record.state == "queued":  # never spawned: settle directly
+        (run_dir / _STOP_FLAG).touch()
+        record.state = "stopped"
+        write_record(run_dir, record)
+        return True
+    if record.state not in ACTIVE_STATES:
         return False
     (run_dir / _STOP_FLAG).touch()
     if record.pid is not None and _worker_alive(record):
@@ -553,7 +633,9 @@ def delete_run(project: Project, run_id: str) -> bool:
 
     run_dir = _run_dir(project, run_id)
     record = read_record(run_dir)
-    if record.state in ("pending", "running") and _worker_alive(record):
+    # queued runs have no worker and are always deletable (that's how a
+    # queued run is cancelled or has its parameters redone)
+    if record.state in ACTIVE_STATES and _worker_alive(record):
         raise ProjectError(
             f"Run {run_id} is still {record.state} — stop it before deleting."
         )
@@ -571,10 +653,12 @@ def delete_run(project: Project, run_id: str) -> bool:
     cli=None,
     not_cli_because="Run listing and comparison ship with experiment management (E7).",
 )
-def list_runs(project: Project) -> list[RunRecord]:
+def list_runs(project: Project, *, advance: bool = False) -> list[RunRecord]:
     root = runs_root(project)
     if not root.is_dir():
         return []
+    if advance:  # the UI's history refresh doubles as a queue heartbeat
+        advance_queue(root)
     records = []
     for run_dir in sorted(root.iterdir(), reverse=True):
         if (run_dir / _RUN_JSON).is_file():

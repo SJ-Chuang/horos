@@ -37,7 +37,8 @@ def derive_hyperparameters():
 
 @bp.get("/train/runs")
 def list_runs():
-    return jsonify([r.model_dump() for r in api.list_runs(_project())])
+    # advance=True: a history refresh doubles as the queue's heartbeat
+    return jsonify([r.model_dump() for r in api.list_runs(_project(), advance=True)])
 
 
 @bp.get("/train/runs/<run_id>")

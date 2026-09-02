@@ -130,6 +130,12 @@ def dump_event(event: Event) -> str:
 # ------------------------------------------------------------------------- specs
 
 
+#: what "best checkpoint" means: mAP (detection quality, the default),
+#: smoothed mAP (an EMA over the metric before comparison — robust to the
+#: per-epoch noise of tiny validation splits), or validation loss.
+CheckpointCriterion = Literal["map", "smoothed_map", "loss"]
+
+
 class TrainSpec(BaseModel):
     """Backend-neutral training request. Backends map these onto their own knobs
     and must reject (not ignore) anything they cannot honor."""
@@ -142,6 +148,7 @@ class TrainSpec(BaseModel):
     device: str | None = None  # resolved via backends/device.py when None
     seed: int | None = None
     resume_from: Path | None = None
+    checkpoint_criterion: CheckpointCriterion = "map"
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
