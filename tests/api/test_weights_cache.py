@@ -5,7 +5,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from horos.backends.weights import cached_download, hf_cache_dir, weights_root
+from horos.backends.weights import (
+    cached_download,
+    download_events,
+    hf_cache_dir,
+    weights_root,
+)
 from horos.errors import WeightsError
 
 PAYLOAD = bytes(range(256)) * 512  # 128 KiB
@@ -103,3 +108,35 @@ def test_cache_dirs_are_under_one_root(tmp_path, monkeypatch):
     root = weights_root()
     assert root == tmp_path / "weights" and root.is_dir()
     assert hf_cache_dir() == root / "hf"
+
+
+def _drain(gen):
+    """Exhaust an event generator, capturing its StopIteration return value."""
+    seen = []
+    while True:
+        try:
+            seen.append(next(gen))
+        except StopIteration as stop:
+            return seen, stop.value
+
+
+def test_download_events_stream_progress_and_return_path(server, tmp_path):
+    events, path = _drain(
+        download_events(
+            f"{server}/weights.bin", dest_dir=tmp_path, label="downloading weights.bin"
+        )
+    )
+    assert path.read_bytes() == PAYLOAD
+    assert events, "a fresh download must emit progress"
+    final = events[-1]
+    assert final.type == "progress"
+    assert (final.current, final.total) == (len(PAYLOAD), len(PAYLOAD))
+    assert final.phase.startswith("downloading weights.bin:")
+    # bytes must be strictly increasing — the throttle drops repeats, not order
+    currents = [e.current for e in events]
+    assert currents == sorted(set(currents))
+
+
+def test_download_events_propagate_failure(server, tmp_path):
+    with pytest.raises(WeightsError, match="404"):
+        _drain(download_events(f"{server}/missing.bin", dest_dir=tmp_path))

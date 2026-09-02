@@ -46,7 +46,11 @@ class FakeBackend(ModelBackend):
         for epoch in range(spec.epochs):
             if spec.extra.get("sleep_per_epoch"):
                 time.sleep(float(spec.extra["sleep_per_epoch"]))
-            yield ProgressUpdated(current=epoch + 1, total=spec.epochs, phase="train")
+            # same phase the real relay uses at train-epoch end — epoch
+            # reconciliation counts only "epoch completed" progress events
+            yield ProgressUpdated(
+                current=epoch + 1, total=spec.epochs, phase="epoch completed"
+            )
             yield MetricsUpdated(step=epoch + 1, metrics={"loss": 1.0 / (epoch + 1)})
         if spec.extra.get("fail"):
             yield RunFailed(error_code="backend_error", message="simulated failure")

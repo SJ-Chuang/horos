@@ -131,6 +131,27 @@ def _epoch_metrics(callback_metrics: Any, *, train_side: bool) -> dict[str, floa
     return picked
 
 
+def _default_weights_filename(model_class: Any) -> str | None:
+    """The variant's published default `pretrain_weights` filename; None when
+    no usable string default can be found (then rfdetr's own paths handle it).
+
+    Most variants declare `_model_config_class`; RFDETRLarge instead overrides
+    `get_model_config()` (its declared class attribute is the bare ModelConfig,
+    default None), so the config default is checked first and the unbound
+    method — which ignores `self` in 1.9.4 (R5) — is the fallback."""
+    config_class = getattr(model_class, "_model_config_class", None)
+    fields = getattr(config_class, "model_fields", None) or {}
+    default = getattr(fields.get("pretrain_weights"), "default", None)
+    if isinstance(default, str):
+        return default
+    try:
+        config = model_class.get_model_config(model_class)
+        default = getattr(config, "pretrain_weights", None)
+    except Exception:  # noqa: BLE001 — best effort; downloading stays rfdetr's job
+        return None
+    return default if isinstance(default, str) else None
+
+
 def _best_checkpoint(output_dir: Path) -> Path | None:
     for name in _CHECKPOINT_PREFERENCE:
         candidate = output_dir / name
@@ -190,6 +211,44 @@ class RFDETRBackend(ModelBackend):
                 self._model = self._model_class()(device=device)
         return self._model
 
+    def _pretrained_weights_events(self) -> Iterator[Event]:
+        """Pre-fetch the variant's pretrained weights with R4 progress events.
+
+        rfdetr downloads its default weights silently inside model
+        construction, so the first run of each size sat on a bare `started`
+        event for minutes and looked hung. Fetching the same file into
+        rfdetr's own cache first (same path, MD5-checked) makes rfdetr skip
+        its download, and horos owns the progress stream."""
+        from rfdetr.assets.model_weights import ModelWeights, get_model_cache_dir
+
+        filename = _default_weights_filename(self._model_class())
+        if filename is None or Path(filename).is_absolute():
+            return
+        target = Path(get_model_cache_dir()) / filename
+        if target.is_file():
+            return
+        asset = ModelWeights.from_filename(filename)
+        if asset is None:
+            return  # unknown to the registry — leave rfdetr's fallbacks to it
+
+        from rfdetr.utilities.files import _validate_file_md5
+
+        from horos.backends.weights import download_events
+
+        path = yield from download_events(
+            asset.url,
+            filename=filename,
+            dest_dir=target.parent,
+            label=f"downloading {filename}",
+        )
+        if asset.md5_hash and not _validate_file_md5(str(path), asset.md5_hash):
+            path.unlink(missing_ok=True)
+            raise BackendError(
+                f"Downloaded weights {filename} failed MD5 validation; the "
+                "corrupt file was removed — check the network and retry.",
+                backend=self.family,
+            )
+
     # --------------------------------------------------------------- training
     def train(self, spec: TrainSpec) -> Iterator[Event]:
         import queue as queue_mod
@@ -215,6 +274,7 @@ class RFDETRBackend(ModelBackend):
                         backend=self.family,
                     ) from exc
 
+                yield from self._pretrained_weights_events()
                 model = self._model_class()(device=kwargs["device"])
                 events: queue_mod.Queue = queue_mod.Queue()
 

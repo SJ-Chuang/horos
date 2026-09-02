@@ -14,6 +14,7 @@ from horos.backends.base import TrainSpec
 from horos.backends.rfdetr import (
     _MODEL_CLASSES,
     _best_checkpoint,
+    _default_weights_filename,
     _detections_to_instances,
     _train_kwargs,
 )
@@ -134,3 +135,23 @@ def test_detections_carry_class_names():
     assert instances[1].category_name is None  # unknown label stays nameless
     unnamed = _detections_to_instances(detections, None)
     assert all(i.category_name is None for i in unnamed)
+
+
+def test_default_weights_filename_reads_config_default():
+    field = SimpleNamespace(default="rf-detr-small.pth")
+    cls = SimpleNamespace(
+        _model_config_class=SimpleNamespace(model_fields={"pretrain_weights": field})
+    )
+    assert _default_weights_filename(cls) == "rf-detr-small.pth"
+
+
+def test_default_weights_filename_tolerates_missing_pieces():
+    assert _default_weights_filename(SimpleNamespace()) is None  # no config class
+    no_field = SimpleNamespace(_model_config_class=SimpleNamespace(model_fields={}))
+    assert _default_weights_filename(no_field) is None
+    none_default = SimpleNamespace(
+        _model_config_class=SimpleNamespace(
+            model_fields={"pretrain_weights": SimpleNamespace(default=None)}
+        )
+    )
+    assert _default_weights_filename(none_default) is None

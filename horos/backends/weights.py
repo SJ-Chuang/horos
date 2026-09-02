@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
+import threading
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
+from horos.backends.base import ProgressUpdated
 from horos.errors import WeightsError
 
 logger = logging.getLogger(__name__)
@@ -102,3 +105,58 @@ def cached_download(
         progress(done, done)
     os.replace(part, final)
     return final
+
+
+def download_events(
+    url: str,
+    *,
+    filename: str | None = None,
+    dest_dir: Path | None = None,
+    label: str = "downloading weights",
+) -> Iterator[ProgressUpdated]:
+    """`cached_download` as an R4 event stream; returns the downloaded path.
+
+    Progress is throttled to whole-percent steps (~100 events per file) so a
+    multi-hundred-MB download doesn't flood the event log. `current`/`total`
+    are BYTES, not epochs — consumers that count epochs must filter on phase.
+    Use `path = yield from download_events(...)` to get the file path back.
+    """
+    events: queue.Queue[ProgressUpdated] = queue.Queue()
+    last = [-1]
+
+    def on_progress(done: int, total: int | None) -> None:
+        if total:
+            tick = int(done * 100 / total)
+            phase = f"{label}: {done >> 20} / {total >> 20} MB"
+        else:  # no Content-Length: report every 32 MiB instead
+            tick = done >> 25
+            phase = f"{label}: {done >> 20} MB"
+        if tick == last[0]:
+            return
+        last[0] = tick
+        events.put(ProgressUpdated(current=done, total=total, phase=phase))
+
+    result: list[Path] = []
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(
+                cached_download(
+                    url, filename=filename, dest_dir=dest_dir, progress=on_progress
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 — re-raised on the caller's thread
+            failure.append(exc)
+
+    worker = threading.Thread(target=run, name="horos-weights-download", daemon=True)
+    worker.start()
+    while worker.is_alive() or not events.empty():
+        try:
+            yield events.get(timeout=0.5)
+        except queue.Empty:
+            continue
+    worker.join()
+    if failure:
+        raise failure[0]
+    return result[0]

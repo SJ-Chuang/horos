@@ -195,12 +195,17 @@ def _run_class_names(run_dir: Path) -> list[str] | None:
 
 def _run_completed_epochs(run_dir: Path) -> int | None:
     """Epochs a run actually finished, from its event log (the relay emits a
-    progress event with current=epoch+1 at each train-epoch end)."""
+    progress event with phase="epoch completed" and current=epoch+1 at each
+    train-epoch end). Other progress events must NOT count: weight-download
+    progress carries BYTES in `current`, which would read as hundreds of
+    millions of epochs."""
     events, _ = _read_events(run_dir)
     completed = [
         e["current"]
         for e in events
-        if e.get("type") == "progress" and isinstance(e.get("current"), int)
+        if e.get("type") == "progress"
+        and e.get("phase") == "epoch completed"
+        and isinstance(e.get("current"), int)
     ]
     return max(completed) if completed else None
 

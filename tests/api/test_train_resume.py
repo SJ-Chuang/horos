@@ -158,3 +158,29 @@ def test_completed_epochs_are_recorded_and_backfilled(project):
     stored.epochs_completed = None  # simulate a pre-field run.json
     write_record(run_dir, stored)
     assert training_status(project, record.run_id).run.epochs_completed == 3
+
+
+def test_download_progress_events_do_not_count_as_epochs(project):
+    """Weight-download progress carries BYTES in `current`; counting it as
+    epochs would report hundreds of millions completed and wreck the
+    resume-epochs guard."""
+    from horos.api.train import _run_dir, read_record, training_status, write_record
+
+    record = start_training(project, TrainRunConfig(entrypoint_override=FAKE, epochs=3))
+    _finish(project, record.run_id)
+    run_dir = _run_dir(project, record.run_id)
+    download_event = {
+        "ts": time.time(),
+        "run_id": None,
+        "type": "progress",
+        "current": 386_045_550,
+        "total": 386_045_550,
+        "phase": "downloading rf-detr-small.pth: 368 / 368 MB",
+    }
+    with (run_dir / "events.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(download_event) + "\n")
+
+    stored = read_record(run_dir)
+    stored.epochs_completed = None  # force reconciliation from the event log
+    write_record(run_dir, stored)
+    assert training_status(project, record.run_id).run.epochs_completed == 3
