@@ -29,3 +29,6 @@ demo_project/
 CLAUDE.md
 samples/
 .design/
+
+# local developer tooling — deliberately not published (kept untracked)
+scripts/
