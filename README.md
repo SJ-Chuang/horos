@@ -1,110 +1,120 @@
-<a id="readme-top"></a>
+<div align="center">
 
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
+<img src="docs/assets/banner.svg" alt="horos — annotate, train, evaluate, deploy" width="100%">
+
+<br>
+
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![License][license-shield]][license-url]
 
-<br />
-<div align="center">
-  <a href="https://github.com/SJ-Chuang/horos">
-    <img src="horos/ui/static/favicon.svg" alt="Logo" width="80" height="80">
-  </a>
+**horos** (ὅρος — *boundary, definition*) is the path that takes a detection
+model into production: one tool that carries a dataset from raw images through
+annotation, training, and evaluation to a deployable artifact — with a web UI,
+a Python API, and a CLI that share one capability set.
 
-<h3 align="center">horos</h3>
+[Quickstart](#quickstart) ·
+[Web UI](#web-ui) ·
+[Models](#models) ·
+[Platforms](#platform-support) ·
+[Installation](#installation) ·
+[Roadmap](#roadmap)
 
-  <p align="center">
-    End-to-end tooling for perception tasks: annotate → train → evaluate → deploy.
-    <br />
-    <a href="https://github.com/SJ-Chuang/horos/issues/new?labels=bug">Report Bug</a>
-    &middot;
-    <a href="https://github.com/SJ-Chuang/horos/issues/new?labels=enhancement">Request Feature</a>
-  </p>
 </div>
 
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li><a href="#about-the-project">About The Project</a></li>
-    <li><a href="#features">Features</a></li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#installation">Installation</a></li>
-        <li><a href="#jetson-read-this--it-matters">Jetson</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#development">Development</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#acknowledgments">Acknowledgments</a></li>
-  </ol>
-</details>
+## Quickstart
 
-## About The Project
+Install ([details & Jetson notes below](#installation)):
 
-horos (ὅρος — *boundary, definition*) is not another model zoo. It is the
-**path that takes a detection model into production**: one tool that carries a
-dataset from raw images through annotation, training, and evaluation to a
-deployable artifact.
+```bash
+pip install horos
+horos doctor        # verifies the environment; --fix installs what's missing
+```
 
-Design premises the codebase is built on:
+Run the whole pipeline from the terminal:
 
-* **Models expire, workflows don't.** Every model dependency lives behind an
-  adapter layer (`horos/backends/`); nothing above it knows which architecture
-  is underneath. When the next architecture replaces RF-DETR, user code stays.
-* **Licensing is a first-class citizen.** Every model, weight, and run carries
-  queryable license metadata — the model picker shows it, the run records it,
-  exports will ship it.
-* **The deployment target is NVIDIA Jetson.** When "runs on a desktop" and
-  "runs on a Jetson" conflict, Jetson wins.
-* **Three interfaces, one capability set.** Everything the web UI does is also
-  a Python API and a CLI, enforced by contract tests.
+```bash
+horos init my-project                   # new project directory
+horos import my-project path/to/data    # COCO / YOLO / VOC / Darknet / VIA, dir or zip
+horos ui my-project                     # web UI: dataset, annotate, train, evaluate
+```
 
-### Built With
+Or from Python — every UI action has a scriptable twin:
 
-* [Flask](https://flask.palletsprojects.com/) + vanilla JS (web API & UI)
-* [pydantic](https://docs.pydantic.dev/) (every config and event is a schema)
-* [RF-DETR](https://github.com/roboflow/rf-detr) (training backend, Apache 2.0)
-* [OWLv2](https://huggingface.co/google/owlv2-base-patch16-ensemble) (zero-shot auto-labeling, Apache 2.0)
-* [pycocotools](https://github.com/ppwwyyxx/cocoapi) · [imageio](https://imageio.readthedocs.io/) (metrics & media decoding)
+```python
+import horos.api as api
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+project = api.open_project("my-project")
+record = api.start_training(project, api.TrainRunConfig(model="rfdetr-small"))
+# ... poll api.training_status(project, record.run_id) ...
+report = api.get_eval_report(project, record.run_id, "test")
+```
 
-## Features
+<div align="center">
+  <img src="docs/assets/pipeline.svg" alt="annotate → train → evaluate → deploy" width="100%">
+</div>
 
-| Stage | Status |
+## Web UI
+
+`horos ui <project>` serves four pages on localhost:
+
+| Page | What it does |
 |---|---|
-| **Dataset** | COCO / YOLO read+write; VOC, Darknet, VIA import; validator with actionable errors; stats; split management with re-split |
-| **Annotate** | Web canvas (bbox + polygon), keyboard-first, resume where you left off, optimistic concurrency for multiple annotators |
-| **Auto-label** | OWLv2 open-vocabulary prompts → pending pre-labels with review (accept / fix / reject), confidence filtering, uncertainty-first ordering |
-| **Train** | RF-DETR Nano–Large; hyperparameters derived from dataset stats **with recorded reasons**, every value overridable; run queue with in-place editing; resume with full optimizer state; OOM auto-backoff; live loss/mAP curves; best-checkpoint criterion (mAP / smoothed mAP / val loss); post-run verdict with concrete suggestions |
-| **Evaluate** | Photos, GIFs, and videos → per-frame prediction gallery with a full-screen viewer (confidence slider, frame-by-frame navigation); COCO metrics (pycocotools) with per-class AP and PR curves, persisted per run |
-| **Deploy** | Not yet — ONNX / TensorRT / TFLite export is the next phase |
+| **Dataset** | import (drag a zip), validation with actionable errors, class stats, train/valid/test re-splitting |
+| **Annotate** | keyboard-first canvas (bbox + polygon), OWLv2 zero-shot pre-labels with an accept/fix/reject review flow, resume where you left off, safe for multiple annotators |
+| **Training** | one-click start — hyperparameters are derived from your dataset's statistics **with the reasoning shown**, and every value can be overridden; live loss/mAP curves, run queue with in-place editing, resume with full optimizer state, OOM auto-backoff, post-run verdict with concrete suggestions |
+| **Evaluate** | drop photos, GIFs, or videos onto a trained model and browse per-frame predictions in a gallery viewer (confidence slider, frame-by-frame navigation); COCO metrics with per-class AP and PR curves |
 
-`import horos` stays fast and torch-free (backends load lazily on first use);
-annotation-only installs never need a GPU.
+## Models
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+All registered weights are Apache-2.0. Nothing is bundled — weights download
+on first use and cache locally.
 
-## Getting Started
+**Detection (trainable)**
 
-### Installation
+| Model | Params | Input | Notes |
+|---|---|---|---|
+| RF-DETR Nano | 30.5 M | 384 px | fastest — Jetson-friendly real-time |
+| RF-DETR Small | 32.1 M | 512 px | fast — good default for Jetson |
+| RF-DETR Medium | 33.7 M | 576 px | balanced accuracy/latency |
+| RF-DETR Large | 129 M | 704 px | highest accuracy — desktop GPU recommended |
+
+**Annotation assistants (not for deployment)**
+
+| Model | Params | Role |
+|---|---|---|
+| OWLv2 Base / Large | 155 M / 437 M | open-vocabulary zero-shot pre-labeling from text prompts |
+| SAM ViT-B | 94 M | turns autolabel boxes into polygon masks |
+
+RF-DETR XL/2XL are deliberately unregistered: their weights are not Apache-2.0
+(PML 1.0). Loading them requires an explicit `acknowledge_non_apache=True`.
+
+## Platform support
+
+| Capability | Ubuntu (CUDA) | Windows | macOS | Jetson |
+|---|:-:|:-:|:-:|:-:|
+| Dataset management & annotation | ✅ | ✅ | ✅ | ✅ |
+| Auto-labeling (OWLv2) | ✅ | ✅ | ✅ (MPS/CPU, slower) | ✅ |
+| Training | ✅ | ✅ | small-dataset validation only | discouraged, not blocked |
+| Inference & evaluation | ✅ | ✅ | ✅ | ✅ |
+| TensorRT export *(planned)* | ✅ | ✅ | ❌ refused explicitly | ✅ |
+
+Unsupported combinations raise a clear error at the API layer and show up as
+disabled buttons with an explanation in the UI — never a silent CPU fallback.
+Device priority: CUDA → MPS → CPU, recorded in each run's metadata.
+
+## Installation
 
 The install scripts detect your platform (OS, NVIDIA GPU, Jetson) and install
 the matching torch build plus horos into `./.venv`:
 
 ```bash
-# Ubuntu / macOS / Jetson
-./install.sh
-
-# Windows
-install.bat
+./install.sh        # Ubuntu / macOS / Jetson
+install.bat         # Windows
 ```
 
-What they decide for you:
+<details>
+<summary>What the scripts decide for you</summary>
 
 | Platform | torch source |
 |---|---|
@@ -115,36 +125,29 @@ What they decide for you:
 | Windows without GPU | PyPI (CPU) |
 | Jetson | **never installed by the script** — see below |
 
-Or simply:
-
-```bash
-pip install horos
-horos doctor        # verifies the environment; `horos doctor --fix` installs what's missing
-```
-
-`pip install horos` does the right thing per platform: on Linux/aarch64 (Jetson)
-it deliberately skips `rfdetr`/`torch` so pip can never replace the CUDA JetPack
-torch — `horos doctor --fix` completes the install there with the right sources.
+</details>
 
 **Use a dedicated environment.** horos pins `rfdetr` exactly (upstream has had
 silent annotation-corruption bugs; reproducibility wins) and requires
 `transformers >= 5.1` — installing into a shared ML environment will upgrade
 `transformers`, `supervision`, `huggingface-hub` and friends, which can break
-other projects living in that environment. The install scripts create an
-isolated `./.venv` for exactly this reason.
+other projects living in that environment.
 
 ### Jetson (read this — it matters)
 
-On Jetson, torch **must** come from NVIDIA's JetPack-matched wheel. The PyPI torch has
-no CUDA support on Jetson, and a plain `pip install horos` may silently replace your
-CUDA-enabled torch with a CPU-only build — everything still runs, just an order of
-magnitude slower.
+On Jetson, torch **must** come from NVIDIA's JetPack-matched wheel. The PyPI
+torch has no CUDA support on Jetson, and a plain `pip install horos` may
+silently replace your CUDA-enabled torch with a CPU-only build — everything
+still runs, just an order of magnitude slower.
 
 `./install.sh` handles this automatically on Jetson: it creates the venv with
-`--system-site-packages`, verifies the existing torch has CUDA (warning loudly if
-not), and installs horos with `--no-deps` so pip can never swap torch out.
+`--system-site-packages`, verifies the existing torch has CUDA (warning loudly
+if not), and installs horos with `--no-deps` so pip can never swap torch out.
+horos also warns at backend load time when it detects a Jetson platform where
+`torch.cuda.is_available()` is False.
 
-Doing it by hand:
+<details>
+<summary>Jetson install by hand</summary>
 
 ```bash
 pip install horos --no-deps
@@ -157,49 +160,18 @@ pip install supervision pycocotools scipy peft \
     "torchmetrics[detection]>=1.2" "faster-coco-eval>=1.7.2"
 ```
 
-`horos` warns at backend load time if it detects a Jetson platform where
-`torch.cuda.is_available()` is False.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Usage
-
-```bash
-horos init my-project                   # new project directory
-horos import my-project path/to/data    # COCO / YOLO / VOC / Darknet / VIA, dir or zip
-horos ui my-project                     # web UI: dataset, annotate, train, evaluate
-```
-
-The same pipeline, scripted:
-
-```python
-import horos.api as api
-
-project = api.open_project("my-project")
-record = api.start_training(project, api.TrainRunConfig(model="rfdetr-small"))
-# ... poll api.training_status(project, record.run_id) ...
-report = api.get_eval_report(project, record.run_id, "test")
-```
-
-And from the terminal: `horos train`, `horos infer`, `horos evaluate`,
-`horos autolabel` — every UI action has a scriptable twin.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+</details>
 
 ## Roadmap
 
-- [x] Project & dataset core (formats, validation, stats, splits)
-- [x] Manual annotation (bbox + polygon, multi-annotator)
-- [x] Auto-labeling (OWLv2 open-vocabulary, review workflow)
-- [x] Training (derived hyperparameters, queue, resume, live monitoring)
-- [x] Evaluation (media gallery, COCO metrics, per-class analysis)
-- [ ] Error analysis (confusion pairs, worst-case mining)
-- [ ] Experiment management (run comparison, dataset fingerprints)
-- [ ] Export & deploy (ONNX / TensorRT / TFLite, model cards, parity checks)
-
-See the [open issues](https://github.com/SJ-Chuang/horos/issues) for the full list.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+- [x] Project & dataset core — formats, validation, stats, splits
+- [x] Manual annotation — bbox + polygon, multi-annotator
+- [x] Auto-labeling — OWLv2 open-vocabulary, review workflow
+- [x] Training — derived hyperparameters, queue, resume, live monitoring
+- [x] Evaluation — media gallery, COCO metrics, per-class analysis
+- [ ] Error analysis — confusion pairs, worst-case mining
+- [ ] Experiment management — run comparison, dataset fingerprints
+- [ ] Export & deploy — ONNX / TensorRT / TFLite, model cards, parity checks
 
 ## Development
 
@@ -211,33 +183,23 @@ pytest tests/test_invariants.py && pytest
 ```
 
 `tests/test_invariants.py` runs first for a reason: it statically enforces the
-architecture (no model imports outside `horos/backends/`, no torch after
-`import horos`, no layer-skipping between UI, web API, and core).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+architecture — model dependencies live only in `horos/backends/`, `import horos`
+never drags in torch, and the UI talks to the core exclusively through the web
+API. Models are adapters; the workflow is the product.
 
 ## License
 
-Distributed under the Apache License 2.0. See `LICENSE` for more information.
-
-Model weights are downloaded at runtime and cached locally — horos never
-bundles or redistributes them. Only Apache-2.0-licensed model sizes are
-registered by default; non-Apache variants require an explicit acknowledgement.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+Distributed under the [Apache License 2.0](LICENSE). Model weights are
+downloaded at runtime and cached locally — horos never bundles or
+redistributes them, and each model's license is recorded in the registry,
+shown in the UI, and stamped into every training run.
 
 ## Acknowledgments
 
-* [RF-DETR](https://github.com/roboflow/rf-detr) by Roboflow
-* [OWLv2](https://arxiv.org/abs/2306.09683) by Google Research
-* [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
+[RF-DETR](https://github.com/roboflow/rf-detr) by Roboflow ·
+[OWLv2](https://arxiv.org/abs/2306.09683) by Google Research ·
+[Segment Anything](https://segment-anything.com/) by Meta AI
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-[contributors-shield]: https://img.shields.io/github/contributors/SJ-Chuang/horos.svg?style=for-the-badge
-[contributors-url]: https://github.com/SJ-Chuang/horos/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/SJ-Chuang/horos.svg?style=for-the-badge
-[forks-url]: https://github.com/SJ-Chuang/horos/network/members
 [stars-shield]: https://img.shields.io/github/stars/SJ-Chuang/horos.svg?style=for-the-badge
 [stars-url]: https://github.com/SJ-Chuang/horos/stargazers
 [issues-shield]: https://img.shields.io/github/issues/SJ-Chuang/horos.svg?style=for-the-badge

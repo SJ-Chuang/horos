@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" role="img" aria-label="horos — annotate, train, evaluate, deploy">
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#12171d"/>
+      <stop offset="1" stop-color="#0d1115"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="300" rx="14" fill="url(#ground)"/>
+  <rect x="0.5" y="0.5" width="1279" height="299" rx="13.5" fill="none" stroke="#2a333e"/>
+
+  <!-- lockup: mark + wordmark + tagline (left) -->
+  <g transform="translate(96,86)">
+    <g transform="scale(3.6)">
+      <path d="M7 22 L7 9 Q7 7 9 7 L22 7" fill="none" stroke="#e6edf3"
+            stroke-width="4.6" stroke-linecap="round"/>
+      <rect x="17" y="17" width="9" height="9" rx="2.2" fill="#4dabf7"/>
+    </g>
+    <text x="150" y="76" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+          font-size="84" font-weight="700" letter-spacing="2" fill="#e6edf3">horos</text>
+    <text x="153" y="122" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="21" fill="#8b98a5">annotate&#8201;&#8594;&#8201;train&#8201;&#8594;&#8201;evaluate&#8201;&#8594;&#8201;deploy</text>
+  </g>
+
+  <!-- detection-overlay motif (right): boxes with labels, like the evaluate viewer -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">
+    <g>
+      <rect x="760" y="66" width="176" height="140" rx="3" fill="rgba(77,171,247,.07)"
+            stroke="#4dabf7" stroke-width="2.4"/>
+      <rect x="760" y="44" width="118" height="22" rx="3" fill="#4dabf7"/>
+      <text x="769" y="60" fill="#101418" font-weight="600">forklift 0.94</text>
+    </g>
+    <g>
+      <rect x="972" y="118" width="128" height="102" rx="3" fill="rgba(81,207,102,.07)"
+            stroke="#51cf66" stroke-width="2.4"/>
+      <rect x="972" y="96" width="94" height="22" rx="3" fill="#51cf66"/>
+      <text x="981" y="112" fill="#101418" font-weight="600">pallet 0.88</text>
+    </g>
+    <g opacity=".55">
+      <rect x="1128" y="80" width="84" height="66" rx="3" fill="none"
+            stroke="#fcc419" stroke-width="2" stroke-dasharray="6 5"/>
+      <rect x="1128" y="58" width="104" height="22" rx="3" fill="#fcc419"/>
+      <text x="1137" y="74" fill="#101418" font-weight="600">person 0.41</text>
+    </g>
+    <!-- viewfinder corners framing the motif -->
+    <g stroke="#3a4550" stroke-width="2.5" fill="none" stroke-linecap="round">
+      <path d="M726 52 v-18 q0 -6 6 -6 h18"/>
+      <path d="M1232 28 h18 q6 0 6 6 v18"/>
+      <path d="M726 248 v18 q0 6 6 6 h18"/>
+      <path d="M1256 248 v18 q0 6 -6 6 h-18"/>
+    </g>
+    <text x="726" y="246" fill="#5c6873" font-size="12">conf ≥ 0.50 · 2 shown</text>
+  </g>
+</svg>

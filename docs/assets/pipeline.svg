@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 132" role="img" aria-label="pipeline: annotate, train, evaluate, deploy">
+  <style>
+    .chip { fill: #1a2129; stroke: #2a333e; }
+    .name { font: 600 22px ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; fill: #e6edf3; }
+    .sub  { font: 13px ui-sans-serif, system-ui, sans-serif; fill: #8b98a5; }
+    .arrow{ stroke: #3a4550; stroke-width: 2.5; fill: none; stroke-linecap: round; }
+  </style>
+  <rect width="1280" height="132" fill="none"/>
+
+  <g transform="translate(24,16)">
+    <rect class="chip" width="266" height="100" rx="12"/>
+    <rect x="20" y="26" width="20" height="20" rx="4" fill="none" stroke="#4dabf7" stroke-width="2.6"/>
+    <circle cx="40" cy="46" r="4.5" fill="#4dabf7"/>
+    <text class="name" x="58" y="49">Annotate</text>
+    <text class="sub" x="20" y="78">manual + OWLv2 zero-shot pre-labels</text>
+  </g>
+  <path class="arrow" d="M296 66 h26 m-8 -7 8 7 -8 7"/>
+
+  <g transform="translate(334,16)">
+    <rect class="chip" width="266" height="100" rx="12"/>
+    <path d="M20 52 q10 -22 22 -8 t22 -14 t18 6" fill="none" stroke="#4dabf7" stroke-width="2.6" stroke-linecap="round"/>
+    <text class="name" x="96" y="49">Train</text>
+    <text class="sub" x="20" y="78">derived hyperparameters, with reasons</text>
+  </g>
+  <path class="arrow" d="M606 66 h26 m-8 -7 8 7 -8 7"/>
+
+  <g transform="translate(644,16)">
+    <rect class="chip" width="266" height="100" rx="12"/>
+    <path d="M30 56 l8 8 16 -20" fill="none" stroke="#51cf66" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="name" x="66" y="49">Evaluate</text>
+    <text class="sub" x="20" y="78">media gallery + COCO metrics per class</text>
+  </g>
+  <path class="arrow" d="M916 66 h26 m-8 -7 8 7 -8 7"/>
+
+  <g transform="translate(954,16)">
+    <rect width="302" height="100" rx="12" fill="#161c23" stroke="#2a333e"
+          stroke-dasharray="7 6"/>
+    <path d="M22 36 h18 v10 h10 l-19 22 -19 -22 h10 z" fill="#5c6873"/>
+    <text x="62" y="49" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+          font-size="22" font-weight="600" fill="#8b98a5">Deploy</text>
+    <text class="sub" x="20" y="78" fill="#5c6873">ONNX · TensorRT · TFLite — next phase</text>
+  </g>
+</svg>
