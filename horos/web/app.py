@@ -55,7 +55,9 @@ def create_app(project_root: str | Path | None = None) -> Flask:
     The UI blueprint is registered too — the same server serves both, but the
     UI talks to the API over HTTP only (R2).
     """
-    app = Flask("horos.web")
+    # static_folder=None: the app's default /static route would otherwise
+    # shadow the UI blueprint's /static (horos/ui/static, favicon etc.)
+    app = Flask("horos.web", static_folder=None)
     app.config["HOROS_PROJECT_ROOT"] = str(project_root) if project_root else None
     # uploads capped at 2 GB; datasets bigger than that should be imported by path
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024**3
