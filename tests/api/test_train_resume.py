@@ -13,6 +13,7 @@ from helpers.data import write_sample_coco_dir
 from horos.api.dataset import import_dataset
 from horos.api.project import create_project
 from horos.api.train import TrainRunConfig, start_training, training_status
+from horos.errors import ProjectError
 
 TESTS_ROOT = Path(__file__).parent.parent
 FAKE = "helpers.fake_backend:FakeBackend"
@@ -78,3 +79,30 @@ def test_each_run_keeps_its_own_checkpoints(project):
     second_ckpt = project.root / "runs" / second.run_id / "checkpoints" / "best.fake"
     assert first_ckpt.is_file() and second_ckpt.is_file()
     assert first_ckpt != second_ckpt  # resuming can never overwrite the source run
+
+
+def test_resume_with_a_different_class_set_is_refused(project):
+    """The checkpoint's class head is shape-fixed: resuming with different
+    classes fails deep in the backend with a raw state_dict size mismatch —
+    horos must refuse it up front with the actual fix."""
+    source = start_training(
+        project,
+        TrainRunConfig(entrypoint_override=FAKE, epochs=1,
+                       categories=["forklift"]),
+    )
+    checkpoint = _finish(project, source.run_id).run.checkpoint
+
+    with pytest.raises(ProjectError, match="Cannot resume.*forklift"):
+        start_training(  # default = ALL classes ≠ the source run's one class
+            project,
+            TrainRunConfig(entrypoint_override=FAKE, epochs=2,
+                           resume_from=checkpoint),
+        )
+
+    # matching selection resumes fine
+    resumed = start_training(
+        project,
+        TrainRunConfig(entrypoint_override=FAKE, epochs=2,
+                       categories=["forklift"], resume_from=checkpoint),
+    )
+    assert _finish(project, resumed.run_id).run.state == "completed"

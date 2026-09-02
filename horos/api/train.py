@@ -169,6 +169,20 @@ def _worker_alive(record: RunRecord) -> bool:
     return _pid_alive(record.pid)
 
 
+def _snapshot_class_names(checkpoint: Path) -> list[str] | None:
+    """The class list a checkpoint was trained on, read from its run's dataset
+    snapshot (runs/<id>/checkpoints/x.pth → runs/<id>/dataset/train/...).
+    None when the checkpoint is not inside a horos run (nothing to verify)."""
+    gt_path = checkpoint.parent.parent / "dataset" / "train" / "_annotations.coco.json"
+    if not gt_path.is_file():
+        return None
+    try:
+        gt = json.loads(gt_path.read_text("utf-8"))
+        return sorted(c["name"] for c in gt.get("categories", []))
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+
+
 def _split_counts(run_dir: Path, record: RunRecord) -> dict[str, int]:
     """Split sizes at training time; older runs predate the recorded field,
     so fall back to counting the images exported into the run directory."""
@@ -335,6 +349,21 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
             raise ProjectError(
                 f"The selected categories {config.categories} have no "
                 f"annotations in the train split — nothing to learn from."
+            )
+
+    if config.resume_from:
+        # the checkpoint's class head has a fixed shape: resuming with a
+        # different class set fails deep inside the backend with a raw
+        # state_dict size-mismatch — refuse it here with the actual fix
+        source_names = _snapshot_class_names(Path(config.resume_from))
+        new_names = sorted({c.name for c in dataset.categories})
+        if source_names is not None and source_names != new_names:
+            raise ProjectError(
+                f"Cannot resume: the checkpoint was trained on classes "
+                f"{source_names}, but this run would train on {new_names}. "
+                f"The class head's shape is fixed by the checkpoint — select "
+                f"exactly the source run's classes, or start a fresh run "
+                f"(without resume) to train on the new class set."
             )
 
     # Fill every unset hyperparameter from the rule-based plan (E5-T1) and
