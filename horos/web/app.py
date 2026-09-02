@@ -58,7 +58,13 @@ def create_app(project_root: str | Path | None = None) -> Flask:
     # static_folder=None: the app's default /static route would otherwise
     # shadow the UI blueprint's /static (horos/ui/static, favicon etc.)
     app = Flask("horos.web", static_folder=None)
-    app.config["HOROS_PROJECT_ROOT"] = str(project_root) if project_root else None
+    # resolve() matters: `horos ui my-project` hands a RELATIVE path here, and
+    # Flask file helpers (send_from_directory/send_file) resolve relative
+    # paths against app.root_path — the horos.web package dir — not the cwd,
+    # which turned every served file into a silent 404
+    app.config["HOROS_PROJECT_ROOT"] = (
+        str(Path(project_root).resolve()) if project_root else None
+    )
     # uploads capped at 2 GB; datasets bigger than that should be imported by path
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024**3
     # horos ui is a local tool: without this, Jinja caches templates per process

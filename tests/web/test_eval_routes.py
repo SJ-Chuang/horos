@@ -166,3 +166,38 @@ def test_media_upload_without_file_is_a_client_error(trained_client):
     client, run_id, _ = trained_client
     response = client.post(f"/api/v1/train/runs/{run_id}/media", data={})
     assert response.status_code == 400
+
+
+def test_relative_project_root_still_serves_frame_files(tmp_path, monkeypatch):
+    """`horos ui my-project` hands create_app a RELATIVE path; Flask's file
+    helpers resolve relative directories against the package dir, not the cwd
+    — every frame 404'd until create_app resolved the root absolute."""
+    from horos.api import create_project, import_dataset
+
+    monkeypatch.chdir(tmp_path)
+    proj = create_project(Path("proj"))
+    import_dataset(proj, write_sample_coco_dir(tmp_path / "coco"))
+    app = create_app("proj")  # relative on purpose
+    app.testing = True
+    client = app.test_client()
+
+    run_id = client.post(
+        "/api/v1/train", json={"entrypoint_override": FAKE, "epochs": 1}
+    ).get_json()["run_id"]
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        state = client.get(f"/api/v1/train/runs/{run_id}").get_json()["run"]["state"]
+        if state not in ("pending", "running"):
+            break
+        time.sleep(0.2)
+
+    body = client.post(
+        f"/api/v1/train/runs/{run_id}/media",
+        data={"file": (io.BytesIO(_gif_bytes(2)), "clip.gif")},
+        content_type="multipart/form-data",
+    ).get_json()
+    assert _wait_job(client, body["job_id"])["state"] == "completed"
+    frame = client.get(
+        f"/api/v1/train/runs/{run_id}/media/{body['media_id']}/frames/00000.jpg"
+    )
+    assert frame.status_code == 200
