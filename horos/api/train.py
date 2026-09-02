@@ -111,6 +111,9 @@ class RunRecord(BaseModel):
     #: weights for inference/export; resuming from it restarts the optimizer
     #: cold and the loss spikes for a few epochs.
     resume_checkpoint: str | None = None
+    #: epochs this run actually finished — a resume's TOTAL epochs must exceed
+    #: this or the trainer has nothing left to do
+    epochs_completed: int | None = None
 
 
 class TrainStatus(BaseModel):
@@ -190,6 +193,18 @@ def _run_class_names(run_dir: Path) -> list[str] | None:
         return None
 
 
+def _run_completed_epochs(run_dir: Path) -> int | None:
+    """Epochs a run actually finished, from its event log (the relay emits a
+    progress event with current=epoch+1 at each train-epoch end)."""
+    events, _ = _read_events(run_dir)
+    completed = [
+        e["current"]
+        for e in events
+        if e.get("type") == "progress" and isinstance(e.get("current"), int)
+    ]
+    return max(completed) if completed else None
+
+
 def _snapshot_class_names(checkpoint: Path) -> list[str] | None:
     """Class list for a checkpoint inside a horos run
     (runs/<id>/checkpoints/x.pth → runs/<id>/dataset/train/...);
@@ -249,11 +264,17 @@ def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
         if names:
             record.dataset_classes = names
             changed = True
-    if record.resume_checkpoint is None and record.state not in ("pending", "running"):
-        last = run_dir / "checkpoints" / "last.ckpt"
-        if last.is_file():
-            record.resume_checkpoint = str(last)
-            changed = True
+    if record.state not in ("pending", "running"):
+        if record.resume_checkpoint is None:
+            last = run_dir / "checkpoints" / "last.ckpt"
+            if last.is_file():
+                record.resume_checkpoint = str(last)
+                changed = True
+        if record.epochs_completed is None:
+            completed = _run_completed_epochs(run_dir)
+            if completed is not None:
+                record.epochs_completed = completed
+                changed = True
     if changed:
         write_record(run_dir, record)
     if record.state not in ("pending", "running") or _worker_alive(record):
@@ -407,6 +428,30 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
             "extra": {**plan.extra_fields(), **config.extra},
         }
     )
+
+    if config.resume_from:
+        # epochs is the TOTAL count and the trainer restores the checkpoint's
+        # epoch — a total at or below what is already done raises a raw
+        # MisconfigurationException deep in the backend; refuse it up front
+        source_dir = Path(config.resume_from).parent.parent
+        completed = None
+        if (source_dir / _RUN_JSON).is_file():
+            source_record = read_record(source_dir)
+            completed = (
+                source_record.epochs_completed
+                or _run_completed_epochs(source_dir)
+            )
+        if (
+            completed
+            and resolved.epochs is not None
+            and resolved.epochs <= completed
+        ):
+            raise ProjectError(
+                f"Cannot resume: the checkpoint already completed {completed} "
+                f"epochs and epochs is the TOTAL count — {resolved.epochs} "
+                f"leaves nothing to train. Set epochs above {completed} "
+                f"(e.g. {completed + max(10, completed // 2)})."
+            )
 
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     run_dir = runs_root(project) / run_id

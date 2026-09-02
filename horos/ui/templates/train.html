@@ -292,10 +292,12 @@ let preResumeSelection = null;
 async function setResume(state) {
   // the lock needs the source run's class list; older records may lack it
   // until the server backfills — fetch the fresh record rather than guessing
-  if (state && (!state.classes || !state.classes.length)) {
+  if (state && (!state.classes || !state.classes.length || state.epochsDone == null)) {
     try {
       const detail = await api(`/train/runs/${state.runId}`);
-      state.classes = detail.run.dataset_classes || [];
+      state.classes = state.classes && state.classes.length
+        ? state.classes : (detail.run.dataset_classes || []);
+      if (state.epochsDone == null) state.epochsDone = detail.run.epochs_completed;
     } catch (e) { /* fall through: server guard still protects the start */ }
   }
   resumeState = state;
@@ -305,9 +307,12 @@ async function setResume(state) {
   if (state) {
     $("resume-detail").textContent =
       ` from run ${state.runId} (${state.checkpoint.split(/[\\/]/).pop()})` +
+      (state.epochsDone != null
+        ? ` — ${state.epochsDone} epochs completed: set TOTAL epochs above ${state.epochsDone}`
+        : "") +
       (state.fullState
-        ? " — full training state: weights, optimizer and LR schedule"
-        : " — weights only: expect a brief loss bump while the optimizer re-warms");
+        ? " · full training state (weights, optimizer, LR schedule)"
+        : " · weights only: expect a brief loss bump while the optimizer re-warms");
     $("model-select").value = state.model;
     $("model-select").dispatchEvent(new Event("change"));
     // the class head's shape is fixed by the checkpoint: lock the picker
@@ -490,6 +495,7 @@ function renderRun(run) {
     fullState: !!run.resume_checkpoint,
     model: run.model,
     classes: run.dataset_classes || [],
+    epochsDone: run.epochs_completed,
   });
   if (run.state === "completed") {
     $("run-bar").style.width = "100%";

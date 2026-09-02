@@ -50,9 +50,9 @@ def test_resume_from_a_previous_runs_checkpoint(project):
     checkpoint = first_status.run.checkpoint
     assert checkpoint and Path(checkpoint).is_file()
 
-    second = start_training(
+    second = start_training(  # TOTAL epochs must exceed the source's 2
         project,
-        TrainRunConfig(entrypoint_override=FAKE, epochs=2, resume_from=checkpoint),
+        TrainRunConfig(entrypoint_override=FAKE, epochs=4, resume_from=checkpoint),
     )
     second_status = _finish(project, second.run_id)
     assert second_status.run.state == "completed"
@@ -122,3 +122,39 @@ def test_full_state_checkpoint_is_surfaced_for_resume(project):
 
     refreshed = training_status(project, record.run_id).run
     assert refreshed.resume_checkpoint.endswith("last.ckpt")
+
+
+def test_resume_total_epochs_must_exceed_completed(project):
+    """epochs is the TOTAL count and the trainer restores the checkpoint's
+    epoch: a total at or below what is done raises a raw
+    MisconfigurationException in the backend — refuse it up front."""
+    source = start_training(project, TrainRunConfig(entrypoint_override=FAKE, epochs=3))
+    checkpoint = _finish(project, source.run_id).run.checkpoint
+
+    for epochs in (2, 3):  # below and exactly-equal both leave nothing to train
+        with pytest.raises(ProjectError, match="already completed 3 epochs"):
+            start_training(
+                project,
+                TrainRunConfig(entrypoint_override=FAKE, epochs=epochs,
+                               resume_from=checkpoint),
+            )
+
+    resumed = start_training(
+        project,
+        TrainRunConfig(entrypoint_override=FAKE, epochs=4, resume_from=checkpoint),
+    )
+    assert _finish(project, resumed.run_id).run.state == "completed"
+
+
+def test_completed_epochs_are_recorded_and_backfilled(project):
+    from horos.api.train import _run_dir, read_record, training_status, write_record
+
+    record = start_training(project, TrainRunConfig(entrypoint_override=FAKE, epochs=3))
+    status = _finish(project, record.run_id)
+    assert status.run.epochs_completed == 3
+
+    run_dir = _run_dir(project, record.run_id)
+    stored = read_record(run_dir)
+    stored.epochs_completed = None  # simulate a pre-field run.json
+    write_record(run_dir, stored)
+    assert training_status(project, record.run_id).run.epochs_completed == 3
