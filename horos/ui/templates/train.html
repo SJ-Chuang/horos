@@ -13,7 +13,8 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { padding: 10px 24px; border-bottom: 1px solid var(--line);
+  header { position: sticky; top: 0; z-index: 30; background: var(--bg);
+           padding: 10px 24px; border-bottom: 1px solid var(--line);
            display: flex; align-items: center; gap: 14px; }
   header h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
   header .project { color: var(--dim); }
@@ -190,11 +191,14 @@
   <section class="panel" id="setup-panel">
     <h2>Start a training run</h2>
     <div id="resume-banner" class="hidden"
-         style="border:1px solid var(--accent);border-radius:8px;padding:10px 14px;
-                margin-bottom:14px;background:rgba(77,171,247,.08)">
+         style="position:relative;border:1px solid var(--accent);border-radius:8px;
+                padding:10px 30px 10px 14px;margin-bottom:14px;
+                background:rgba(77,171,247,.08)">
+      <button id="resume-cancel" title="Cancel resuming"
+              style="position:absolute;top:6px;right:6px;border:none;background:none;
+                     color:var(--dim);padding:2px 6px;font-size:13px;line-height:1">✕</button>
       <strong style="color:var(--accent)">Resuming</strong>
       <span id="resume-detail" style="color:var(--dim);font-size:13px"></span>
-      <button class="reset" id="resume-cancel" style="float:right">cancel ✕</button>
       <div style="color:var(--dim);font-size:12px;margin-top:4px">
         Classes are locked to the source run's set (the checkpoint's class
         head fixes them). epochs is the TOTAL count — set it higher than the

@@ -12,7 +12,8 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { padding: 10px 24px; border-bottom: 1px solid var(--line);
+  header { position: sticky; top: 0; z-index: 30; background: var(--bg);
+           padding: 10px 24px; border-bottom: 1px solid var(--line);
            display: flex; align-items: center; gap: 14px; }
   header h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
   header .project { color: var(--dim); }
