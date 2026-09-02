@@ -7,6 +7,31 @@ End-to-end tooling for perception tasks: annotate → train → evaluate → dep
 - License metadata travels with every model, run, and export artifact.
 - Target deployment platform is NVIDIA Jetson.
 
+## Quickstart
+
+```bash
+horos init my-project                   # new project directory
+horos import my-project path/to/data    # COCO / YOLO / VOC / Darknet / VIA, dir or zip
+horos ui my-project                     # web UI: dataset, annotate, train, evaluate
+```
+
+Everything the UI does is also a Python API (`import horos`) and a CLI —
+`horos train`, `horos infer`, `horos evaluate` run the same code paths.
+
+## What works today
+
+| Stage | Status |
+|---|---|
+| **Dataset** | COCO / YOLO read+write; VOC, Darknet, VIA import; validator with actionable errors; stats; split management with re-split |
+| **Annotate** | Web canvas (bbox + polygon), keyboard-first, resume where you left off, optimistic concurrency for multiple annotators |
+| **Auto-label** | OWLv2 open-vocabulary prompts → pending pre-labels with review (accept / fix / reject), confidence filtering, uncertainty-first ordering |
+| **Train** | RF-DETR Nano–Large; hyperparameters derived from dataset stats **with recorded reasons**, every value overridable; run queue (edit/cancel queued runs); resume with full optimizer state; OOM auto-backoff; live loss/mAP curves; best-checkpoint criterion (mAP / smoothed mAP / val loss); post-run verdict with concrete suggestions |
+| **Evaluate** | Upload photos for instant overlay testing; COCO metrics (pycocotools) with per-class AP and PR curves, persisted per run |
+| **Deploy** | Not yet — ONNX / TensorRT / TFLite export is the next phase |
+
+`import horos` stays fast and torch-free (backends load lazily on first use);
+annotation-only installs never need a GPU.
+
 ## Install
 
 The install scripts detect your platform (OS, NVIDIA GPU, Jetson) and install the
