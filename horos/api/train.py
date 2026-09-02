@@ -547,13 +547,32 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     )
 
     (run_dir / _CONFIG_JSON).write_text(resolved.model_dump_json(indent=2), "utf-8")
+    criterion_reason = {
+        "map": "highest validation mAP wins — detection quality is what ships",
+        "smoothed_map": (
+            "mAP is smoothed (EMA) before comparison, so one noisy validation "
+            "spike on a small valid split cannot lock in the best checkpoint"
+        ),
+        "loss": (
+            "lowest validation loss wins — a smooth signal, but it can "
+            "diverge from detection quality (mAP)"
+        ),
+    }[config.checkpoint_criterion]
     record = RunRecord(
         run_id=run_id,
         model=config.model,
         state="queued" if busy else "pending",
         created_at=datetime.now(timezone.utc).isoformat(),
         config=resolved.model_dump(exclude={"entrypoint_override"}),
-        hparams=plan.derivations,
+        hparams=[
+            *plan.derivations,
+            DerivedValue(
+                name="checkpoint_criterion",
+                value=config.checkpoint_criterion,
+                reason=criterion_reason,
+                overridden=config.checkpoint_criterion != "map",
+            ),
+        ],
         hparam_notes=plan.notes,
         device=config.device,
         dataset_images=len(dataset.images),

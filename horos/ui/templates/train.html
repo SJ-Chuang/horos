@@ -529,6 +529,15 @@ async function poll() {
   try {
     s = await api(`/train/runs/${activeRun}?after=${seenEvents}`);
   } catch (e) {
+    if (/No such training run/i.test(e.message)) {
+      // deleted out from under us (queue edit, another tab): land quietly
+      activeRun = null;
+      $("run-panel").classList.add("hidden");
+      const remaining = await refreshRuns();
+      const fallback = remaining.find((r) => r.state !== "queued") || remaining[0];
+      if (fallback) attach(fallback.run_id, { live: false });
+      return;
+    }
     setStatus("Lost contact with the run: " + e.message, "error");
     return;
   }
@@ -927,7 +936,7 @@ async function refreshRuns() {
       <td>${new Date(r.created_at).toLocaleString()}</td>
       <td class="mono">${r.checkpoint ? r.checkpoint.split(/[\\/]/).pop() : "—"}</td>
       <td style="width:64px;white-space:nowrap">${r.state === "queued"
-        ? `<button class="row-delete" data-edit="${r.run_id}"
+        ? `<button class="row-delete" data-edit="${r.run_id}" style="margin-right:8px"
              title="Take this run out of the queue and load its parameters into the form">✎</button>`
         : ""}<button class="row-delete" data-del="${r.run_id}"
         ${r.state === "running" || r.state === "pending" ? "disabled" : ""}
@@ -950,10 +959,19 @@ async function refreshRuns() {
         setStatus("Could not unqueue: " + e.message, "error");
         return;
       }
+      if (activeRun === run.run_id) {  // stop polling the run we just removed
+        clearTimeout(pollTimer);
+        activeRun = null;
+        $("run-panel").classList.add("hidden");
+      }
       loadConfigIntoForm(run);
       setStatus(`Run ${run.run_id} taken out of the queue — adjust the `
                 + `parameters and press Start to requeue.`, "ok");
-      refreshRuns();
+      const remaining = await refreshRuns();
+      if (!activeRun) {
+        const fallback = remaining.find((r) => r.state !== "queued") || remaining[0];
+        if (fallback) attach(fallback.run_id, { live: false });
+      }
       window.scrollTo({ top: 0, behavior: "smooth" });
     };
   });

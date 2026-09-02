@@ -176,3 +176,20 @@ def test_delete_refuses_an_active_run(project):
     finally:
         stop_training(project, record.run_id)
         _wait_terminal(project, record.run_id)
+
+
+def test_checkpoint_criterion_is_recorded_in_hparams(project):
+    """The criterion is part of the run's hyperparameter trail (with a
+    reason), so "why is THIS the best checkpoint" survives with the run."""
+    record = start_training(project, _config(checkpoint_criterion="smoothed_map"))
+    try:
+        entry = next(h for h in record.hparams if h.name == "checkpoint_criterion")
+        assert entry.value == "smoothed_map"
+        assert entry.overridden is True and entry.reason
+    finally:
+        _wait_terminal(project, record.run_id)
+
+    default = start_training(project, _config())
+    entry = next(h for h in default.hparams if h.name == "checkpoint_criterion")
+    assert entry.value == "map" and entry.overridden is False
+    _wait_terminal(project, default.run_id)
