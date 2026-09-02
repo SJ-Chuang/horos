@@ -26,7 +26,7 @@
 
   <g transform="translate(644,16)">
     <rect class="chip" width="266" height="100" rx="12"/>
-    <path d="M30 56 l8 8 16 -20" fill="none" stroke="#51cf66" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M30 44 l8 8 16 -20" fill="none" stroke="#51cf66" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
     <text class="name" x="66" y="49">Evaluate</text>
     <text class="sub" x="20" y="78">media gallery + COCO metrics per class</text>
   </g>
@@ -35,7 +35,7 @@
   <g transform="translate(954,16)">
     <rect width="302" height="100" rx="12" fill="#161c23" stroke="#2a333e"
           stroke-dasharray="7 6"/>
-    <path d="M22 36 h18 v10 h10 l-19 22 -19 -22 h10 z" fill="#5c6873"/>
+    <path d="M22 26 h18 v10 h10 l-19 22 -19 -22 h10 z" fill="#5c6873"/>
     <text x="62" y="49" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
           font-size="22" font-weight="600" fill="#8b98a5">Deploy</text>
     <text class="sub" x="20" y="78" fill="#5c6873">ONNX · TensorRT · TFLite — next phase</text>
