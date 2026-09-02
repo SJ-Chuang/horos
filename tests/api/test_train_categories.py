@@ -131,3 +131,37 @@ def test_selection_without_train_annotations_is_refused(project, tmp_path):
             TrainRunConfig(entrypoint_override=FAKE, epochs=1,
                            categories=["pallet"]),
         )
+
+
+def test_run_records_its_class_set_for_resume_locking(project):
+    record = start_training(
+        project,
+        TrainRunConfig(entrypoint_override=FAKE, epochs=1,
+                       categories=["forklift"]),
+    )
+    deadline = time.monotonic() + 30
+    while training_status(project, record.run_id).run.state in ("pending", "running"):
+        assert time.monotonic() < deadline
+        time.sleep(0.2)
+    status = training_status(project, record.run_id)
+    assert status.run.dataset_classes == ["forklift"]
+
+
+def test_old_runs_backfill_their_class_set(project):
+    """Runs recorded before dataset_classes existed get it from their
+    snapshot on first read — the resume lock works for them too."""
+    from horos.api.train import _run_dir, read_record, write_record
+
+    record = start_training(project, TrainRunConfig(entrypoint_override=FAKE, epochs=1))
+    deadline = time.monotonic() + 30
+    while training_status(project, record.run_id).run.state in ("pending", "running"):
+        assert time.monotonic() < deadline
+        time.sleep(0.2)
+
+    run_dir = _run_dir(project, record.run_id)
+    stored = read_record(run_dir)
+    stored.dataset_classes = []  # simulate a pre-field run.json
+    write_record(run_dir, stored)
+
+    refreshed = training_status(project, record.run_id).run
+    assert refreshed.dataset_classes == ["forklift", "pallet"]

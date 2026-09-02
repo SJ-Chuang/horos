@@ -102,6 +102,9 @@ class RunRecord(BaseModel):
     dataset_images: int = 0
     #: split sizes at training time — the verdict rules read these
     dataset_splits: dict[str, int] = Field(default_factory=dict)
+    #: class names this run trained on (its snapshot's categories); resuming
+    #: is only valid with exactly this set, so the UI locks the picker to it
+    dataset_classes: list[str] = Field(default_factory=list)
 
 
 class TrainStatus(BaseModel):
@@ -169,11 +172,9 @@ def _worker_alive(record: RunRecord) -> bool:
     return _pid_alive(record.pid)
 
 
-def _snapshot_class_names(checkpoint: Path) -> list[str] | None:
-    """The class list a checkpoint was trained on, read from its run's dataset
-    snapshot (runs/<id>/checkpoints/x.pth → runs/<id>/dataset/train/...).
-    None when the checkpoint is not inside a horos run (nothing to verify)."""
-    gt_path = checkpoint.parent.parent / "dataset" / "train" / "_annotations.coco.json"
+def _run_class_names(run_dir: Path) -> list[str] | None:
+    """The class list a run trained on, read from its dataset snapshot."""
+    gt_path = run_dir / "dataset" / "train" / "_annotations.coco.json"
     if not gt_path.is_file():
         return None
     try:
@@ -181,6 +182,13 @@ def _snapshot_class_names(checkpoint: Path) -> list[str] | None:
         return sorted(c["name"] for c in gt.get("categories", []))
     except (OSError, json.JSONDecodeError, KeyError, TypeError):
         return None
+
+
+def _snapshot_class_names(checkpoint: Path) -> list[str] | None:
+    """Class list for a checkpoint inside a horos run
+    (runs/<id>/checkpoints/x.pth → runs/<id>/dataset/train/...);
+    None when the checkpoint is not inside a run (nothing to verify)."""
+    return _run_class_names(checkpoint.parent.parent)
 
 
 def _split_counts(run_dir: Path, record: RunRecord) -> dict[str, int]:
@@ -229,6 +237,11 @@ def _pid_alive(pid: int | None) -> bool:
 def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
     """A run that claims to be active but whose worker is gone died without a
     terminal event (killed, OOM-killed, machine crash). Settle its state."""
+    if not record.dataset_classes:  # backfill runs recorded before the field
+        names = _run_class_names(run_dir)
+        if names:
+            record.dataset_classes = names
+            write_record(run_dir, record)
     if record.state not in ("pending", "running") or _worker_alive(record):
         return record
     if (run_dir / _STOP_FLAG).is_file():
@@ -404,6 +417,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
         device=config.device,
         dataset_images=len(dataset.images),
         dataset_splits=split_counts,
+        dataset_classes=sorted({c.name for c in dataset.categories}),
     )
     write_record(run_dir, record)
 
