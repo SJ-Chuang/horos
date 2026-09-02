@@ -42,6 +42,7 @@ __all__ = [
     "TrainRunConfig",
     "RunRecord",
     "TrainStatus",
+    "delete_run",
     "derive_hyperparameters",
     "start_training",
     "training_status",
@@ -105,6 +106,11 @@ class RunRecord(BaseModel):
     #: class names this run trained on (its snapshot's categories); resuming
     #: is only valid with exactly this set, so the UI locks the picker to it
     dataset_classes: list[str] = Field(default_factory=list)
+    #: the full-state checkpoint (weights + optimizer + LR schedule; rfdetr's
+    #: last.ckpt) — the right resume source. `checkpoint` stays the best
+    #: weights for inference/export; resuming from it restarts the optimizer
+    #: cold and the loss spikes for a few epochs.
+    resume_checkpoint: str | None = None
 
 
 class TrainStatus(BaseModel):
@@ -237,11 +243,19 @@ def _pid_alive(pid: int | None) -> bool:
 def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
     """A run that claims to be active but whose worker is gone died without a
     terminal event (killed, OOM-killed, machine crash). Settle its state."""
+    changed = False
     if not record.dataset_classes:  # backfill runs recorded before the field
         names = _run_class_names(run_dir)
         if names:
             record.dataset_classes = names
-            write_record(run_dir, record)
+            changed = True
+    if record.resume_checkpoint is None and record.state not in ("pending", "running"):
+        last = run_dir / "checkpoints" / "last.ckpt"
+        if last.is_file():
+            record.resume_checkpoint = str(last)
+            changed = True
+    if changed:
+        write_record(run_dir, record)
     if record.state not in ("pending", "running") or _worker_alive(record):
         return record
     if (run_dir / _STOP_FLAG).is_file():
@@ -471,6 +485,31 @@ def stop_training(project: Project, run_id: str) -> bool:
             os.kill(record.pid, signal.SIGTERM)
         except OSError:  # already gone between the check and the kill
             pass
+    return True
+
+
+@capability(
+    "train.delete",
+    summary="Delete a training run and everything it stored",
+    web_route="/api/v1/train/runs/<run_id>",
+    web_methods=("DELETE",),
+    cli=None,
+    not_cli_because="Run housekeeping is a UI concern; 'rm -r runs/<id>' works too.",
+)
+def delete_run(project: Project, run_id: str) -> bool:
+    """Remove runs/<id> — checkpoints, dataset snapshot, events, eval reports.
+    An active run must be stopped first; deletion is permanent."""
+    import shutil
+
+    run_dir = _run_dir(project, run_id)
+    record = read_record(run_dir)
+    if record.state in ("pending", "running") and _worker_alive(record):
+        raise ProjectError(
+            f"Run {run_id} is still {record.state} — stop it before deleting."
+        )
+    _PROCESSES.pop(run_id, None)
+    shutil.rmtree(run_dir)
+    logger.info("deleted training run %s", run_id)
     return True
 
 

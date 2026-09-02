@@ -53,6 +53,11 @@ def stop_training(run_id: str):
     return jsonify({"stopped": api.stop_training(_project(), run_id)})
 
 
+@bp.delete("/train/runs/<run_id>")
+def delete_run(run_id: str):
+    return jsonify({"deleted": api.delete_run(_project(), run_id)})
+
+
 @bp.get("/train/runs/<run_id>/verdict")
 def run_verdict(run_id: str):
     return jsonify(api.run_verdict(_project(), run_id).model_dump())

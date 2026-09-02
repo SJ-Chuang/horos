@@ -110,6 +110,9 @@
   #runs-table tr.selectable { cursor: pointer; }
   #runs-table tr.selectable:hover td { background: rgba(77, 171, 247, .06); }
   #runs-table tr.active td { background: rgba(77, 171, 247, .12); }
+  .row-delete { padding: 2px 8px; font-size: 12px; color: var(--dim);
+                border-color: transparent; }
+  .row-delete:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
 </style>
 </head>
 <body>
@@ -221,7 +224,7 @@
   <section class="panel hidden" id="runs-panel">
     <h2>Run history</h2>
     <table id="runs-table">
-      <thead><tr><th>run</th><th>model</th><th>state</th><th>started</th><th>checkpoint</th></tr></thead>
+      <thead><tr><th>run</th><th>model</th><th>state</th><th>started</th><th>checkpoint</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </section>
@@ -286,14 +289,25 @@ function renderClassPicks() {
 
 let preResumeSelection = null;
 
-function setResume(state) {
+async function setResume(state) {
+  // the lock needs the source run's class list; older records may lack it
+  // until the server backfills — fetch the fresh record rather than guessing
+  if (state && (!state.classes || !state.classes.length)) {
+    try {
+      const detail = await api(`/train/runs/${state.runId}`);
+      state.classes = detail.run.dataset_classes || [];
+    } catch (e) { /* fall through: server guard still protects the start */ }
+  }
   resumeState = state;
   $("resume-banner").classList.toggle("hidden", !state);
   $("model-select").disabled = !!state;  // the checkpoint fixes the architecture
   $("start-btn").textContent = state ? "Resume training" : "Start training";
   if (state) {
     $("resume-detail").textContent =
-      ` from run ${state.runId} (${state.checkpoint.split(/[\\/]/).pop()})`;
+      ` from run ${state.runId} (${state.checkpoint.split(/[\\/]/).pop()})` +
+      (state.fullState
+        ? " — full training state: weights, optimizer and LR schedule"
+        : " — weights only: expect a brief loss bump while the optimizer re-warms");
     $("model-select").value = state.model;
     $("model-select").dispatchEvent(new Event("change"));
     // the class head's shape is fixed by the checkpoint: lock the picker
@@ -467,9 +481,13 @@ function renderRun(run) {
   $("start-btn").disabled = active || selectedClasses.size === 0;
   const resumable = !active && !!run.checkpoint;
   $("resume-btn").classList.toggle("hidden", !resumable);
+  // prefer the full-state checkpoint (last.ckpt: weights + optimizer +
+  // schedule) — resuming from best-weights-only restarts the optimizer cold
+  // and the loss spikes for a few epochs
   $("resume-btn").onclick = () => setResume({
     runId: run.run_id,
-    checkpoint: run.checkpoint,
+    checkpoint: run.resume_checkpoint || run.checkpoint,
+    fullState: !!run.resume_checkpoint,
     model: run.model,
     classes: run.dataset_classes || [],
   });
@@ -634,10 +652,33 @@ async function refreshRuns() {
       <td class="mono">${r.run_id}</td><td>${r.model}</td>
       <td><span class="state ${r.state}">${r.state}</span></td>
       <td>${new Date(r.created_at).toLocaleString()}</td>
-      <td class="mono">${r.checkpoint ? r.checkpoint.split(/[\\/]/).pop() : "—"}</td></tr>`)
+      <td class="mono">${r.checkpoint ? r.checkpoint.split(/[\\/]/).pop() : "—"}</td>
+      <td style="width:36px"><button class="row-delete" data-del="${r.run_id}"
+        ${r.state === "running" || r.state === "pending" ? "disabled" : ""}
+        title="Delete this run (checkpoints, snapshot, events — permanent)">✕</button></td></tr>`)
     .join("");
   $("runs-table").querySelectorAll("tr.selectable").forEach((tr) => {
     tr.onclick = () => attach(tr.dataset.run, { live: false });
+  });
+  $("runs-table").querySelectorAll("button[data-del]").forEach((btn) => {
+    btn.onclick = async (event) => {
+      event.stopPropagation();  // don't also open the run
+      const runId = btn.dataset.del;
+      if (!confirm(`Delete run ${runId}? Its checkpoints, dataset snapshot and `
+                   + `events are removed permanently.`)) return;
+      try {
+        await api(`/train/runs/${runId}`, { method: "DELETE" });
+        if (activeRun === runId) {
+          clearTimeout(pollTimer);
+          activeRun = null;
+          $("run-panel").classList.add("hidden");
+        }
+        const remaining = await refreshRuns();
+        if (!activeRun && remaining.length) attach(remaining[0].run_id, { live: false });
+      } catch (e) {
+        setStatus("Delete failed: " + e.message, "error");
+      }
+    };
   });
   return runs;
 }

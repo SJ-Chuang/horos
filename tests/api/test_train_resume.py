@@ -106,3 +106,19 @@ def test_resume_with_a_different_class_set_is_refused(project):
                        categories=["forklift"], resume_from=checkpoint),
     )
     assert _finish(project, resumed.run_id).run.state == "completed"
+
+
+def test_full_state_checkpoint_is_surfaced_for_resume(project):
+    """rfdetr's last.ckpt carries optimizer + LR schedule; resuming from the
+    best-weights .pth restarts them cold and the loss spikes. The record must
+    point the UI at the full-state file when it exists."""
+    record = start_training(project, TrainRunConfig(entrypoint_override=FAKE, epochs=1))
+    status = _finish(project, record.run_id)
+    assert status.run.resume_checkpoint is None  # the fake writes no last.ckpt
+
+    ckpt_dir = project.root / "runs" / record.run_id / "checkpoints"
+    (ckpt_dir / "last.ckpt").write_bytes(b"full-state")
+    from horos.api.train import training_status
+
+    refreshed = training_status(project, record.run_id).run
+    assert refreshed.resume_checkpoint.endswith("last.ckpt")

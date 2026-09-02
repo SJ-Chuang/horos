@@ -98,3 +98,14 @@ def test_verdict_over_http(client):
     for finding in payload["findings"]:
         assert finding["severity"] in ("info", "warning", "critical")
         assert finding["title"] and finding["suggestion"]
+
+
+def test_delete_run_over_http(client):
+    response = client.post(
+        "/api/v1/train", json={"entrypoint_override": FAKE, "epochs": 1}
+    )
+    run_id = response.get_json()["run_id"]
+    _wait_terminal(client, run_id)
+    deleted = client.delete(f"/api/v1/train/runs/{run_id}")
+    assert deleted.status_code == 200 and deleted.get_json() == {"deleted": True}
+    assert client.get("/api/v1/train/runs").get_json() == []

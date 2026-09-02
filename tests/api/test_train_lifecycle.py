@@ -141,3 +141,33 @@ def test_unknown_model_is_rejected(project):
 def test_non_apache_model_needs_acknowledgement(project):
     with pytest.raises(LicenseError, match="PML"):
         start_training(project, TrainRunConfig(model="rfdetr-xl"))
+
+
+def test_delete_run_removes_everything(project):
+    from horos.api.train import delete_run
+
+    record = start_training(project, _config())
+    _wait_terminal(project, record.run_id)
+    run_dir = project.root / "runs" / record.run_id
+    assert run_dir.is_dir()
+
+    assert delete_run(project, record.run_id) is True
+    assert not run_dir.exists()
+    with pytest.raises(ProjectError, match="No such training run"):
+        training_status(project, record.run_id)
+    assert record.run_id not in [r.run_id for r in list_runs(project)]
+
+
+def test_delete_refuses_an_active_run(project):
+    from horos.api.train import delete_run
+
+    record = start_training(
+        project, _config(epochs=60, extra={"sleep_per_epoch": 0.5})
+    )
+    try:
+        with pytest.raises(ProjectError, match="stop it before deleting"):
+            delete_run(project, record.run_id)
+        assert (project.root / "runs" / record.run_id).is_dir()
+    finally:
+        stop_training(project, record.run_id)
+        _wait_terminal(project, record.run_id)
