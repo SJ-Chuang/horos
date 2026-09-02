@@ -34,15 +34,24 @@
   header nav a:hover::after { opacity: 1; }
   header nav svg { width: 18px; height: 18px; }
   /* Option A layout (user-picked): fixed setup sidebar, monitor + history
-     in the main column — all three areas visible without scrolling around */
+     in the main column. Each column scrolls independently — the page body
+     never scrolls; the header stays put. */
   main { max-width: 1560px; margin: 0 auto; padding: 20px 24px;
          display: grid; grid-template-columns: 380px minmax(0, 1fr);
-         gap: 20px; align-items: start; }
-  #setup-panel { position: sticky; top: 20px; }
-  #right-col { display: grid; gap: 20px; min-width: 0; }
+         gap: 20px; height: calc(100vh - 55px); overflow: hidden; }
+  #setup-panel { overflow-y: auto; min-height: 0; }
+  #right-col { display: grid; gap: 20px; min-width: 0; min-height: 0;
+               overflow-y: auto; align-content: start; }
+  #setup-panel, #right-col { scrollbar-width: thin;
+                             scrollbar-color: var(--line) transparent; }
+  #setup-panel::-webkit-scrollbar, #right-col::-webkit-scrollbar { width: 8px; }
+  #setup-panel::-webkit-scrollbar-thumb, #right-col::-webkit-scrollbar-thumb {
+    background: var(--line); border-radius: 4px; }
+  #setup-panel::-webkit-scrollbar-thumb:hover,
+  #right-col::-webkit-scrollbar-thumb:hover { background: #3a4550; }
   @media (max-width: 1100px) {
-    main { grid-template-columns: 1fr; }
-    #setup-panel { position: static; }
+    main { grid-template-columns: 1fr; height: auto; overflow: visible; }
+    #setup-panel, #right-col { overflow: visible; }
   }
   .hp-row { border-bottom: 1px solid var(--line); padding: 8px 0; }
   .hp-row:last-child { border-bottom: none; }
@@ -67,7 +76,24 @@
     background: var(--bg); color: var(--text); border: 1px solid var(--line);
     border-radius: 6px; padding: 6px 10px; font: inherit; }
   input[type="number"] { width: 110px; }
+  /* native spinners are unreadable on the dark theme — custom steppers below */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+  .stepper { display: inline-flex; align-items: stretch; }
+  .stepper input[type="number"] { border-radius: 6px 0 0 6px; border-right: none;
+                                  text-align: center; }
+  .step-btns { display: flex; flex-direction: column; border: 1px solid var(--line);
+               border-radius: 0 6px 6px 0; overflow: hidden; }
+  .step-btns button { border: none; border-radius: 0; padding: 0 6px; flex: 1;
+                      display: flex; align-items: center; color: var(--dim);
+                      background: var(--bg); }
+  .step-btns button + button { border-top: 1px solid var(--line); }
+  .step-btns button:hover { color: var(--accent); background: rgba(77,171,247,.10); }
+  .step-btns svg { width: 10px; height: 10px; }
   input.overridden { border-color: var(--accent); }
+  .stepper input.overridden + .step-btns { border-color: var(--accent); }
   select:focus, input:focus { outline: none; border-color: var(--accent); }
   button { background: var(--bg); color: var(--text); border: 1px solid var(--line);
            border-radius: 6px; padding: 6px 14px; cursor: pointer; font: inherit; }
@@ -223,7 +249,14 @@
       <div class="bar"><div id="run-bar"></div></div>
       <span id="run-phase" style="color:var(--dim);font-size:13px;min-width:140px"></span>
     </div>
-    <canvas id="chart"></canvas>
+    <div id="chart-wrap" style="position:relative">
+      <canvas id="chart"></canvas>
+      <div id="chart-tip" class="hidden"
+           style="position:absolute;pointer-events:none;background:var(--panel);
+                  border:1px solid var(--line);border-radius:6px;padding:6px 10px;
+                  font-size:12px;white-space:nowrap;z-index:5;
+                  box-shadow:0 4px 14px rgba(0,0,0,.4)"></div>
+    </div>
     <div class="legend" id="chart-legend"></div>
     <div class="chips" id="metric-chips"></div>
     <p id="run-checkpoint" class="mono" style="color:var(--dim)"></p>
@@ -377,6 +410,15 @@ async function derive() {
   }
 }
 
+// step sizes for the custom steppers; resolution moves in 64s to keep
+// rfdetr's divisible-by-64 input constraint
+const KNOB_STEP = { epochs: 1, batch_size: 1, resolution: 64 };
+const KNOB_MIN = { epochs: 1, batch_size: 1, resolution: 64 };
+const CHEVRON_UP = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
+  stroke-width="1.6" stroke-linecap="round"><polyline points="2,6.5 5,3.5 8,6.5"/></svg>`;
+const CHEVRON_DOWN = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
+  stroke-width="1.6" stroke-linecap="round"><polyline points="2,3.5 5,6.5 8,3.5"/></svg>`;
+
 function renderPlan(plan) {
   const rows = plan.derivations.map((d) => {
     let value;
@@ -384,8 +426,17 @@ function renderPlan(plan) {
       value = `<span style="display:flex;align-items:center;gap:6px">
         ${d.overridden ? `<button class="reset" data-reset="${d.name}"
              title="Back to the derived value">auto ↺</button>` : ""}
-        <input type="number" min="1" data-knob="${d.name}"
-               value="${d.value ?? ""}" class="${d.overridden ? "overridden" : ""}"></span>`;
+        <span class="stepper">
+          <input type="number" min="${KNOB_MIN[d.name]}" step="${KNOB_STEP[d.name]}"
+                 data-knob="${d.name}" value="${d.value ?? ""}"
+                 class="${d.overridden ? "overridden" : ""}">
+          <span class="step-btns">
+            <button data-step="1" data-for="${d.name}" tabindex="-1"
+                    title="+${KNOB_STEP[d.name]}">${CHEVRON_UP}</button>
+            <button data-step="-1" data-for="${d.name}" tabindex="-1"
+                    title="−${KNOB_STEP[d.name]}">${CHEVRON_DOWN}</button>
+          </span>
+        </span></span>`;
     } else {
       value = `<span class="hp-value">${d.value}</span>`;
     }
@@ -403,6 +454,16 @@ function renderPlan(plan) {
       const v = inp.value === "" ? null : Number(inp.value);
       overrides[inp.dataset.knob] = Number.isFinite(v) ? v : null;
       scheduleDerive();
+    };
+  });
+  $("hparams-list").querySelectorAll("button[data-step]").forEach((btn) => {
+    btn.onclick = () => {
+      const knob = btn.dataset.for;
+      const input = $("hparams-list").querySelector(`input[data-knob="${knob}"]`);
+      const step = KNOB_STEP[knob] * Number(btn.dataset.step);
+      const current = Number(input.value) || KNOB_MIN[knob];
+      input.value = Math.max(KNOB_MIN[knob], current + step);
+      input.dispatchEvent(new Event("change"));
     };
   });
   $("hparams-list").querySelectorAll("button[data-reset]").forEach((btn) => {
@@ -588,6 +649,8 @@ function drawChart() {
     ctx.textAlign = "center";
     ctx.fillText("loss curves appear after the first validation epoch", w / 2, h / 2);
     legend.innerHTML = "";
+    chartMeta = null;               // no hover on an empty chart
+    $("chart-tip").classList.add("hidden");
     return;
   }
 
@@ -633,8 +696,97 @@ function drawChart() {
     .map(([key], i) => `<span><span class="key"
       style="background:${PALETTE[i % PALETTE.length]}"></span>${key}</span>`)
     .join("");
+
+  // geometry for the stock-chart hover (crosshair + values at the epoch)
+  chartMeta = { w, h, pad, xMin, xMax, X, Y, lossSeries };
+  if (hoverEpoch !== null && hoverEpoch >= xMin && hoverEpoch <= xMax) {
+    const cx = X(hoverEpoch);
+    ctx.strokeStyle = "#3a4550";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx, pad.top);
+    ctx.lineTo(cx, h - pad.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    lossSeries.forEach(([, pts], i) => {
+      const point = pts.find(([x]) => x === hoverEpoch);
+      if (!point) return;
+      ctx.fillStyle = PALETTE[i % PALETTE.length];
+      ctx.strokeStyle = "#101418";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(X(point[0]), Y(point[1]), 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
 }
 window.addEventListener("resize", drawChart);
+
+// ---------------------------------------------------- chart hover (crosshair)
+let chartMeta = null;
+let hoverEpoch = null;
+//: extra series worth quoting at the hovered epoch, when they exist
+const HOVER_EXTRAS = ["val/mAP_50", "val/ema_mAP_50"];
+
+function updateChartTip() {
+  const tip = $("chart-tip");
+  if (hoverEpoch === null || !chartMeta) {
+    tip.classList.add("hidden");
+    return;
+  }
+  const rows = [];
+  chartMeta.lossSeries.forEach(([key, pts], i) => {
+    const point = pts.find(([x]) => x === hoverEpoch);
+    if (point) {
+      rows.push(`<div style="display:flex;align-items:center;gap:6px">
+        <span style="width:10px;height:3px;border-radius:2px;
+          background:${PALETTE[i % PALETTE.length]}"></span>
+        <span style="color:var(--dim)">${key}</span>
+        <span style="margin-left:auto;font-family:ui-monospace,monospace">
+          ${formatNumber(point[1])}</span></div>`);
+    }
+  });
+  for (const key of HOVER_EXTRAS) {
+    const pts = series[key];
+    const point = pts && pts.find(([x]) => x === hoverEpoch);
+    if (point) {
+      rows.push(`<div style="display:flex;align-items:center;gap:6px">
+        <span style="width:10px"></span><span style="color:var(--dim)">${key}</span>
+        <span style="margin-left:auto;font-family:ui-monospace,monospace">
+          ${formatNumber(point[1])}</span></div>`);
+    }
+  }
+  if (!rows.length) { tip.classList.add("hidden"); return; }
+  tip.innerHTML = `<div style="color:var(--dim);margin-bottom:2px">
+    epoch ${hoverEpoch}</div>` + rows.join("");
+  tip.classList.remove("hidden");
+  const cx = chartMeta.X(hoverEpoch);
+  // flip the box to the left of the crosshair near the right edge
+  const flip = cx > chartMeta.w - 190;
+  tip.style.left = flip ? "" : `${cx + 12}px`;
+  tip.style.right = flip ? `${chartMeta.w - cx + 12}px` : "";
+  tip.style.top = "14px";
+}
+
+$("chart").addEventListener("mousemove", (event) => {
+  if (!chartMeta) return;
+  const { pad, w, xMin, xMax } = chartMeta;
+  const frac = (event.offsetX - pad.left) / (w - pad.left - pad.right);
+  const epoch = Math.round(xMin + Math.min(Math.max(frac, 0), 1) * (xMax - xMin));
+  if (epoch !== hoverEpoch) {
+    hoverEpoch = epoch;
+    drawChart();
+    updateChartTip();
+  }
+});
+$("chart").addEventListener("mouseleave", () => {
+  if (hoverEpoch === null) return;
+  hoverEpoch = null;
+  drawChart();
+  updateChartTip();
+});
 
 // -------------------------------------------------------------------- actions
 $("start-btn").onclick = async () => {
