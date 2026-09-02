@@ -59,6 +59,13 @@ def delete_run(run_id: str):
     return jsonify({"deleted": api.delete_run(_project(), run_id)})
 
 
+@bp.patch("/train/runs/<run_id>")
+def update_queued_run(run_id: str):
+    body = request.get_json(silent=True) or {}
+    record = api.update_queued_run(_project(), run_id, body)
+    return jsonify(record.model_dump())
+
+
 @bp.get("/train/runs/<run_id>/verdict")
 def run_verdict(run_id: str):
     return jsonify(api.run_verdict(_project(), run_id).model_dump())

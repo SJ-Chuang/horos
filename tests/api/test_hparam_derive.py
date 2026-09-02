@@ -143,3 +143,18 @@ def test_unknown_model_skips_resolution_but_derives_the_rest():
     )
     assert "resolution" not in plan.values
     assert {"epochs", "batch_size", "grad_accum_steps"} <= set(plan.values)
+
+
+def test_lr_is_derived_with_reason_and_overridable():
+    plan = _plan()
+    entry = next(d for d in plan.derivations if d.name == "lr")
+    assert entry.value == pytest.approx(1e-4)
+    assert "effective batch" in entry.reason
+    assert "lr" in plan.extra_fields()  # rides to the backend via spec.extra
+
+    overridden = _plan(overrides={"lr": 5e-5})
+    entry = next(d for d in overridden.derivations if d.name == "lr")
+    assert entry.value == pytest.approx(5e-5) and entry.overridden is True
+    # an lr override does not disturb the other derivations (E5-T2)
+    assert overridden.values["epochs"] == plan.values["epochs"]
+    assert overridden.values["batch_size"] == plan.values["batch_size"]

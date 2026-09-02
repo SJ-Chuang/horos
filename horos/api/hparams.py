@@ -167,6 +167,14 @@ def derive_plan(
         f"(batch {batch} × accumulation)",
     )
 
+    put(
+        "lr",
+        1e-4,
+        f"backend's tuned fine-tuning default; the schedule is calibrated for "
+        f"an effective batch of {_TARGET_EFFECTIVE_BATCH}, which the gradient "
+        f"accumulation above maintains — no scaling needed",
+    )
+
     populated = [c for c in stats.per_class if c.instances > 0]
     weakest = min(populated, key=lambda c: c.instances, default=None)
     if weakest is not None and weakest.instances < 100:

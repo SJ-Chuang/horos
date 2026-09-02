@@ -292,6 +292,12 @@
     <details id="run-hparams-details" style="margin-top:10px">
       <summary style="cursor:pointer;color:var(--dim)">Hyperparameters used (with reasons)</summary>
       <table style="margin-top:8px"><tbody id="run-hparams"></tbody></table>
+      <div id="queue-save-row" class="hidden" style="margin-top:10px">
+        <button class="primary" id="queue-save-btn">Save changes</button>
+        <span style="color:var(--dim);font-size:12px;margin-left:8px">
+          model, classes and the dataset snapshot are fixed at enqueue —
+          delete the queued run to change those</span>
+      </div>
       <div id="run-notes"></div>
     </details>
   </section>
@@ -323,8 +329,8 @@ const post = (path, body) => api(path, {
 });
 
 // E5-T1/T2: which knobs the user can override from this page
-const EDITABLE = ["epochs", "batch_size", "resolution"];
-const overrides = { epochs: null, batch_size: null, resolution: null };
+const EDITABLE = ["epochs", "batch_size", "resolution", "lr"];
+const overrides = { epochs: null, batch_size: null, resolution: null, lr: null };
 let currentPlan = null;
 let allCategories = [];          // [{id, name, color}]
 const selectedClasses = new Set();
@@ -435,8 +441,8 @@ async function derive() {
 
 // step sizes for the custom steppers; resolution moves in 64s to keep
 // rfdetr's divisible-by-64 input constraint
-const KNOB_STEP = { epochs: 1, batch_size: 1, resolution: 64 };
-const KNOB_MIN = { epochs: 1, batch_size: 1, resolution: 64 };
+const KNOB_STEP = { epochs: 1, batch_size: 1, resolution: 64, lr: 0.00001 };
+const KNOB_MIN = { epochs: 1, batch_size: 1, resolution: 64, lr: 0.000001 };
 const CHEVRON_UP = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
   stroke-width="1.6" stroke-linecap="round"><polyline points="2,6.5 5,3.5 8,6.5"/></svg>`;
 const CHEVRON_DOWN = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
@@ -485,7 +491,9 @@ function renderPlan(plan) {
       const input = $("hparams-list").querySelector(`input[data-knob="${knob}"]`);
       const step = KNOB_STEP[knob] * Number(btn.dataset.step);
       const current = Number(input.value) || KNOB_MIN[knob];
-      input.value = Math.max(KNOB_MIN[knob], current + step);
+      // toFixed(6) keeps float steps clean (lr: 0.0001 + 0.00001, not
+      // 0.00011000000000000002); integers are unaffected
+      input.value = Number(Math.max(KNOB_MIN[knob], current + step).toFixed(6));
       input.dispatchEvent(new Event("change"));
     };
   });
@@ -605,11 +613,21 @@ function renderRun(run) {
   $("run-model").textContent = run.model + " · " + run.dataset_images + " images"
     + (criterionLabel ? " · " + criterionLabel : "");
   const active = run.state === "pending" || run.state === "running";
+  const queued = run.state === "queued";
   $("stop-btn").classList.toggle("hidden", !active);
   // starting while a run is active is allowed — it queues (E5 queue)
   $("start-btn").disabled = selectedClasses.size === 0;
-  if (run.state === "queued") {
-    $("run-phase").textContent = "queued — starts when the current run finishes";
+  // a queued run has trained nothing: no chart, no metric chips, no bar —
+  // only its (editable) hyperparameters below
+  for (const id of ["chart-wrap", "chart-legend", "metric-chips"]) {
+    $(id).classList.toggle("hidden", queued);
+  }
+  if (queued) $("chips-note").classList.add("hidden");  // unhidden by chips render
+  $("run-bar").parentElement.classList.toggle("hidden", queued);  // the bar itself
+  if (queued) {
+    $("run-phase").textContent =
+      "queued — starts when the current run finishes";
+    $("run-hparams-details").open = true;
   }
   const resumable = !active && !!run.checkpoint;
   $("resume-btn").classList.toggle("hidden", !resumable);
@@ -633,15 +651,69 @@ function renderRun(run) {
     $("run-error").textContent = run.error;
     $("run-error").classList.remove("hidden");
   }
-  $("run-hparams").innerHTML = (run.hparams || [])
-    .map((d) => `<tr><td style="width:150px">${d.name}</td>
-      <td style="width:120px"><strong>${d.value}</strong>
-        ${d.overridden ? '<span class="overridden-badge">override</span>' : ""}</td>
-      <td class="reason">${d.reason}</td></tr>`)
-    .join("");
+  renderRunHparams(run);
   $("run-notes").innerHTML = (run.hparam_notes || [])
     .concat(warnings)
     .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
+}
+
+// knobs editable in place on a QUEUED run (PATCH /train/runs/<id>); the rest
+// (grad accumulation etc.) are re-derived by the server after every save
+const QUEUE_EDITABLE = ["epochs", "batch_size", "resolution", "lr"];
+const CRITERIA = ["map", "smoothed_map", "loss"];
+
+let hparamsSig = null;  // skip re-render while the server state is unchanged —
+                        // the poll must never clobber an edit in progress
+
+function renderRunHparams(run) {
+  const editable = run.state === "queued";
+  const sig = run.run_id + "|" + run.state + "|" + JSON.stringify(run.hparams);
+  if (sig === hparamsSig) return;
+  hparamsSig = sig;
+  $("run-hparams").innerHTML = (run.hparams || [])
+    .map((d) => {
+      let value = `<strong>${d.value}</strong>`;
+      if (editable && QUEUE_EDITABLE.includes(d.name)) {
+        value = `<input type="number" data-qedit="${d.name}" value="${d.value ?? ""}"
+                   min="${KNOB_MIN[d.name] ?? 0}" step="${KNOB_STEP[d.name] ?? 1}"
+                   style="width:100px" class="${d.overridden ? "overridden" : ""}">`;
+      } else if (editable && d.name === "checkpoint_criterion") {
+        value = `<select data-qedit="checkpoint_criterion" style="width:150px">
+          ${CRITERIA.map((c) => `<option value="${c}"
+            ${c === d.value ? "selected" : ""}>${c}</option>`).join("")}</select>`;
+      }
+      return `<tr><td style="width:150px">${d.name}</td>
+        <td style="width:160px">${value}
+          ${d.overridden ? '<span class="overridden-badge">override</span>' : ""}</td>
+        <td class="reason">${d.reason}</td></tr>`;
+    })
+    .join("");
+  $("queue-save-row").classList.toggle("hidden", !editable);
+  if (!editable) return;
+  $("queue-save-btn").onclick = async () => {
+    const body = {};
+    $("run-hparams").querySelectorAll("[data-qedit]").forEach((inp) => {
+      const raw = inp.value;
+      body[inp.dataset.qedit] =
+        inp.dataset.qedit === "checkpoint_criterion" ? raw
+          : raw === "" ? null : Number(raw);
+    });
+    $("queue-save-btn").disabled = true;
+    try {
+      const record = await api(`/train/runs/${run.run_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      renderRun(record);
+      setStatus(`Queued run ${run.run_id} updated — dependent values `
+                + `were re-derived.`, "ok");
+    } catch (e) {
+      setStatus("Could not update the queued run: " + e.message, "error");
+    } finally {
+      $("queue-save-btn").disabled = false;
+    }
+  };
 }
 
 // rfdetr logs dozens of per-head series; the page shows the ones a user acts
@@ -892,38 +964,6 @@ $("stop-btn").onclick = async () => {
 };
 
 // ---------------------------------------------------------------- run history
-// editing a queued run = its recorded config comes back into the form (the
-// queue entry itself was already deleted by the caller); Start requeues it
-function loadConfigIntoForm(run) {
-  setResume(null);  // leave any resume mode first — it rewrites the selection
-  const cfg = run.config || {};
-  if (cfg.model) {
-    $("model-select").value = cfg.model;
-    $("model-select").dispatchEvent(new Event("change"));
-  }
-  for (const k of EDITABLE) if (cfg[k] != null) overrides[k] = cfg[k];
-  $("seed-input").value = cfg.seed != null ? cfg.seed : "";
-  if (cfg.checkpoint_criterion) $("criterion-select").value = cfg.checkpoint_criterion;
-  selectedClasses.clear();
-  const names = cfg.categories || run.dataset_classes || [];
-  (names.length ? names : allCategories.map((c) => c.name))
-    .forEach((n) => selectedClasses.add(n));
-  if (cfg.resume_from) {
-    const parts = String(cfg.resume_from).split(/[\\/]/);
-    const sourceRun = parts[Math.max(parts.indexOf("checkpoints") - 1, 0)];
-    setResume({
-      runId: sourceRun,
-      checkpoint: cfg.resume_from,
-      fullState: /\.ckpt$/i.test(cfg.resume_from),
-      model: cfg.model || run.model,
-      classes: run.dataset_classes || [],
-    });
-  } else {
-    renderClassPicks();
-    scheduleDerive();
-  }
-}
-
 async function refreshRuns() {
   const runs = await api("/train/runs");
   $("runs-panel").classList.toggle("hidden", runs.length === 0);
@@ -935,45 +975,14 @@ async function refreshRuns() {
       <td><span class="state ${r.state}">${r.state === "queued" ? "pending" : r.state}</span></td>
       <td>${new Date(r.created_at).toLocaleString()}</td>
       <td class="mono">${r.checkpoint ? r.checkpoint.split(/[\\/]/).pop() : "—"}</td>
-      <td style="width:64px;white-space:nowrap">${r.state === "queued"
-        ? `<button class="row-delete" data-edit="${r.run_id}" style="margin-right:8px"
-             title="Take this run out of the queue and load its parameters into the form">✎</button>`
-        : ""}<button class="row-delete" data-del="${r.run_id}"
+      <td style="width:36px"><button class="row-delete" data-del="${r.run_id}"
         ${r.state === "running" || r.state === "pending" ? "disabled" : ""}
         title="${r.state === "queued"
           ? "Remove this run from the queue"
           : "Delete this run (checkpoints, snapshot, events — permanent)"}">✕</button></td></tr>`)
     .join("");
-  const byId = Object.fromEntries(runs.map((r) => [r.run_id, r]));
   $("runs-table").querySelectorAll("tr.selectable").forEach((tr) => {
     tr.onclick = () => attach(tr.dataset.run, { live: false });
-  });
-  $("runs-table").querySelectorAll("button[data-edit]").forEach((btn) => {
-    btn.onclick = async (event) => {
-      event.stopPropagation();
-      const run = byId[btn.dataset.edit];
-      if (!run) return;
-      try {
-        await api(`/train/runs/${run.run_id}`, { method: "DELETE" });
-      } catch (e) {
-        setStatus("Could not unqueue: " + e.message, "error");
-        return;
-      }
-      if (activeRun === run.run_id) {  // stop polling the run we just removed
-        clearTimeout(pollTimer);
-        activeRun = null;
-        $("run-panel").classList.add("hidden");
-      }
-      loadConfigIntoForm(run);
-      setStatus(`Run ${run.run_id} taken out of the queue — adjust the `
-                + `parameters and press Start to requeue.`, "ok");
-      const remaining = await refreshRuns();
-      if (!activeRun) {
-        const fallback = remaining.find((r) => r.state !== "queued") || remaining[0];
-        if (fallback) attach(fallback.run_id, { live: false });
-      }
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    };
   });
   $("runs-table").querySelectorAll("button[data-del]").forEach((btn) => {
     btn.onclick = async (event) => {
@@ -1051,11 +1060,16 @@ async function init() {
 
   await derive();
   const runs = await refreshRuns();
-  // default view: the run that is training; otherwise the newest run that has
-  // actually run (a queued run has nothing to show yet); queued as last resort
+  // #<run_id> deep-links straight to that run; otherwise default to the run
+  // that is training, then the newest run that has actually run (a queued
+  // run has nothing to show yet), with queued as the last resort
+  const hashRun = decodeURIComponent(location.hash.slice(1));
   const running = runs.find((r) => r.state === "running" || r.state === "pending");
   const settled = runs.find((r) => r.state !== "queued");
-  if (running) attach(running.run_id, { live: true });
+  if (hashRun && runs.some((r) => r.run_id === hashRun)) {
+    attach(hashRun, { live: false });
+  }
+  else if (running) attach(running.run_id, { live: true });
   else if (settled) attach(settled.run_id, { live: false });
   else if (runs.length) attach(runs[0].run_id, { live: false });
 }

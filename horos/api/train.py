@@ -47,6 +47,7 @@ __all__ = [
     "start_training",
     "training_status",
     "stop_training",
+    "update_queued_run",
     "list_runs",
 ]
 
@@ -76,6 +77,7 @@ class TrainRunConfig(BaseModel):
     epochs: int | None = None
     batch_size: int | None = None
     resolution: int | None = None
+    lr: float | None = None
     device: str | None = None
     seed: int | None = None
     resume_from: str | None = None
@@ -306,6 +308,50 @@ def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
     return record
 
 
+#: knobs a user can set at start or edit on a queued run; None = re-derive
+_EDITABLE_KNOBS = ("epochs", "batch_size", "resolution", "lr")
+
+
+def _criterion_entry(criterion: str) -> DerivedValue:
+    """The checkpoint criterion as a hyperparameter-trail entry, so "why is
+    THIS checkpoint the best one" survives with the run."""
+    reason = {
+        "map": "highest validation mAP wins — detection quality is what ships",
+        "smoothed_map": (
+            "mAP is smoothed (EMA) before comparison, so one noisy validation "
+            "spike on a small valid split cannot lock in the best checkpoint"
+        ),
+        "loss": (
+            "lowest validation loss wins — a smooth signal, but it can "
+            "diverge from detection quality (mAP)"
+        ),
+    }[criterion]
+    return DerivedValue(
+        name="checkpoint_criterion",
+        value=criterion,
+        reason=reason,
+        overridden=criterion != "map",
+    )
+
+
+def _check_resume_epochs(resume_from: str, total_epochs: int | None) -> None:
+    """epochs is the TOTAL count and the trainer restores the checkpoint's
+    epoch — a total at or below what is already done raises a raw
+    MisconfigurationException deep in the backend; refuse it up front."""
+    source_dir = Path(resume_from).parent.parent
+    if not (source_dir / _RUN_JSON).is_file():
+        return
+    source_record = read_record(source_dir)
+    completed = source_record.epochs_completed or _run_completed_epochs(source_dir)
+    if completed and total_epochs is not None and total_epochs <= completed:
+        raise ProjectError(
+            f"Cannot resume: the checkpoint already completed {completed} "
+            f"epochs and epochs is the TOTAL count — {total_epochs} "
+            f"leaves nothing to train. Set epochs above {completed} "
+            f"(e.g. {completed + max(10, completed // 2)})."
+        )
+
+
 # ----------------------------------------------------------------- the queue
 
 
@@ -423,6 +469,7 @@ def derive_hyperparameters(
             "epochs": config.epochs,
             "batch_size": config.batch_size,
             "resolution": config.resolution,
+            "lr": config.lr,
         },
     )
 
@@ -512,28 +559,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     )
 
     if config.resume_from:
-        # epochs is the TOTAL count and the trainer restores the checkpoint's
-        # epoch — a total at or below what is already done raises a raw
-        # MisconfigurationException deep in the backend; refuse it up front
-        source_dir = Path(config.resume_from).parent.parent
-        completed = None
-        if (source_dir / _RUN_JSON).is_file():
-            source_record = read_record(source_dir)
-            completed = (
-                source_record.epochs_completed
-                or _run_completed_epochs(source_dir)
-            )
-        if (
-            completed
-            and resolved.epochs is not None
-            and resolved.epochs <= completed
-        ):
-            raise ProjectError(
-                f"Cannot resume: the checkpoint already completed {completed} "
-                f"epochs and epochs is the TOTAL count — {resolved.epochs} "
-                f"leaves nothing to train. Set epochs above {completed} "
-                f"(e.g. {completed + max(10, completed // 2)})."
-            )
+        _check_resume_epochs(config.resume_from, resolved.epochs)
 
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     run_dir = runs_root(project) / run_id
@@ -547,32 +573,13 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     )
 
     (run_dir / _CONFIG_JSON).write_text(resolved.model_dump_json(indent=2), "utf-8")
-    criterion_reason = {
-        "map": "highest validation mAP wins — detection quality is what ships",
-        "smoothed_map": (
-            "mAP is smoothed (EMA) before comparison, so one noisy validation "
-            "spike on a small valid split cannot lock in the best checkpoint"
-        ),
-        "loss": (
-            "lowest validation loss wins — a smooth signal, but it can "
-            "diverge from detection quality (mAP)"
-        ),
-    }[config.checkpoint_criterion]
     record = RunRecord(
         run_id=run_id,
         model=config.model,
         state="queued" if busy else "pending",
         created_at=datetime.now(timezone.utc).isoformat(),
         config=resolved.model_dump(exclude={"entrypoint_override"}),
-        hparams=[
-            *plan.derivations,
-            DerivedValue(
-                name="checkpoint_criterion",
-                value=config.checkpoint_criterion,
-                reason=criterion_reason,
-                overridden=config.checkpoint_criterion != "map",
-            ),
-        ],
+        hparams=[*plan.derivations, _criterion_entry(config.checkpoint_criterion)],
         hparam_notes=plan.notes,
         device=config.device,
         dataset_images=len(dataset.images),
@@ -662,6 +669,81 @@ def delete_run(project: Project, run_id: str) -> bool:
     shutil.rmtree(run_dir)
     logger.info("deleted training run %s", run_id)
     return True
+
+
+@capability(
+    "train.update",
+    summary="Edit a queued run's hyperparameters in place before it starts",
+    web_route="/api/v1/train/runs/<run_id>",
+    web_methods=("PATCH",),
+    cli=None,
+    not_cli_because="Queue editing is a UI concern; delete and re-run 'horos train'.",
+)
+def update_queued_run(
+    project: Project, run_id: str, updates: dict[str, Any]
+) -> RunRecord:
+    """Change a QUEUED run's knobs without losing its place in the queue.
+
+    Editable: epochs, batch_size, resolution, lr (None = back to derived),
+    seed, and checkpoint_criterion. The model, class selection, and dataset
+    snapshot are fixed at enqueue time — change those by deleting the queued
+    run and starting a new one. The plan is re-derived so dependent values
+    (e.g. grad accumulation after a batch-size edit) stay consistent.
+    """
+    allowed = {*_EDITABLE_KNOBS, "seed", "checkpoint_criterion"}
+    unknown = sorted(set(updates) - allowed)
+    if unknown:
+        raise ProjectError(
+            f"Not editable on a queued run: {unknown}. Editable fields: "
+            f"{sorted(allowed)} — for anything else, delete the queued run "
+            f"and start a new one."
+        )
+    run_dir = _run_dir(project, run_id)
+    record = read_record(run_dir)
+    if record.state != "queued" or (run_dir / _SPAWN_CLAIM).is_file():
+        raise ProjectError(
+            f"Run {run_id} is {record.state} — only queued runs can be "
+            f"edited. Its hyperparameters are already in use."
+        )
+
+    stored = TrainRunConfig.model_validate_json(
+        (run_dir / _CONFIG_JSON).read_text("utf-8")
+    )
+    # config.json holds RESOLVED values; the hparams trail remembers which of
+    # them were user overrides. Rebuild the request so untouched derived knobs
+    # go back to None and re-derive cleanly against the new edits.
+    overridden = {h.name for h in record.hparams if h.overridden}
+    base = {
+        knob: (getattr(stored, knob) if knob in overridden else None)
+        for knob in _EDITABLE_KNOBS
+    }
+    derived_names = {h.name for h in record.hparams}
+    user_extra = {k: v for k, v in stored.extra.items() if k not in derived_names}
+    new_config = stored.model_copy(update={**base, **updates, "extra": user_extra})
+
+    plan = derive_hyperparameters(project, new_config)
+    spec_values = plan.spec_fields()
+    resolved = new_config.model_copy(
+        update={
+            "epochs": spec_values["epochs"],
+            "batch_size": spec_values["batch_size"],
+            "resolution": spec_values.get("resolution", new_config.resolution),
+            "extra": {**plan.extra_fields(), **user_extra},
+        }
+    )
+    if new_config.resume_from:
+        _check_resume_epochs(new_config.resume_from, resolved.epochs)
+
+    (run_dir / _CONFIG_JSON).write_text(resolved.model_dump_json(indent=2), "utf-8")
+    record.config = resolved.model_dump(exclude={"entrypoint_override"})
+    record.hparams = [
+        *plan.derivations,
+        _criterion_entry(new_config.checkpoint_criterion),
+    ]
+    record.hparam_notes = plan.notes
+    write_record(run_dir, record)
+    logger.info("queued run %s updated", run_id)
+    return record
 
 
 @capability(

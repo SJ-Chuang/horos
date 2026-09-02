@@ -66,6 +66,7 @@ from horos.api.train import (
     start_training,
     stop_training,
     training_status,
+    update_queued_run,
 )
 from horos.api.verdict import Finding, RunVerdict, run_verdict
 
@@ -131,5 +132,6 @@ __all__ = [
     "stop_training",
     "training_status",
     "update_category",
+    "update_queued_run",
     "validate_project",
 ]
