@@ -295,8 +295,9 @@
       <div id="queue-save-row" class="hidden" style="margin-top:10px">
         <button class="primary" id="queue-save-btn">Save changes</button>
         <span style="color:var(--dim);font-size:12px;margin-left:8px">
-          model, classes and the dataset snapshot are fixed at enqueue —
-          delete the queued run to change those</span>
+          only fields you change are saved; clear a field to go back to the
+          derived value. Model, classes and the dataset snapshot are fixed
+          at enqueue — delete the queued run to change those</span>
       </div>
       <div id="run-notes"></div>
     </details>
@@ -448,6 +449,44 @@ const CHEVRON_UP = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
 const CHEVRON_DOWN = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
   stroke-width="1.6" stroke-linecap="round"><polyline points="2,3.5 5,6.5 8,3.5"/></svg>`;
 
+// every knob except lr is an integer — a stray decimal (epochs 100.1) must be
+// rounded here, not bounced back as a pydantic validation error. toFixed(6)
+// keeps float steps clean (lr: 0.0001 + 0.00001, not 0.00011000000000000002).
+function sanitizeKnob(knob, raw) {
+  if (raw === "" || raw == null) return null;
+  let v = Number(raw);
+  if (!Number.isFinite(v)) return null;
+  if (knob !== "lr") v = Math.round(v);
+  return Math.max(KNOB_MIN[knob] ?? 0, Number(v.toFixed(6)));
+}
+
+// the same stepper widget serves the setup form (attr=data-knob) and the
+// queued-run hyperparameter table (attr=data-qedit)
+function stepperHTML(attr, knob, value, overridden) {
+  return `<span class="stepper">
+      <input type="number" min="${KNOB_MIN[knob]}" step="${KNOB_STEP[knob]}"
+             ${attr}="${knob}" value="${value ?? ""}"
+             class="${overridden ? "overridden" : ""}">
+      <span class="step-btns">
+        <button data-step="1" data-for="${knob}" tabindex="-1"
+                title="+${KNOB_STEP[knob]}">${CHEVRON_UP}</button>
+        <button data-step="-1" data-for="${knob}" tabindex="-1"
+                title="−${KNOB_STEP[knob]}">${CHEVRON_DOWN}</button>
+      </span></span>`;
+}
+
+function wireSteppers(root, attr) {
+  root.querySelectorAll("button[data-step]").forEach((btn) => {
+    btn.onclick = () => {
+      const knob = btn.dataset.for;
+      const input = root.querySelector(`input[${attr}="${knob}"]`);
+      const current = Number(input.value) || KNOB_MIN[knob];
+      input.value = sanitizeKnob(knob, current + KNOB_STEP[knob] * Number(btn.dataset.step));
+      input.dispatchEvent(new Event("change"));
+    };
+  });
+}
+
 function renderPlan(plan) {
   const rows = plan.derivations.map((d) => {
     let value;
@@ -455,17 +494,7 @@ function renderPlan(plan) {
       value = `<span style="display:flex;align-items:center;gap:6px">
         ${d.overridden ? `<button class="reset" data-reset="${d.name}"
              title="Back to the derived value">auto ↺</button>` : ""}
-        <span class="stepper">
-          <input type="number" min="${KNOB_MIN[d.name]}" step="${KNOB_STEP[d.name]}"
-                 data-knob="${d.name}" value="${d.value ?? ""}"
-                 class="${d.overridden ? "overridden" : ""}">
-          <span class="step-btns">
-            <button data-step="1" data-for="${d.name}" tabindex="-1"
-                    title="+${KNOB_STEP[d.name]}">${CHEVRON_UP}</button>
-            <button data-step="-1" data-for="${d.name}" tabindex="-1"
-                    title="−${KNOB_STEP[d.name]}">${CHEVRON_DOWN}</button>
-          </span>
-        </span></span>`;
+        ${stepperHTML("data-knob", d.name, d.value, d.overridden)}</span>`;
     } else {
       value = `<span class="hp-value">${d.value}</span>`;
     }
@@ -480,23 +509,13 @@ function renderPlan(plan) {
 
   $("hparams-list").querySelectorAll("input[data-knob]").forEach((inp) => {
     inp.onchange = () => {
-      const v = inp.value === "" ? null : Number(inp.value);
-      overrides[inp.dataset.knob] = Number.isFinite(v) ? v : null;
+      const v = sanitizeKnob(inp.dataset.knob, inp.value);
+      if (v !== null) inp.value = v;  // show what will actually be sent
+      overrides[inp.dataset.knob] = v;
       scheduleDerive();
     };
   });
-  $("hparams-list").querySelectorAll("button[data-step]").forEach((btn) => {
-    btn.onclick = () => {
-      const knob = btn.dataset.for;
-      const input = $("hparams-list").querySelector(`input[data-knob="${knob}"]`);
-      const step = KNOB_STEP[knob] * Number(btn.dataset.step);
-      const current = Number(input.value) || KNOB_MIN[knob];
-      // toFixed(6) keeps float steps clean (lr: 0.0001 + 0.00001, not
-      // 0.00011000000000000002); integers are unaffected
-      input.value = Number(Math.max(KNOB_MIN[knob], current + step).toFixed(6));
-      input.dispatchEvent(new Event("change"));
-    };
-  });
+  wireSteppers($("hparams-list"), "data-knob");
   $("hparams-list").querySelectorAll("button[data-reset]").forEach((btn) => {
     btn.onclick = () => { overrides[btn.dataset.reset] = null; derive(); };
   });
@@ -670,34 +689,51 @@ function renderRunHparams(run) {
   const sig = run.run_id + "|" + run.state + "|" + JSON.stringify(run.hparams);
   if (sig === hparamsSig) return;
   hparamsSig = sig;
+  // what the server currently has, keyed by name — Save sends ONLY fields
+  // the user actually changed. Sending an untouched value would turn every
+  // derived hyperparameter into a "user override".
+  const serverValue = {};
   $("run-hparams").innerHTML = (run.hparams || [])
     .map((d) => {
+      serverValue[d.name] = d.value;
       let value = `<strong>${d.value}</strong>`;
       if (editable && QUEUE_EDITABLE.includes(d.name)) {
-        value = `<input type="number" data-qedit="${d.name}" value="${d.value ?? ""}"
-                   min="${KNOB_MIN[d.name] ?? 0}" step="${KNOB_STEP[d.name] ?? 1}"
-                   style="width:100px" class="${d.overridden ? "overridden" : ""}">`;
+        value = stepperHTML("data-qedit", d.name, d.value, d.overridden);
       } else if (editable && d.name === "checkpoint_criterion") {
         value = `<select data-qedit="checkpoint_criterion" style="width:150px">
           ${CRITERIA.map((c) => `<option value="${c}"
             ${c === d.value ? "selected" : ""}>${c}</option>`).join("")}</select>`;
       }
       return `<tr><td style="width:150px">${d.name}</td>
-        <td style="width:160px">${value}
+        <td style="width:170px">${value}
           ${d.overridden ? '<span class="overridden-badge">override</span>' : ""}</td>
         <td class="reason">${d.reason}</td></tr>`;
     })
     .join("");
   $("queue-save-row").classList.toggle("hidden", !editable);
   if (!editable) return;
+  $("run-hparams").querySelectorAll("input[data-qedit]").forEach((inp) => {
+    inp.onchange = () => {  // integers must stay integers (only lr is fractional)
+      const v = sanitizeKnob(inp.dataset.qedit, inp.value);
+      if (v !== null) inp.value = v;
+    };
+  });
+  wireSteppers($("run-hparams"), "data-qedit");
   $("queue-save-btn").onclick = async () => {
     const body = {};
     $("run-hparams").querySelectorAll("[data-qedit]").forEach((inp) => {
-      const raw = inp.value;
-      body[inp.dataset.qedit] =
-        inp.dataset.qedit === "checkpoint_criterion" ? raw
-          : raw === "" ? null : Number(raw);
+      const name = inp.dataset.qedit;
+      const value = name === "checkpoint_criterion"
+        ? inp.value
+        : sanitizeKnob(name, inp.value);
+      // an empty field is an explicit "back to derived" (null); anything
+      // equal to what the server already has is not a change at all
+      if (value !== serverValue[name]) body[name] = value;
     });
+    if (Object.keys(body).length === 0) {
+      setStatus("Nothing changed.", "");
+      return;
+    }
     $("queue-save-btn").disabled = true;
     try {
       const record = await api(`/train/runs/${run.run_id}`, {

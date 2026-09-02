@@ -720,6 +720,15 @@ def update_queued_run(
     derived_names = {h.name for h in record.hparams}
     user_extra = {k: v for k, v in stored.extra.items() if k not in derived_names}
     new_config = stored.model_copy(update={**base, **updates, "extra": user_extra})
+    # updates arrive as a raw dict and model_copy performs NO validation — a
+    # fractional epochs value would land in config.json and only blow up when
+    # the worker boots. Validate the merged config here, as a 400 with a reason.
+    from pydantic import ValidationError
+
+    try:
+        new_config = TrainRunConfig.model_validate(new_config.model_dump(warnings=False))
+    except ValidationError as exc:
+        raise ProjectError(f"Invalid hyperparameters: {exc}") from exc
 
     plan = derive_hyperparameters(project, new_config)
     spec_values = plan.spec_fields()

@@ -195,6 +195,10 @@ def test_update_queued_run_edits_in_place(project):
         assert by_name["epochs"].overridden and by_name["epochs"].value == 25
         assert by_name["lr"].overridden
         assert by_name["checkpoint_criterion"].value == "loss"
+        # fields NOT in the update stay derived — an edit of one knob must
+        # never relabel the untouched ones as user overrides
+        assert by_name["batch_size"].overridden is False
+        assert by_name["resolution"].overridden is False
         # config.json (what the worker will read) matches the record
         stored = TrainRunConfig.model_validate_json(
             (runs_root(project) / queued.run_id / "config.json").read_text("utf-8")
@@ -241,6 +245,23 @@ def test_update_refuses_non_queued_runs_and_unknown_fields(project):
             update_queued_run(project, active.run_id, {"epochs": 5})
         with pytest.raises(ProjectError, match="Not editable"):
             update_queued_run(project, queued.run_id, {"categories": ["x"]})
+    finally:
+        stop_training(project, queued.run_id)
+        stop_training(project, active.run_id)
+        _wait_state(project, active.run_id, ("stopped",))
+
+
+def test_update_rejects_fractional_integer_knobs(project):
+    from horos.api.train import update_queued_run
+    from horos.errors import ProjectError
+
+    active, queued = _queued_pair(project)
+    try:
+        with pytest.raises(ProjectError, match="Invalid hyperparameters"):
+            update_queued_run(project, queued.run_id, {"epochs": 5.5})
+        # the queued run is untouched by the failed update
+        record = read_record(runs_root(project) / queued.run_id)
+        assert record.config["epochs"] == 10 and record.state == "queued"
     finally:
         stop_training(project, queued.run_id)
         stop_training(project, active.run_id)
