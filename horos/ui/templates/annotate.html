@@ -538,6 +538,12 @@ const Page = {
       }
     });
     await this.loadImages(1);
+    // #<image_id> deep-links straight into the editor on that image
+    const hashId = Number(decodeURIComponent(location.hash.slice(1)));
+    if (hashId) {
+      const idx = this.queue.findIndex((item) => item.image.id === hashId);
+      if (idx >= 0) this.openEditor(idx);
+    }
   },
 
   async loadImages(page) {

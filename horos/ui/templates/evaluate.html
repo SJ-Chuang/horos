@@ -577,6 +577,10 @@ async function init() {
     closeViewer();
     loadGallery();
   };
+  const wantSplit = new URLSearchParams(location.search).get("split");
+  if (wantSplit && [...$("split-select").options].some((o) => o.value === wantSplit)) {
+    $("split-select").value = wantSplit;
+  }
   $("run-select").onchange = updateMeta;
   $("split-select").onchange = updateMeta;
   updateMeta();

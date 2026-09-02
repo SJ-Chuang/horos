@@ -56,14 +56,42 @@ report = api.get_eval_report(project, record.run_id, "test")
 
 ## Web UI
 
-`horos ui <project>` serves four pages on localhost:
+`horos ui <project>` serves four pages on localhost.
 
-| Page | What it does |
-|---|---|
-| **Dataset** | import (drag a zip), validation with actionable errors, class stats, train/valid/test re-splitting |
-| **Annotate** | keyboard-first canvas (bbox + polygon), OWLv2 zero-shot pre-labels with an accept/fix/reject review flow, resume where you left off, safe for multiple annotators |
-| **Training** | one-click start — hyperparameters are derived from your dataset's statistics **with the reasoning shown**, and every value can be overridden; live loss/mAP curves, run queue with in-place editing, resume with full optimizer state, OOM auto-backoff, post-run verdict with concrete suggestions |
-| **Evaluate** | drop photos, GIFs, or videos onto a trained model and browse per-frame predictions in a gallery viewer (confidence slider, frame-by-frame navigation); COCO metrics with per-class AP and PR curves |
+### Dataset
+
+Import by dropping a zip (COCO / YOLO / VOC / Darknet / VIA — format is
+auto-detected), get a validation report with actionable errors, per-class
+statistics, and train/valid/test re-splitting.
+
+<img src="docs/assets/screens/dataset.png" alt="Dataset page" width="100%">
+
+### Annotate
+
+A keyboard-first canvas for boxes and polygons. OWLv2 turns text prompts into
+zero-shot pre-labels, so annotators start from *correcting* instead of from a
+blank image — with an accept / fix / reject review flow, and safe concurrent
+annotation for teams.
+
+<img src="docs/assets/screens/annotate.png" alt="Annotate page" width="100%">
+
+### Train
+
+One click to start: hyperparameters are derived from your dataset's statistics
+**with the reasoning shown**, and every value can be overridden. Live loss/mAP
+curves, a run queue with in-place editing, resume with full optimizer state,
+OOM auto-backoff, a selectable best-checkpoint criterion, and a post-run
+verdict with concrete suggestions.
+
+<img src="docs/assets/screens/train.png" alt="Training page" width="100%">
+
+### Evaluate
+
+Drop photos, GIFs, or videos onto a trained model and browse per-frame
+predictions in a gallery viewer (confidence slider, frame-by-frame
+navigation). COCO metrics with per-class AP and PR curves, persisted per run.
+
+<img src="docs/assets/screens/evaluate.png" alt="Evaluate page" width="100%">
 
 ## Models
 
