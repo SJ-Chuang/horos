@@ -33,7 +33,24 @@
                         pointer-events: none; transition: opacity .12s; }
   header nav a:hover::after { opacity: 1; }
   header nav svg { width: 18px; height: 18px; }
-  main { max-width: 960px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  /* Option A layout (user-picked): fixed setup sidebar, monitor + history
+     in the main column — all three areas visible without scrolling around */
+  main { max-width: 1560px; margin: 0 auto; padding: 20px 24px;
+         display: grid; grid-template-columns: 380px minmax(0, 1fr);
+         gap: 20px; align-items: start; }
+  #setup-panel { position: sticky; top: 20px; }
+  #right-col { display: grid; gap: 20px; min-width: 0; }
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 1fr; }
+    #setup-panel { position: static; }
+  }
+  .hp-row { border-bottom: 1px solid var(--line); padding: 8px 0; }
+  .hp-row:last-child { border-bottom: none; }
+  .hp-line { display: flex; align-items: center; justify-content: space-between;
+             gap: 10px; }
+  .hp-line input[type="number"] { width: 90px; }
+  .hp-value { color: var(--text); }
+  .hp-reason { color: var(--dim); font-size: 12px; margin-top: 2px; }
   .panel { background: var(--panel); border: 1px solid var(--line);
            border-radius: 10px; padding: 18px; }
   .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
@@ -144,7 +161,7 @@
   </nav>
 </header>
 <main>
-  <section class="panel">
+  <section class="panel" id="setup-panel">
     <h2>Start a training run</h2>
     <div id="resume-banner" class="hidden"
          style="border:1px solid var(--accent);border-radius:8px;padding:10px 14px;
@@ -157,36 +174,38 @@
         head fixes them). epochs is the TOTAL count — set it higher than the
         source run's completed epochs, or there is nothing left to train.</div>
     </div>
-    <div class="row" style="margin-bottom:14px">
-      <label for="model-select">Model</label>
-      <select id="model-select"></select>
-      <span id="model-license" class="license hidden"></span>
-      <span id="model-hint" style="color:var(--dim);font-size:13px"></span>
+    <div style="margin-bottom:14px">
+      <div style="color:var(--dim);font-size:12px;margin-bottom:4px">Model</div>
+      <div class="row" style="gap:10px">
+        <select id="model-select" style="flex:1;min-width:0"></select>
+        <span id="model-license" class="license hidden"></span>
+      </div>
+      <div id="model-hint" style="color:var(--dim);font-size:12px;margin-top:4px"></div>
     </div>
-    <div class="row" style="margin-bottom:10px">
-      <span style="color:var(--dim)">Classes</span>
+    <div style="margin-bottom:12px">
+      <div style="color:var(--dim);font-size:12px;margin-bottom:4px">Classes</div>
       <div id="class-picks" class="row" style="gap:8px"></div>
       <span id="class-note" class="note hidden">select at least one class</span>
     </div>
     <p id="split-summary" style="color:var(--dim);font-size:13px;margin:0 0 12px"></p>
     <p id="platform-note" class="note hidden"></p>
-    <table id="hparams-table">
-      <thead><tr>
-        <th style="width:150px">hyperparameter</th>
-        <th style="width:190px">value</th>
-        <th>why this value</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
+    <div id="hparams-list" style="border-top:1px solid var(--line)"></div>
     <div id="plan-notes"></div>
     <div class="row" style="margin-top:14px">
-      <label for="seed-input">Seed</label>
-      <input type="number" id="seed-input" placeholder="random">
-      <button class="primary" id="start-btn" style="margin-left:auto">Start training</button>
+      <label for="seed-input" style="color:var(--dim);font-size:12px">Seed</label>
+      <input type="number" id="seed-input" placeholder="random" style="flex:1;min-width:0">
     </div>
+    <button class="primary" id="start-btn"
+            style="width:100%;margin-top:12px;padding:9px 14px;font-weight:600">
+      Start training</button>
     <p id="status"></p>
   </section>
 
+  <div id="right-col">
+  <div class="panel" id="right-empty" style="color:var(--dim)">
+    No training runs yet — pick the model and classes on the left and press
+    <strong>Start training</strong>.
+  </div>
   <section class="panel hidden" id="run-panel">
     <h2>Training run</h2>
     <div class="row" style="margin-bottom:10px">
@@ -228,6 +247,7 @@
       <tbody></tbody>
     </table>
   </section>
+  </div>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -359,30 +379,33 @@ async function derive() {
 
 function renderPlan(plan) {
   const rows = plan.derivations.map((d) => {
-    let cell;
+    let value;
     if (EDITABLE.includes(d.name)) {
-      cell = `<input type="number" min="1" data-knob="${d.name}"
-                value="${d.value ?? ""}" class="${d.overridden ? "overridden" : ""}">`
-        + (d.overridden ? `<button class="reset" data-reset="${d.name}"
-             title="Back to the derived value">auto ↺</button>` : "");
+      value = `<span style="display:flex;align-items:center;gap:6px">
+        ${d.overridden ? `<button class="reset" data-reset="${d.name}"
+             title="Back to the derived value">auto ↺</button>` : ""}
+        <input type="number" min="1" data-knob="${d.name}"
+               value="${d.value ?? ""}" class="${d.overridden ? "overridden" : ""}"></span>`;
     } else {
-      cell = `<span>${d.value}</span>`;
+      value = `<span class="hp-value">${d.value}</span>`;
     }
-    return `<tr><td>${d.name}</td><td>${cell}</td>
-      <td class="reason">${d.overridden ? "user override" : d.reason}</td></tr>`;
+    return `<div class="hp-row">
+      <div class="hp-line"><span>${d.name}</span>${value}</div>
+      <div class="hp-reason">${d.overridden ? "user override" : d.reason}</div>
+    </div>`;
   });
-  $("hparams-table").querySelector("tbody").innerHTML = rows.join("");
+  $("hparams-list").innerHTML = rows.join("");
   $("plan-notes").innerHTML = (plan.notes || [])
     .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
 
-  $("hparams-table").querySelectorAll("input[data-knob]").forEach((inp) => {
+  $("hparams-list").querySelectorAll("input[data-knob]").forEach((inp) => {
     inp.onchange = () => {
       const v = inp.value === "" ? null : Number(inp.value);
       overrides[inp.dataset.knob] = Number.isFinite(v) ? v : null;
       scheduleDerive();
     };
   });
-  $("hparams-table").querySelectorAll("button[data-reset]").forEach((btn) => {
+  $("hparams-list").querySelectorAll("button[data-reset]").forEach((btn) => {
     btn.onclick = () => { overrides[btn.dataset.reset] = null; derive(); };
   });
 }
@@ -406,6 +429,7 @@ function attach(runId, { live }) {
   series = {};
   warnings = [];
   $("run-panel").classList.remove("hidden");
+  $("right-empty").classList.add("hidden");
   $("run-error").classList.add("hidden");
   $("verdict").classList.add("hidden");
   $("run-checkpoint").textContent = "";
@@ -652,6 +676,7 @@ $("stop-btn").onclick = async () => {
 async function refreshRuns() {
   const runs = await api("/train/runs");
   $("runs-panel").classList.toggle("hidden", runs.length === 0);
+  $("right-empty").classList.toggle("hidden", runs.length > 0 || !!activeRun);
   $("runs-table").querySelector("tbody").innerHTML = runs
     .map((r) => `<tr class="selectable ${r.run_id === activeRun ? "active" : ""}"
         data-run="${r.run_id}">
