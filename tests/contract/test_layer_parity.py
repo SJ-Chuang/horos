@@ -20,6 +20,8 @@ EXTRA_ROUTES = {
     "/api/v1/project": "read-only summary of the bound project; UI convenience",
     "/api/v1/meta/manifest": "serves the manifest itself",
     "/api/v1/openapi.json": "serves the spec itself (E9-T4)",
+    "/api/v1/train/runs/<run_id>/media/<media_id>/frames/<frame_name>":
+        "static frame-file serving for the evaluate gallery (data, not an action)",
 }
 
 

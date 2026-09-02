@@ -103,3 +103,66 @@ def test_evaluate_missing_split_fails_synchronously(trained_client):
     )
     assert response.status_code == 400
     assert "no 'nope' split" in response.get_json()["error"]["message"]
+
+
+def _gif_bytes(frames: int = 3) -> bytes:
+    from PIL import Image
+
+    images = [Image.new("RGB", (48, 32), (40 * i, 80, 120)) for i in range(frames)]
+    buffer = io.BytesIO()
+    images[0].save(
+        buffer, format="GIF", save_all=True, append_images=images[1:],
+        duration=80, loop=0,
+    )
+    return buffer.getvalue()
+
+
+def _wait_job(client, job_id, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        job = client.get(f"/api/v1/jobs/{job_id}").get_json()
+        if job["state"] != "running":
+            return job
+        time.sleep(0.1)
+    raise AssertionError("media job never finished")
+
+
+def test_media_gif_upload_gallery_and_frame_serving(trained_client):
+    client, run_id, _ = trained_client
+    response = client.post(
+        f"/api/v1/train/runs/{run_id}/media",
+        data={"file": (io.BytesIO(_gif_bytes(3)), "clip.gif")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 202
+    body = response.get_json()
+    assert _wait_job(client, body["job_id"])["state"] == "completed"
+
+    listing = client.get(f"/api/v1/train/runs/{run_id}/media").get_json()
+    assert len(listing) == 1 and listing[0]["media_id"] == body["media_id"]
+    assert listing[0]["kind"] == "video" and listing[0]["num_frames"] == 3
+
+    detail = client.get(
+        f"/api/v1/train/runs/{run_id}/media/{body['media_id']}"
+    ).get_json()
+    assert len(detail["frames"]) == 3
+    assert detail["frames"][0]["instances"][0]["score"] == 0.9
+
+    frame = client.get(
+        f"/api/v1/train/runs/{run_id}/media/{body['media_id']}/"
+        f"{detail['frames'][0]['file_name']}"
+    )
+    assert frame.status_code == 200
+    assert frame.content_type.startswith("image/jpeg")
+
+    deleted = client.delete(
+        f"/api/v1/train/runs/{run_id}/media/{body['media_id']}"
+    )
+    assert deleted.get_json()["deleted"] is True
+    assert client.get(f"/api/v1/train/runs/{run_id}/media").get_json() == []
+
+
+def test_media_upload_without_file_is_a_client_error(trained_client):
+    client, run_id, _ = trained_client
+    response = client.post(f"/api/v1/train/runs/{run_id}/media", data={})
+    assert response.status_code == 400

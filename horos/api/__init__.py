@@ -47,6 +47,14 @@ from horos.api.hparams import DerivedValue, HyperparameterPlan
 from horos.api.jobs import JobStatus, cancel_job, job_status
 from horos.api.labels import add_category, delete_category, update_category
 from horos.api.manifest import Capability, get_capability, list_capabilities
+from horos.api.media import (
+    MediaFrame,
+    MediaItem,
+    delete_media,
+    get_media,
+    list_media,
+    start_media_inference,
+)
 from horos.api.project import create_project, open_project
 from horos.api.system import (
     DoctorReport,
@@ -100,6 +108,7 @@ __all__ = [
     "create_project",
     "dataset_stats",
     "delete_category",
+    "delete_media",
     "delete_run",
     "derive_hyperparameters",
     "doctor_report",
@@ -117,6 +126,9 @@ __all__ = [
     "list_capabilities",
     "list_images",
     "list_models",
+    "MediaFrame",
+    "MediaItem",
+    "list_media",
     "list_runs",
     "open_project",
     "pending_summary",
@@ -124,10 +136,12 @@ __all__ = [
     "release_claim",
     "resplit",
     "review_pending",
+    "get_media",
     "run_verdict",
     "save_annotations",
     "start_autolabel",
     "start_evaluation",
+    "start_media_inference",
     "start_training",
     "stop_training",
     "training_status",

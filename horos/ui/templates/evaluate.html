@@ -35,7 +35,52 @@
                         pointer-events: none; transition: opacity .12s; }
   header nav a:hover::after { opacity: 1; }
   header nav svg { width: 18px; height: 18px; }
-  main { max-width: 960px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  /* two columns, annotate-style: setup + metrics on the left, the prediction
+     gallery on the right; each column scrolls independently */
+  main { max-width: 1560px; margin: 0 auto; padding: 20px 24px;
+         display: grid; grid-template-columns: 420px minmax(0, 1fr);
+         gap: 20px; height: calc(100vh - 55px); overflow: hidden; }
+  #left-col, #right-col { display: grid; gap: 20px; min-width: 0; min-height: 0;
+                          overflow-y: auto; align-content: start;
+                          scrollbar-width: thin;
+                          scrollbar-color: var(--line) transparent; }
+  #left-col::-webkit-scrollbar, #right-col::-webkit-scrollbar { width: 8px; }
+  #left-col::-webkit-scrollbar-thumb, #right-col::-webkit-scrollbar-thumb {
+    background: var(--line); border-radius: 4px; }
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 1fr; height: auto; overflow: visible; }
+    #left-col, #right-col { overflow: visible; }
+  }
+  /* gallery grid (annotate-style thumbs) */
+  .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 10px; }
+  .thumb { position: relative; background: var(--bg); border: 1px solid var(--line);
+           border-radius: 8px; overflow: hidden; cursor: pointer; }
+  .thumb:hover { border-color: var(--accent); }
+  .thumb img { width: 100%; height: 100px; object-fit: cover; display: block;
+               background: #000; }
+  .thumb .meta { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+                 font-size: 11px; color: var(--dim); }
+  .thumb .meta .fname { overflow: hidden; text-overflow: ellipsis;
+                        white-space: nowrap; flex: 1; }
+  .thumb .kind { flex: none; color: var(--accent); }
+  .thumb .del { position: absolute; top: 4px; right: 4px; border: none;
+                border-radius: 5px; background: rgba(16,20,24,.75);
+                color: var(--dim); padding: 1px 7px; font-size: 12px;
+                opacity: 0; transition: opacity .12s; }
+  .thumb:hover .del { opacity: 1; }
+  .thumb .del:hover { color: var(--err); }
+  /* full-screen prediction viewer */
+  #viewer { position: fixed; inset: 0; z-index: 50; background: rgba(10,13,16,.92);
+            display: flex; flex-direction: column; padding: 18px 22px; gap: 12px; }
+  #viewer.hidden { display: none; }  /* the id rule outranks bare .hidden */
+  #viewer-top { display: flex; align-items: center; gap: 12px; color: var(--dim); }
+  #viewer-title { color: var(--text); font-weight: 600; }
+  #viewer-canvas-wrap { flex: 1; min-height: 0; display: flex;
+                        align-items: center; justify-content: center; }
+  #viewer-canvas { max-width: 100%; max-height: 100%; border-radius: 8px; }
+  #viewer-bottom { display: flex; align-items: center; gap: 14px; }
+  .nav-btn { font-size: 18px; padding: 6px 18px; }
   .panel { background: var(--panel); border: 1px solid var(--line);
            border-radius: 10px; padding: 18px; }
   .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
@@ -122,29 +167,30 @@
   </nav>
 </header>
 <main>
+  <div id="left-col">
   <section class="panel">
     <h2>Model under test</h2>
     <div class="row">
       <label for="run-select">Run</label>
-      <select id="run-select"></select>
-      <span id="run-meta" style="color:var(--dim);font-size:13px"></span>
+      <select id="run-select" style="flex:1;min-width:0"></select>
     </div>
+    <p id="run-meta" style="color:var(--dim);font-size:13px;margin:8px 0 0"></p>
     <p id="no-runs" class="hidden" style="color:var(--dim)">
       No completed training runs yet — train a model first.</p>
   </section>
 
   <section class="panel">
-    <h2>Try it on a photo</h2>
+    <h2>Try it on photos, GIFs, or videos</h2>
     <div id="dropzone">
-      <input type="file" id="file-input" accept="image/*">
-      <p><strong>Drop an image here</strong> or click to choose one</p>
+      <input type="file" id="file-input" multiple
+             accept="image/*,video/*,.gif,.mp4,.mov,.avi,.mkv,.webm,.m4v">
+      <p><strong>Drop files here</strong> or click to choose<br>
+        <span style="font-size:12px">photos · GIFs · videos (long videos are
+        sampled to 120 frames)</span></p>
     </div>
-    <div id="preview-wrap"><canvas id="preview"></canvas></div>
-    <div class="row" style="margin-top:12px">
-      <label for="conf">Confidence</label>
-      <input type="range" id="conf" min="0.05" max="0.95" step="0.05" value="0.5">
-      <span id="conf-value" class="mono" style="min-width:34px">0.50</span>
-      <span id="det-count" style="color:var(--dim);font-size:13px"></span>
+    <div class="row hidden" id="upload-progress-row">
+      <div class="bar"><div id="upload-bar"></div></div>
+      <span id="upload-phase" style="color:var(--dim);font-size:13px"></span>
     </div>
     <p id="status"></p>
   </section>
@@ -180,7 +226,36 @@
       <p id="report-meta" style="color:var(--dim);font-size:12px"></p>
     </div>
   </section>
+  </div>
+
+  <div id="right-col">
+  <section class="panel">
+    <h2>Predictions</h2>
+    <p id="gallery-empty" style="color:var(--dim);margin:0">
+      Nothing predicted yet — drop a photo, GIF, or video on the left.</p>
+    <div class="image-grid" id="gallery"></div>
+  </section>
+  </div>
 </main>
+
+<div id="viewer" class="hidden">
+  <div id="viewer-top">
+    <span id="viewer-title"></span>
+    <span id="viewer-frame" class="mono"></span>
+    <span style="margin-left:auto"></span>
+    <button id="viewer-close" title="Close (Esc)">✕</button>
+  </div>
+  <div id="viewer-canvas-wrap"><canvas id="viewer-canvas"></canvas></div>
+  <div id="viewer-bottom">
+    <button class="nav-btn" id="viewer-prev" title="Previous (←)">←</button>
+    <label for="conf">Confidence</label>
+    <input type="range" id="conf" min="0.05" max="0.95" step="0.05" value="0.5">
+    <span id="conf-value" class="mono" style="min-width:34px">0.50</span>
+    <span id="det-count" style="color:var(--dim);font-size:13px;min-width:130px"></span>
+    <button class="nav-btn" id="viewer-next" title="Next (→)"
+            style="margin-left:auto">→</button>
+  </div>
+</div>
 <script>
 const $ = (id) => document.getElementById(id);
 const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
@@ -193,8 +268,6 @@ const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
 
 let categories = {};        // id -> {name, color}
 let colorByName = {};       // name -> project color
-let lastPrediction = null;  // raw low-threshold prediction; slider filters it
-let lastImage = null;       // HTMLImageElement of the uploaded photo
 
 // predictions identify classes by NAME (backend label ids are model-internal)
 function instLabel(inst) {
@@ -214,86 +287,196 @@ function setStatus(text, cls) {
   $("status").className = cls || "";
 }
 
-// ------------------------------------------------------------ single image
-async function inferUpload(file) {
+// ------------------------------------------------ uploads (photos & videos)
+// files upload one at a time — the server runs one inference job at a time
+let uploading = false;
+
+async function uploadFiles(files) {
   const run = $("run-select").value;
   if (!run) { setStatus("Train a model first — no completed run.", "error"); return; }
-  setStatus("Running inference on " + file.name + "…", "");
-  const body = new FormData();
-  body.append("file", file);
-  body.append("threshold", "0.05");  // fetch low; the slider filters instantly
+  if (uploading) { setStatus("Still processing the previous upload…", ""); return; }
+  uploading = true;
+  $("upload-progress-row").classList.remove("hidden");
   try {
-    const [prediction, image] = await Promise.all([
-      api(`/train/runs/${run}/infer`, { method: "POST", body }),
-      loadImage(file),
-    ]);
-    lastPrediction = prediction;
-    lastImage = image;
-    setStatus(`${prediction.instances.length} detection(s) above 0.05`, "ok");
-    drawOverlay();
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setStatus(`Processing ${file.name} (${i + 1}/${files.length})…`, "");
+      const body = new FormData();
+      body.append("file", file);
+      const { job_id } = await api(`/train/runs/${run}/media`,
+                                   { method: "POST", body });
+      await pollJob(job_id, (ev) => {
+        if (ev.type === "progress") {
+          if (ev.total) $("upload-bar").style.width = (100 * ev.current / ev.total) + "%";
+          $("upload-phase").textContent =
+            ev.total ? `frame ${ev.current}/${ev.total}` : `frame ${ev.current}`;
+        }
+      });
+      await loadGallery();  // each finished item appears immediately
+    }
+    setStatus(`Done — ${files.length} file(s) predicted.`, "ok");
   } catch (e) {
     setStatus("Inference failed: " + e.message, "error");
+  } finally {
+    uploading = false;
+    $("upload-progress-row").classList.add("hidden");
+    $("upload-bar").style.width = "0";
+    $("upload-phase").textContent = "";
   }
 }
-
-function loadImage(file) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
-  });
-}
-
-function drawOverlay() {
-  if (!lastImage) return;
-  const threshold = Number($("conf").value);
-  const canvas = $("preview");
-  const wrap = $("preview-wrap");
-  wrap.style.display = "block";
-  const maxW = wrap.clientWidth || 880;
-  const scale = Math.min(1, maxW / lastImage.naturalWidth);
-  canvas.width = lastImage.naturalWidth * scale;
-  canvas.height = lastImage.naturalHeight * scale;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(lastImage, 0, 0, canvas.width, canvas.height);
-  let shown = 0;
-  ctx.font = "12px system-ui";
-  for (const inst of (lastPrediction ? lastPrediction.instances : [])) {
-    if (inst.score < threshold) continue;
-    shown += 1;
-    const [x, y, w, h] = inst.bbox.map((v) => v * scale);
-    const color = instColor(inst);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, w, h);
-    const label = `${instLabel(inst)} ${inst.score.toFixed(2)}`;
-    const tw = ctx.measureText(label).width + 8;
-    ctx.fillStyle = color;
-    ctx.fillRect(x, Math.max(y - 17, 0), tw, 17);
-    ctx.fillStyle = "#101418";
-    ctx.fillText(label, x + 4, Math.max(y - 4, 12));
-  }
-  $("det-count").textContent =
-    lastPrediction ? `${shown} shown at ≥ ${threshold.toFixed(2)}` : "";
-}
-
-$("conf").oninput = () => {
-  $("conf-value").textContent = Number($("conf").value).toFixed(2);
-  drawOverlay();  // E6-S3: instant, no server round-trip
-};
 
 const zone = $("dropzone");
 zone.addEventListener("click", () => $("file-input").click());
 $("file-input").addEventListener("change", (e) => {
-  if (e.target.files[0]) inferUpload(e.target.files[0]);
+  if (e.target.files.length) uploadFiles([...e.target.files]);
+  e.target.value = "";  // same file can be re-uploaded
 });
 ["dragover", "dragenter"].forEach((t) =>
   zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add("hover"); }));
 ["dragleave", "drop"].forEach((t) =>
   zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove("hover"); }));
 zone.addEventListener("drop", (e) => {
-  if (e.dataTransfer.files[0]) inferUpload(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files]);
+});
+
+// ------------------------------------------------------------------ gallery
+let galleryItems = [];        // MediaItem listings, newest first
+const mediaCache = {};        // media_id -> full MediaItem (frames + instances)
+let flat = [];                // viewer order: [{mediaId, frame}] over all items
+
+const frameURL = (mediaId, fileName) =>
+  `/api/v1/train/runs/${$("run-select").value}/media/${mediaId}/${fileName}`;
+
+async function loadGallery() {
+  const run = $("run-select").value;
+  if (!run) { galleryItems = []; renderGallery(); return; }
+  try { galleryItems = await api(`/train/runs/${run}/media`); }
+  catch (e) { galleryItems = []; }
+  renderGallery();
+}
+
+function renderGallery() {
+  const done = galleryItems.filter((m) => m.state === "completed" && m.frames.length);
+  $("gallery-empty").classList.toggle("hidden", done.length > 0);
+  $("gallery").innerHTML = done.map((m) => `
+    <div class="thumb" data-media="${m.media_id}">
+      <img loading="lazy" src="${frameURL(m.media_id, m.frames[0].file_name)}" alt="">
+      <button class="del" data-del="${m.media_id}" title="Delete this prediction">✕</button>
+      <div class="meta">
+        <span class="kind">${m.kind === "video" ? `▶ ${m.num_frames}` : "▣"}</span>
+        <span class="fname" title="${m.source_name}">${m.source_name}</span>
+      </div>
+    </div>`).join("");
+  $("gallery").querySelectorAll(".thumb").forEach((el) => {
+    el.onclick = () => openViewer(el.dataset.media, 0);
+  });
+  $("gallery").querySelectorAll("button[data-del]").forEach((btn) => {
+    btn.onclick = async (event) => {
+      event.stopPropagation();
+      try {
+        await api(`/train/runs/${$("run-select").value}/media/${btn.dataset.del}`,
+                  { method: "DELETE" });
+        delete mediaCache[btn.dataset.del];
+        await loadGallery();
+      } catch (e) { setStatus("Delete failed: " + e.message, "error"); }
+    };
+  });
+}
+
+// ------------------------------------------------------------------- viewer
+let viewerPos = -1;           // index into `flat`
+
+async function fullMedia(mediaId) {
+  if (!mediaCache[mediaId]) {
+    mediaCache[mediaId] =
+      await api(`/train/runs/${$("run-select").value}/media/${mediaId}`);
+  }
+  return mediaCache[mediaId];
+}
+
+async function buildFlat() {
+  // viewer order = gallery order; a video contributes all its frames in turn
+  flat = [];
+  for (const m of galleryItems) {
+    if (m.state !== "completed") continue;
+    const full = await fullMedia(m.media_id);
+    full.frames.forEach((frame, i) =>
+      flat.push({ mediaId: m.media_id, frame, i, of: full.frames.length,
+                  name: full.source_name }));
+  }
+}
+
+async function openViewer(mediaId, frameIdx) {
+  await buildFlat();
+  viewerPos = flat.findIndex((e) => e.mediaId === mediaId && e.i === frameIdx);
+  if (viewerPos < 0) return;
+  $("viewer").classList.remove("hidden");
+  drawViewer();
+}
+
+function closeViewer() { $("viewer").classList.add("hidden"); viewerPos = -1; }
+
+function stepViewer(delta) {
+  if (viewerPos < 0 || !flat.length) return;
+  viewerPos = (viewerPos + delta + flat.length) % flat.length;
+  drawViewer();
+}
+
+function drawViewer() {
+  const entry = flat[viewerPos];
+  if (!entry) return;
+  $("viewer-title").textContent = entry.name;
+  $("viewer-frame").textContent =
+    entry.of > 1 ? `frame ${entry.i + 1}/${entry.of}` : "";
+  const img = new Image();
+  img.onload = () => {
+    const pos = viewerPos;  // ignore stale loads after fast navigation
+    if (pos !== viewerPos) return;
+    const canvas = $("viewer-canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const threshold = Number($("conf").value);
+    let shown = 0;
+    // labels are drawn in image pixels; scale so they stay readable when the
+    // canvas is displayed smaller than the source frame
+    const fontPx = Math.max(12, Math.round(canvas.width / 60));
+    ctx.font = `${fontPx}px system-ui`;
+    ctx.lineWidth = Math.max(2, Math.round(fontPx / 6));
+    for (const inst of entry.frame.instances) {
+      if (inst.score < threshold) continue;
+      shown += 1;
+      const [x, y, w, h] = inst.bbox;
+      const color = instColor(inst);
+      ctx.strokeStyle = color;
+      ctx.strokeRect(x, y, w, h);
+      const label = `${instLabel(inst)} ${inst.score.toFixed(2)}`;
+      const tw = ctx.measureText(label).width + fontPx * 0.7;
+      const th = fontPx * 1.4;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, Math.max(y - th, 0), tw, th);
+      ctx.fillStyle = "#101418";
+      ctx.fillText(label, x + fontPx * 0.35, Math.max(y - th * 0.28, fontPx));
+    }
+    $("det-count").textContent =
+      `${shown} shown at ≥ ${threshold.toFixed(2)}`;
+  };
+  img.src = frameURL(entry.mediaId, entry.frame.file_name);
+}
+
+$("conf").oninput = () => {
+  $("conf-value").textContent = Number($("conf").value).toFixed(2);
+  drawViewer();  // E6-S3: instant, no server round-trip
+};
+$("viewer-close").onclick = closeViewer;
+$("viewer-prev").onclick = () => stepViewer(-1);
+$("viewer-next").onclick = () => stepViewer(1);
+document.addEventListener("keydown", (e) => {
+  if ($("viewer").classList.contains("hidden")) return;
+  if (e.key === "Escape") closeViewer();
+  else if (e.key === "ArrowLeft") stepViewer(-1);
+  else if (e.key === "ArrowRight") stepViewer(1);
 });
 
 // --------------------------------------------------------------- evaluation
@@ -311,7 +494,12 @@ $("eval-btn").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ split }),
     });
-    await pollJob(job_id);
+    await pollJob(job_id, (ev) => {
+      if (ev.type === "progress" && ev.total) {
+        $("eval-bar").style.width = (100 * ev.current / ev.total) + "%";
+        $("eval-status").textContent = `${ev.current}/${ev.total} images`;
+      }
+    });
     await showReport(run, split);
     $("eval-status").textContent = "done";
   } catch (e) {
@@ -322,7 +510,7 @@ $("eval-btn").onclick = async () => {
   }
 };
 
-function pollJob(jobId) {
+function pollJob(jobId, onEvent) {
   return new Promise((resolve, reject) => {
     let seen = 0;
     const tick = async () => {
@@ -331,15 +519,12 @@ function pollJob(jobId) {
       catch (e) { return reject(e); }
       seen = job.num_events;
       for (const ev of job.events) {
-        if (ev.type === "progress" && ev.total) {
-          $("eval-bar").style.width = (100 * ev.current / ev.total) + "%";
-          $("eval-status").textContent = `${ev.current}/${ev.total} images`;
-        }
+        if (onEvent) onEvent(ev);
         if (ev.type === "failed") return reject(new Error(ev.message));
       }
       if (job.state === "running") setTimeout(tick, 800);
       else if (job.state === "completed") resolve();
-      else reject(new Error("evaluation " + job.state));
+      else reject(new Error("job " + job.state));
     };
     tick();
   });
@@ -387,10 +572,22 @@ async function init() {
       ? `${r.dataset_images} training images · ${new Date(r.created_at).toLocaleDateString()}`
       : "";
     if (r) showReport(r.run_id, $("split-select").value);
+    // the gallery is per-run: predictions belong to the model that made them
+    Object.keys(mediaCache).forEach((k) => delete mediaCache[k]);
+    closeViewer();
+    loadGallery();
   };
   $("run-select").onchange = updateMeta;
   $("split-select").onchange = updateMeta;
   updateMeta();
+  // #<media_id> deep-links straight into the viewer on that item
+  const hashMedia = decodeURIComponent(location.hash.slice(1));
+  if (hashMedia) {
+    await loadGallery();
+    if (galleryItems.some((m) => m.media_id === hashMedia)) {
+      openViewer(hashMedia, 0);
+    }
+  }
 }
 init();
 </script>

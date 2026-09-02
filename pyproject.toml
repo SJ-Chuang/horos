@@ -31,6 +31,11 @@ dependencies = [
     # E6 imports it directly for COCO metrics (also a member of rfdetr's train
     # stack); torch-free, so safe on every platform including Jetson (BSD).
     "pycocotools>=2.0",
+    # E6-T2 media inference (confirmed decision): frame decoding for GIFs and
+    # videos. Both BSD-2-Clause; imageio-ffmpeg wraps an ffmpeg binary invoked
+    # as a subprocess (no linking), which keeps horos's Apache 2.0 clean (§9).
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4.9",
 ]
 
 [project.optional-dependencies]
