@@ -1,6 +1,9 @@
 #!/bin/bash
 # horos installer — Ubuntu / macOS / Jetson.
-# Detects the platform and installs the right torch + horos into ./.venv.
+# Creates ./.venv, installs the horos core, then runs `horos install`, which
+# detects the platform (GPU, CUDA version, Jetson) and installs the matching
+# ML stack. All platform logic lives in horos itself (horos/api/install.py) —
+# this script only bootstraps the venv.
 # Windows: use install.bat instead.
 set -e
 
@@ -50,72 +53,19 @@ fi
 "$VPY" -m pip install --upgrade pip wheel >/dev/null
 
 # ---------------------------------------------------------------------------
-# torch — the install path depends on the platform (§4 of the project docs).
-# It is installed BEFORE horos so pip sees the requirement as satisfied and
-# never swaps in the wrong build.
+# horos core (torch-free by design), then the ML stack via `horos install`,
+# which picks the platform-correct torch source (§4):
+#   Linux + NVIDIA GPU  -> PyPI (Linux wheels bundle CUDA)
+#   Linux without GPU   -> PyTorch CPU index (saves ~2 GB)
+#   macOS               -> PyPI universal build (MPS)
+#   Jetson              -> torch is NEVER pip-installed; JetPack wheel steps
+#                          are printed, the rest installs with --no-deps
 # ---------------------------------------------------------------------------
-have_nvidia() {
-    command -v nvidia-smi >/dev/null 2>&1 || command -v nvcc >/dev/null 2>&1
-}
+echo "Installing the horos core ..."
+"$VPY" -m pip install -e .
 
-if [[ "$IS_JETSON" == "yes" ]]; then
-    # Jetson: pip's torch has NO CUDA support here. torch must come from the
-    # NVIDIA wheel matching your JetPack version — this script never installs
-    # torch on Jetson, it only verifies what is already there.
-    if "$VPY" -c 'import torch' >/dev/null 2>&1; then
-        if "$VPY" -c 'import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)'; then
-            echo "Jetson torch OK: CUDA is available."
-        else
-            echo "=============================================================="
-            echo "WARNING: torch is installed but torch.cuda.is_available() is"
-            echo "False. On Jetson this usually means a CPU-only PyPI torch has"
-            echo "replaced the JetPack build — inference will be ~10x slower."
-            echo "Reinstall the NVIDIA JetPack-matched wheel:"
-            echo "https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/"
-            echo "=============================================================="
-        fi
-    else
-        echo "=============================================================="
-        echo "WARNING: torch is not importable. Install the NVIDIA JetPack-"
-        echo "matched torch/torchvision wheel BEFORE using training/autolabel:"
-        echo "https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/"
-        echo "(dataset management and manual annotation work without it)"
-        echo "=============================================================="
-    fi
-elif [[ "$OS" == "Darwin" ]]; then
-    # macOS: the default PyPI wheel is the universal CPU/MPS build.
-    echo "Installing torch (PyPI CPU/MPS build) ..."
-    "$VPY" -m pip install torch torchvision
-elif have_nvidia; then
-    # Linux + NVIDIA GPU: the default PyPI Linux wheel bundles CUDA.
-    echo "NVIDIA GPU detected. Installing torch (PyPI CUDA build) ..."
-    "$VPY" -m pip install torch torchvision
-else
-    # Linux without a GPU: the CPU index saves ~2 GB of CUDA libraries.
-    echo "No NVIDIA GPU detected. Installing the CPU-only torch build ..."
-    "$VPY" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-fi
-
-# ---------------------------------------------------------------------------
-# horos itself
-# ---------------------------------------------------------------------------
-if [[ "$IS_JETSON" == "yes" ]]; then
-    # --no-deps so pip cannot replace the JetPack torch (§4). The runtime
-    # dependencies are installed explicitly, minus torch/torchvision.
-    echo "Installing horos (--no-deps Jetson path) ..."
-    "$VPY" -m pip install -e . --no-deps
-    "$VPY" -m pip install "pydantic>=2.6,<3" "flask>=3.0,<4" "pyyaml>=6.0" "pillow>=10.0" \
-        "transformers>=5.1.0,<6"
-    "$VPY" -m pip install "rfdetr==1.9.4" --no-deps
-    # rfdetr's [train] stack, spelled out so pip cannot pull a PyPI torch in.
-    # Safe here: the JetPack torch is already visible in this venv.
-    "$VPY" -m pip install supervision pycocotools scipy peft \
-        "pytorch_lightning>=2.6,!=2.6.2,!=2.6.3,<3" \
-        "torchmetrics[detection]>=1.2" "faster-coco-eval>=1.7.2"
-else
-    echo "Installing horos with its dependencies (rfdetr, transformers) ..."
-    "$VPY" -m pip install -e .
-fi
+echo "Installing the ML stack (horos install) ..."
+"$VPY" -m horos.cli install
 
 # ---------------------------------------------------------------------------
 # Verify
@@ -136,6 +86,7 @@ echo "Next steps:"
 if [[ -z "$VIRTUAL_ENV" ]]; then
     echo "  source .venv/bin/activate"
 fi
+echo "  horos doctor                   # verify the environment"
 echo "  horos init ./my_project"
 echo "  horos import <dataset dir or unzipped export> --project ./my_project"
 echo "  horos ui ./my_project          # open http://localhost:5000"

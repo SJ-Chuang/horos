@@ -1,8 +1,12 @@
 @echo off
 REM horos installer - Windows.
-REM Detects CUDA and installs the matching torch + horos into .\.venv.
+REM Creates .\.venv, installs the horos core, then runs `horos install`, which
+REM detects the GPU / CUDA version and installs the matching ML stack (on a
+REM CUDA machine torch comes from the matching PyTorch index - the plain PyPI
+REM Windows wheel is CPU-only). All platform logic lives in horos itself
+REM (horos/api/install.py) - this script only bootstraps the venv.
 REM Linux / macOS / Jetson: use install.sh instead.
-setlocal enabledelayedexpansion
+setlocal
 
 REM ============================================================
 REM Python >= 3.10
@@ -38,66 +42,14 @@ if defined VIRTUAL_ENV (
 if errorlevel 1 goto error
 
 REM ============================================================
-REM Detect CUDA (nvcc first, then nvidia-smi)
+REM horos core (torch-free by design), then the ML stack
 REM ============================================================
-set "CUDA_VERSION=none"
-where nvcc >nul 2>nul
-if %errorlevel%==0 (
-    for /f "tokens=* usebackq" %%i in (`powershell -NoProfile -Command "nvcc --version | Select-String 'release ([0-9]+\.[0-9]+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }"`) do (
-        set "CUDA_VERSION=%%i"
-    )
-) else (
-    where nvidia-smi >nul 2>nul
-    if %errorlevel%==0 (
-        for /f "tokens=* usebackq" %%i in (`powershell -NoProfile -Command "nvidia-smi | Select-String 'CUDA Version:\s*([0-9]+\.[0-9]+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }"`) do (
-            set "CUDA_VERSION=%%i"
-        )
-    )
-)
-if "%CUDA_VERSION%"=="" set "CUDA_VERSION=none"
-echo Detected CUDA version: %CUDA_VERSION%
-
-REM ============================================================
-REM torch - on Windows the default PyPI wheel is CPU-only, so a
-REM CUDA machine must install from the matching PyTorch index.
-REM Installed BEFORE horos so pip sees the requirement satisfied.
-REM ============================================================
-set "TORCH_INDEX="
-if "%CUDA_VERSION%"=="none" goto torch_cpu
-
-for /f "tokens=1,2 delims=." %%a in ("%CUDA_VERSION%") do (
-    set "CUDA_MAJOR=%%a"
-    set "CUDA_MINOR=%%b"
-)
-if !CUDA_MAJOR! GEQ 13 set "TORCH_INDEX=https://download.pytorch.org/whl/cu126"
-if !CUDA_MAJOR!==12 (
-    if !CUDA_MINOR! GEQ 6 (
-        set "TORCH_INDEX=https://download.pytorch.org/whl/cu126"
-    ) else (
-        set "TORCH_INDEX=https://download.pytorch.org/whl/cu124"
-    )
-)
-if !CUDA_MAJOR!==11 set "TORCH_INDEX=https://download.pytorch.org/whl/cu118"
-
-if defined TORCH_INDEX (
-    echo Installing torch from !TORCH_INDEX! ...
-    %VPY% -m pip install torch torchvision --index-url !TORCH_INDEX!
-    if errorlevel 1 goto error
-    goto torch_done
-)
-
-:torch_cpu
-echo No usable CUDA detected. Installing the CPU-only torch build ...
-%VPY% -m pip install torch torchvision
+echo Installing the horos core ...
+%VPY% -m pip install -e .
 if errorlevel 1 goto error
 
-:torch_done
-
-REM ============================================================
-REM horos itself (pulls rfdetr==1.9.4 and transformers)
-REM ============================================================
-echo Installing horos with its dependencies ...
-%VPY% -m pip install -e .
+echo Installing the ML stack (horos install) ...
+%VPY% -m horos.cli install
 if errorlevel 1 goto error
 
 REM ============================================================
@@ -111,6 +63,7 @@ echo.
 echo horos installed.
 echo Next steps:
 if not defined VIRTUAL_ENV echo   .venv\Scripts\activate
+echo   horos doctor                   (verify the environment)
 echo   horos init .\my_project
 echo   horos import ^<dataset dir^> --project .\my_project
 echo   horos ui .\my_project          (open http://localhost:5000)
