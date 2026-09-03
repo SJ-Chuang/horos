@@ -40,6 +40,7 @@ __all__ = [
     "convert_dataset",
     "validate_project",
     "fix_validation_issues",
+    "delete_images",
     "dataset_stats",
     "resplit",
     "list_images",
@@ -473,6 +474,44 @@ def validate_project(project: Project) -> ValidationReport:
     dataset = project.to_dataset()
     image_paths = {i.id: project.image_path(i) for i in dataset.images}
     return validate_dataset(dataset, image_paths=image_paths)
+
+
+class DeleteImagesSummary(BaseModel):
+    deleted: list[int]
+    #: images skipped because another session holds an active annotation claim
+    skipped_claimed: list[int]
+
+
+@capability(
+    "dataset.delete_images",
+    summary="Delete images (and their annotations) from the project",
+    web_route="/api/v1/images/delete",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Bulk deletion is interactive (grid selection); scripts use the Python API.",
+)
+def delete_images(
+    project: Project, image_ids: list[int], *, session_id: str | None = None
+) -> DeleteImagesSummary:
+    """Remove images with their annotation files (project-owned image files are
+    deleted; externally referenced ones only drop the reference). Images
+    another session is actively annotating (an unexpired claim not held by
+    `session_id`) are skipped and reported, never yanked out from under the
+    annotator. Unknown ids fail the whole call before anything is deleted."""
+    from horos.api.annotate import claims_held_by_others
+
+    unique_ids = list(dict.fromkeys(image_ids))
+    claimed = claims_held_by_others(project, session_id)
+    doomed = [i for i in unique_ids if i not in claimed]
+    skipped = [i for i in unique_ids if i in claimed]
+    removed = project.remove_images(doomed) if doomed else []
+    logger.info(
+        "deleted %d image(s); skipped %d claimed by other sessions",
+        len(removed), len(skipped),
+    )
+    return DeleteImagesSummary(
+        deleted=[record.id for record in removed], skipped_claimed=skipped
+    )
 
 
 class FixedBox(BaseModel):

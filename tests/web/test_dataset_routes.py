@@ -82,6 +82,21 @@ def test_images_route(client):
     assert {"id", "file_name", "width", "height", "split"} <= set(body[0])
 
 
+def test_images_delete_route(client):
+    ids = [i["id"] for i in client.get("/api/v1/images").get_json()]
+    body = client.post(
+        "/api/v1/images/delete", json={"ids": ids[:2], "session": "s1"}
+    ).get_json()
+    assert body["deleted"] == ids[:2] and body["skipped_claimed"] == []
+    assert len(client.get("/api/v1/images").get_json()) == 1
+
+
+def test_images_delete_route_requires_ids(client):
+    response = client.post("/api/v1/images/delete", json={})
+    assert response.status_code == 400
+    assert "ids" in response.get_json()["error"]["message"]
+
+
 def test_split_route(client):
     body = client.post(
         "/api/v1/dataset/split",

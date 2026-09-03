@@ -146,3 +146,15 @@ def split():
 @bp.get("/images")
 def images():
     return jsonify([i.model_dump() for i in api.list_images(_project())])
+
+
+@bp.post("/images/delete")
+def images_delete():
+    body = _body()
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise ProjectError("Request body must include a non-empty 'ids' list")
+    summary = api.delete_images(
+        _project(), [int(i) for i in ids], session_id=body.get("session")
+    )
+    return jsonify(summary.model_dump())

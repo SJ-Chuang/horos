@@ -26,10 +26,12 @@ from horos.api.autolabel import (
     start_autolabel,
 )
 from horos.api.dataset import (
+    DeleteImagesSummary,
     ImportSummary,
     ValidationFixResult,
     convert_dataset,
     dataset_stats,
+    delete_images,
     export_dataset,
     fix_validation_issues,
     import_dataset,
@@ -88,6 +90,7 @@ __all__ = [
     "Capability",
     "ClaimResult",
     "ClassEval",
+    "DeleteImagesSummary",
     "DerivedValue",
     "DoctorReport",
     "EvalReport",
@@ -115,6 +118,7 @@ __all__ = [
     "create_project",
     "dataset_stats",
     "delete_category",
+    "delete_images",
     "delete_media",
     "delete_run",
     "derive_hyperparameters",

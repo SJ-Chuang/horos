@@ -292,6 +292,19 @@ def _store_claims(project: Project, claims: dict[int, dict]) -> None:
     )
 
 
+def claims_held_by_others(
+    project: Project, session_id: str | None = None
+) -> dict[int, str]:
+    """image_id -> holding session, for unexpired claims not held by
+    `session_id`. Used by destructive bulk operations (image deletion) to
+    steer around images someone is actively annotating."""
+    return {
+        image_id: holder.get("session", "")
+        for image_id, holder in _load_claims(project).items()
+        if holder.get("session") != session_id
+    }
+
+
 @capability(
     "annotate.claim",
     summary="Soft-claim an image for a session (advisory; queue steers others away)",

@@ -243,6 +243,31 @@ class Project:
             self._save_image_index(index)
         return record
 
+    def remove_images(self, image_ids: list[int]) -> list[ImageRecord]:
+        """Delete images from the project: index entry, annotation file, and —
+        for project-owned images — the copied file under images/. Externally
+        referenced images (copy=False imports) keep their source file; only
+        the reference is dropped. Unknown ids fail before anything is touched.
+        """
+        index = self._load_image_index()
+        by_id = {record.id: record for record in index.images}
+        missing = [i for i in image_ids if i not in by_id]
+        if missing:
+            raise ProjectError(
+                f"No image(s) with id(s) {sorted(missing)} in project {self.root}"
+            )
+        removed: list[ImageRecord] = []
+        doomed = set(image_ids)
+        for image_id in image_ids:
+            record = by_id[image_id]
+            self._annotation_path(image_id).unlink(missing_ok=True)
+            if not record.external_path:
+                (self.images_dir / record.file_name).unlink(missing_ok=True)
+            removed.append(record)
+        index.images = [r for r in index.images if r.id not in doomed]
+        self._save_image_index(index)
+        return removed
+
     def update_image_splits(self, split_by_id: dict[int, str]) -> None:
         index = self._load_image_index()
         for record in index.images:

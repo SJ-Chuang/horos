@@ -86,8 +86,14 @@
   .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
                 gap: 10px; }
   .thumb { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-           overflow: hidden; cursor: pointer; }
+           overflow: hidden; cursor: pointer; position: relative; }
   .thumb:hover { border-color: var(--accent); }
+  .thumb .pick { position: absolute; top: 6px; left: 6px; z-index: 2; margin: 0;
+                 width: 16px; height: 16px; accent-color: var(--accent);
+                 cursor: pointer; display: none; }
+  .thumb:hover .pick, .image-grid.selecting .pick { display: block; }
+  .thumb.selected { border-color: var(--accent);
+                    box-shadow: 0 0 0 1px var(--accent) inset; }
   .thumb img { width: 100%; height: 100px; object-fit: cover; display: block;
                background: #000; }
   .thumb .meta { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
@@ -156,6 +162,7 @@
            padding: 8px 16px; display: none; z-index: 1200; }
   #toast.warn { border-color: var(--warn); color: var(--warn); }
   #toast.err { border-color: var(--err); color: var(--err); }
+  #toast.ok { border-color: var(--ok); color: var(--ok); }
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none;
            align-items: center; justify-content: center; z-index: 1000; }
   .modal .card { width: 460px; max-height: 80vh; overflow-y: auto; }
@@ -226,6 +233,8 @@
       <option value="50" selected>50 / page</option>
       <option value="100">100 / page</option>
     </select>
+    <button class="btn" id="btn-select-page" title="Select / deselect every image on this page">Select page</button>
+    <button class="btn danger" id="btn-delete-selected" style="display:none">Delete selected</button>
     <button class="btn" id="btn-classes">Manage Classes</button>
     <button class="btn primary" id="btn-autolabel">Auto-label…</button>
   </div>
@@ -461,7 +470,7 @@ function toast(msg, cls = "warn", ms = 2400) {
 }
 
 const Page = {
-  categories: [], queue: [], page: 1, perPage: 50,
+  categories: [], queue: [], page: 1, perPage: 50, selected: new Set(),
   currentIdx: -1, version: 0,
   editorImage: null, editorShapes: [], selectedShapeIdx: -1,
   hoverShapeIdx: -1, hoverVertexIdx: -1, hoverVertexShapeIdx: -1,
@@ -489,6 +498,8 @@ const Page = {
     $("per-page").onchange = (e) => { this.perPage = Number(e.target.value); this.loadImages(1); };
     $("btn-classes").onclick = () => this.openClassManager();
     $("btn-manage-2").onclick = () => this.openClassManager();
+    $("btn-select-page").onclick = () => this.togglePageSelection();
+    $("btn-delete-selected").onclick = () => this.deleteSelected();
     $("class-modal-close").onclick = () => { $("class-modal").style.display = "none"; };
     $("btn-add-class").onclick = () => this.addClassFromManager();
     $("btn-back").onclick = () => this.closeEditor();
@@ -550,6 +561,9 @@ const Page = {
     const q = new URLSearchParams({ mode: $("queue-mode").value, session });
     if ($("split-filter").value) q.set("split", $("split-filter").value);
     this.queue = await api("/queue?" + q);
+    // drop selections that left the queue (deleted, or filtered out)
+    const alive = new Set(this.queue.map((item) => item.image.id));
+    this.selected = new Set([...this.selected].filter((id) => alive.has(id)));
     this.page = page;
     this.renderGrid();
     const p = await api("/progress");
@@ -563,6 +577,8 @@ const Page = {
     const items = this.queue.slice(start, start + this.perPage);
     $("image-grid").innerHTML = items.map((item, i) => `
       <div class="thumb" data-i="${start + i}">
+        <input type="checkbox" class="pick" data-id="${item.image.id}"
+               title="Select for deletion" aria-label="Select ${item.image.file_name}">
         <img loading="lazy" src="/api/v1/images/${item.image.id}/file" alt="">
         <div class="meta">
           <span class="badge">${item.claimed_by ? "🔒"
@@ -573,6 +589,13 @@ const Page = {
       </div>`).join("");
     [...$("image-grid").children].forEach((el) => {
       el.onclick = () => this.openEditor(Number(el.dataset.i));
+      const pick = el.querySelector(".pick");
+      pick.onclick = (e) => e.stopPropagation();  // select, don't open
+      pick.onchange = () => {
+        const id = Number(pick.dataset.id);
+        if (pick.checked) this.selected.add(id); else this.selected.delete(id);
+        this._syncSelectionUI();
+      };
     });
     const pages = Math.max(1, Math.ceil(this.queue.length / this.perPage));
     $("pagination").innerHTML = Array.from({ length: pages }, (_, i) =>
@@ -581,6 +604,50 @@ const Page = {
     [...$("pagination").children].forEach((el) => {
       el.onclick = () => { this.page = Number(el.dataset.p); this.renderGrid(); };
     });
+    this._syncSelectionUI();
+  },
+
+  _syncSelectionUI() {
+    $("image-grid").classList.toggle("selecting", this.selected.size > 0);
+    [...$("image-grid").children].forEach((el) => {
+      const pick = el.querySelector(".pick");
+      const on = this.selected.has(Number(pick.dataset.id));
+      pick.checked = on;
+      el.classList.toggle("selected", on);
+    });
+    const btn = $("btn-delete-selected");
+    btn.style.display = this.selected.size ? "" : "none";
+    btn.textContent = `Delete selected (${this.selected.size})`;
+  },
+
+  togglePageSelection() {
+    const start = (this.page - 1) * this.perPage;
+    const ids = this.queue.slice(start, start + this.perPage)
+      .map((item) => item.image.id);
+    const allOn = ids.length && ids.every((id) => this.selected.has(id));
+    ids.forEach((id) => allOn ? this.selected.delete(id) : this.selected.add(id));
+    this._syncSelectionUI();
+  },
+
+  async deleteSelected() {
+    const ids = [...this.selected];
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} image(s) and their annotations? `
+                 + "This cannot be undone.")) return;
+    try {
+      const res = await api("/images/delete", json("POST", { ids, session }));
+      this.selected.clear();
+      if (res.skipped_claimed.length) {
+        toast(`Deleted ${res.deleted.length} image(s) — skipped `
+              + `${res.skipped_claimed.length} claimed by another session`, "warn", 4200);
+      } else {
+        toast(`Deleted ${res.deleted.length} image(s)`, "ok");
+      }
+      await this.loadImages(this.page);
+      // the page may no longer exist after the deletion shrank the queue
+      const pages = Math.max(1, Math.ceil(this.queue.length / this.perPage));
+      if (this.page > pages) { this.page = pages; this.renderGrid(); }
+    } catch (e) { toast(e.message, "err"); }
   },
 
   // ---------------------------------------------------------------- editor
