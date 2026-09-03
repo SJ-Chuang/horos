@@ -15,6 +15,7 @@ _NON_CAPABILITY_EXPORTS = {
     "get_capability",
     "list_capabilities",
     "ensure_supported",  # internal guard used by feature entry points
+    "check_ml_ready",  # internal pre-flight guard used by the CLI (E4/§4)
 }
 
 

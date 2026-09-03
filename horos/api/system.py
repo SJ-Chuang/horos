@@ -11,8 +11,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from horos.api.install import ML_IMPORT_NAMES, plan_install, torch_is_cpu_build
 from horos.api.manifest import capability
-from horos.core.platform_info import PlatformInfo, detect_platform
+from horos.core.platform_info import PlatformInfo, detect_cuda_version, detect_platform
 from horos.core.registry import ModelInfo
 from horos.core.registry import list_models as _registry_list_models
 from horos.errors import UnsupportedPlatformError
@@ -181,64 +182,19 @@ def _installed_version(import_name: str) -> str | None:
 def _plan_fixes(
     missing: list[str], platform: PlatformInfo
 ) -> tuple[list[list[str]], list[str]]:
-    """Map missing deps to pip commands per platform. torch on Jetson is never
-    automated — a PyPI torch would silently replace the CUDA JetPack build (§4)."""
-    commands: list[list[str]] = []
-    manual: list[str] = []
-    needs_torch = "torch" in missing or "torchvision" in missing
-    if needs_torch:
-        if platform.is_jetson:
-            manual.append(
-                "Install the NVIDIA JetPack-matched torch/torchvision wheel "
-                "(never from PyPI): https://docs.nvidia.com/deeplearning/frameworks/"
-                "install-pytorch-jetson-platform/"
-            )
-        elif platform.os_family == "windows":
-            manual.append(
-                "On Windows with an NVIDIA GPU, install torch from the matching "
-                "CUDA index first (install.bat does this); the plain PyPI wheel "
-                "is CPU-only. CPU-only is fine? run: pip install torch torchvision"
-            )
-        else:
-            commands.append(["torch", "torchvision"])
-    if "rfdetr" in missing or "pytorch_lightning" in missing:
-        if platform.is_jetson:
-            # --no-deps so rfdetr cannot drag a PyPI torch in behind our back;
-            # the training stack is then spelled out explicitly. Several of
-            # those packages declare torch as a dependency, so they are only
-            # safe to install once the JetPack torch is in place.
-            if "rfdetr" in missing:
-                commands.append(["rfdetr==1.9.4", "--no-deps"])
-            if needs_torch:
-                manual.append(
-                    "After installing the JetPack torch, re-run 'horos doctor "
-                    "--fix' to install the training stack (pytorch_lightning "
-                    "and friends declare torch as a dependency and would pull "
-                    "the PyPI build in if installed first)."
-                )
-            else:
-                commands.append(
-                    [
-                        "supervision",
-                        "pycocotools",
-                        "pytorch_lightning>=2.6,!=2.6.2,!=2.6.3,<3",
-                        "torchmetrics[detection]>=1.2",
-                        "faster-coco-eval>=1.7.2",
-                        "scipy",
-                        "peft",
-                    ]
-                )
-        else:
-            commands.append(["rfdetr[train]==1.9.4"])
-    if "transformers" in missing:
-        commands.append(["transformers>=5.1,<6"])
+    """Light deps get their spec verbatim; the ML stack (torch, rfdetr,
+    transformers) is delegated to the `horos install` planner, so doctor and
+    install can never disagree about the platform-correct sources."""
+    plan = plan_install(
+        platform, missing=[name for name in missing if name in ML_IMPORT_NAMES]
+    )
+    commands = list(plan.pip_commands)
     for name in missing:
-        if name in ("torch", "torchvision", "rfdetr", "pytorch_lightning",
-                    "transformers"):
+        if name in ML_IMPORT_NAMES:
             continue
         spec = dict(_RUNTIME_DEPS)[name]
         commands.append([spec])
-    return commands, manual
+    return commands, list(plan.manual_actions)
 
 
 @capability(
@@ -249,10 +205,11 @@ def _plan_fixes(
     cli="doctor",
 )
 def doctor_report() -> DoctorReport:
-    """`pip install horos` intentionally skips rfdetr/torch on Linux/aarch64
-    (the Jetson trap) and cannot pick CUDA builds — this closes the gap:
-    it reports what is missing and plans the platform-correct installs that
-    `horos doctor --fix` executes."""
+    """`pip install horos` intentionally ships without the ML stack (torch,
+    rfdetr, transformers) — its correct source is platform-specific and
+    `horos install` picks it. This report closes the loop: it says what is
+    missing or mis-built and plans the same platform-correct installs that
+    `horos install` (or `horos doctor --fix`) executes."""
     platform = detect_platform()
     deps: list[DependencyStatus] = []
     missing: list[str] = []
@@ -279,6 +236,18 @@ def doctor_report() -> DoctorReport:
                     dep.ok = False
                     dep.note = "installed, but CUDA is unavailable on Jetson (PyPI build?)"
             missing.append("torch")
+        elif not cuda and torch_is_cpu_build() and detect_cuda_version() is not None:
+            # the classic Windows trap: pip's default wheel is CPU-only, so a
+            # perfectly healthy GPU machine ends up training on CPU. torch
+            # stays out of `missing` (it IS installed) — the planner's
+            # mismatch path emits the --force-reinstall command instead.
+            for dep in deps:
+                if dep.name == "torch":
+                    dep.ok = False
+                    dep.note = (
+                        "CPU-only build, but an NVIDIA GPU is present — "
+                        "run 'horos install' to switch to the CUDA build"
+                    )
 
     commands, manual = _plan_fixes(missing, platform)
     return DoctorReport(

@@ -139,6 +139,22 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("capabilities", help="Show what this platform supports")
 
     p = sub.add_parser(
+        "install",
+        help="Install the ML stack (torch, rfdetr, transformers) matched to "
+        "this machine's platform and GPU",
+    )
+    p.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force the CPU-only torch build even if an NVIDIA GPU is present",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the planned pip commands without running them",
+    )
+
+    p = sub.add_parser(
         "doctor", help="Check dependencies for this platform; --fix installs what's missing"
     )
     p.add_argument(
@@ -167,8 +183,50 @@ def _emit(payload) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))  # noqa: T201
 
 
+#: commands that cannot run without the ML stack `horos install` provides
+_ML_GATED_COMMANDS = frozenset({"autolabel", "train", "infer", "evaluate"})
+
+
+def _ml_preflight(command: str) -> int | None:
+    """Fail fast (with the fix) when an ML command lacks its dependencies.
+
+    `pip install horos` ships without torch/rfdetr/transformers on purpose;
+    this is the moment the gap becomes the user's problem, so this is where
+    the answer must be. `ui` only warns — dataset management and annotation
+    work without the ML stack.
+    """
+    from horos.api.install import check_ml_ready
+
+    readiness = check_ml_ready()
+    for message in readiness.warnings:
+        print(f"warning: {message}", file=sys.stderr)  # noqa: T201
+    if not readiness.missing:
+        return None
+    names = ", ".join(readiness.missing)
+    if command == "ui":
+        print(  # noqa: T201
+            f"warning: ML dependencies are not installed ({names}) — "
+            "autolabel, training and inference will be unavailable. "
+            "Run 'horos install' to add them.",
+            file=sys.stderr,
+        )
+        return None
+    print(  # noqa: T201
+        f"error [ml-not-installed]: 'horos {command}' needs the ML stack, "
+        f"but these packages are missing: {names}.\n"
+        "Run 'horos install' — it detects your platform and GPU and installs "
+        "the matching builds ('horos install --cpu' forces CPU-only).",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command in _ML_GATED_COMMANDS or args.command == "ui":
+        exit_code = _ml_preflight(args.command)
+        if exit_code is not None:
+            return exit_code
     try:
         if args.command == "init":
             project = api.create_project(args.path, name=args.name)
@@ -303,6 +361,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             _emit([m.model_dump() for m in api.list_models()])
         elif args.command == "capabilities":
             _emit(api.platform_capabilities().model_dump())
+        elif args.command == "install":
+            import subprocess
+
+            from horos.api.install import plan_install
+
+            plan = plan_install(cpu=args.cpu)
+            plat = plan.platform
+            print(f"platform : {plat.os_family}/{plat.arch}"  # noqa: T201
+                  f"{' (Jetson)' if plat.is_jetson else ''}  python {plat.python_version}")
+            print(f"cuda     : driver supports {plan.cuda_version}"  # noqa: T201
+                  if plan.cuda_version else "cuda     : no NVIDIA GPU detected")
+            for note in plan.notes:
+                print(f"note     : {note}")  # noqa: T201
+            if plan.empty:
+                print("ML stack already installed — nothing to do.")  # noqa: T201
+                return 0
+            for command in plan.pip_commands:
+                print(f"plan     : pip install {' '.join(command)}")  # noqa: T201
+            for action in plan.manual_actions:
+                print(f"manual   : {action}")  # noqa: T201
+            if args.dry_run:
+                return 0
+            for command in plan.pip_commands:
+                print(f"==> pip install {' '.join(command)}")  # noqa: T201
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", *command], check=True
+                )
+            if plan.manual_actions:
+                print("Manual steps remain (see above) — not automated on purpose.")  # noqa: T201
+                return 1
+            print("ML stack installed. Run 'horos doctor' to verify.")  # noqa: T201
         elif args.command == "doctor":
             import subprocess
 
@@ -311,7 +400,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"platform : {plat.os_family}/{plat.arch}"  # noqa: T201
                   f"{' (Jetson)' if plat.is_jetson else ''}  python {plat.python_version}")
             for dep in report.dependencies:
-                mark = "ok " if dep.ok else "MISSING"
+                # BAD = installed but wrong (e.g. a CPU torch on a GPU machine)
+                mark = "ok " if dep.ok else ("BAD" if dep.installed else "MISSING")
                 extra = f"  ({dep.note})" if dep.note else ""
                 print(f"  [{mark}] {dep.name:<12} {dep.installed or '-':<10} "  # noqa: T201
                       f"requires {dep.required}{extra}")
@@ -326,7 +416,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.fix:
                 for command in report.fix_commands:
                     print(f"fix      : pip install {' '.join(command)}")  # noqa: T201
-                print("Run 'horos doctor --fix' to install the above.")  # noqa: T201
+                print("Run 'horos install' (or 'horos doctor --fix') to install the above.")  # noqa: T201
                 return 1
             for command in report.fix_commands:
                 print(f"==> pip install {' '.join(command)}")  # noqa: T201

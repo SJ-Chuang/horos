@@ -4,30 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "horos"
-version = "0.1.1.dev0"
+version = "0.2.0.dev0"
 description = "End-to-end tooling for perception tasks: annotate, train, evaluate, deploy."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Bruce Chuang" }]
+# The lightweight core only. The ML stack (torch, rfdetr, transformers) is
+# deliberately NOT a base dependency: its correct source is platform-specific
+# (Windows needs the PyTorch CUDA index, Jetson needs the JetPack wheel,
+# GPU-less Linux wants the CPU index) and pip's static metadata cannot express
+# that. `horos install` detects the environment and installs the right builds;
+# the CLI refuses ML commands with a pointer to it when the stack is missing.
 dependencies = [
     "pydantic>=2.6,<3",
     "flask>=3.0,<4",
     "pyyaml>=6.0",
     "pillow>=10.0",
-    # R5: rfdetr is pinned exactly. The package has had silent annotation-corruption
-    # bugs under specific augmentation settings; a floating version makes training
-    # runs unreproducible. Upgrading is a standalone task with a full regression run.
-    # The marker skips rfdetr (and the torch it would drag in) on Linux/aarch64 —
-    # on Jetson a PyPI torch would silently replace the CUDA JetPack build (§4).
-    # `horos doctor --fix` completes the install there with the right sources.
-    # [train] pulls the Lightning training stack (pytorch_lightning, torchmetrics,
-    # pycocotools, ...) — rfdetr 1.9.4 cannot train without it, and training is a
-    # core horos feature, not an optional one.
-    'rfdetr[train]==1.9.4; platform_machine != "aarch64" or sys_platform != "linux"',
-    # transformers hosts the OWLv2 backend; range chosen to match rfdetr 1.9.4's
-    # own constraint (>=5.1.0,<6).
-    "transformers>=5.1.0,<6",
     # E6 imports it directly for COCO metrics (also a member of rfdetr's train
     # stack); torch-free, so safe on every platform including Jetson (BSD).
     "pycocotools>=2.0",
@@ -39,6 +32,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# `pip install horos[ml]` — for Linux/x86_64 CI and containers where the
+# default PyPI torch build is already the right one. Everywhere else use
+# `horos install`, which picks the platform-correct torch source.
+# R5: rfdetr is pinned exactly. The package has had silent annotation-corruption
+# bugs under specific augmentation settings; a floating version makes training
+# runs unreproducible. Upgrading is a standalone task with a full regression run.
+# The marker skips rfdetr (and the torch it would drag in) on Linux/aarch64 —
+# on Jetson a PyPI torch would silently replace the CUDA JetPack build (§4).
+# [train] pulls the Lightning training stack (pytorch_lightning, torchmetrics,
+# ...) — rfdetr 1.9.4 cannot train without it, and training is a core feature.
+ml = [
+    'rfdetr[train]==1.9.4; platform_machine != "aarch64" or sys_platform != "linux"',
+    # transformers hosts the OWLv2 backend; range chosen to match rfdetr 1.9.4's
+    # own constraint (>=5.1.0,<6).
+    "transformers>=5.1.0,<6",
+]
 dev = ["pytest>=8", "ruff>=0.4"]
 
 [project.scripts]

@@ -8,6 +8,8 @@ point of the Jetson warning is to catch a broken torch install.
 from __future__ import annotations
 
 import platform
+import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Literal
@@ -35,6 +37,35 @@ def _detect_jetson() -> bool:
     except OSError:
         return False
     return "jetson" in model or "nvidia" in model
+
+
+# nvidia-smi reports the highest CUDA version the installed driver supports —
+# the real constraint on which torch CUDA wheel can run. nvcc is only a
+# fallback signal: it names the local toolkit, not the driver's ceiling.
+_SMI_CUDA_RE = re.compile(r"CUDA Version:\s*(\d+)\.(\d+)")
+_NVCC_CUDA_RE = re.compile(r"release\s+(\d+)\.(\d+)")
+
+
+def detect_cuda_version(timeout: float = 10.0) -> tuple[int, int] | None:
+    """(major, minor) CUDA version the NVIDIA driver supports, else None.
+
+    None means "no usable NVIDIA GPU detected" (no driver, or the tools are
+    not on PATH). Never imports torch.
+    """
+    for command, pattern in (
+        (["nvidia-smi"], _SMI_CUDA_RE),
+        (["nvcc", "--version"], _NVCC_CUDA_RE),
+    ):
+        try:
+            proc = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        match = pattern.search(proc.stdout) if proc.returncode == 0 else None
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
 
 
 def detect_platform() -> PlatformInfo:

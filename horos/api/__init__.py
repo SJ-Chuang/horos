@@ -44,6 +44,7 @@ from horos.api.evaluate import (
     start_evaluation,
 )
 from horos.api.hparams import DerivedValue, HyperparameterPlan
+from horos.api.install import InstallPlan, MLReadiness, check_ml_ready, plan_install
 from horos.api.jobs import JobStatus, cancel_job, job_status
 from horos.api.labels import add_category, delete_category, update_category
 from horos.api.manifest import Capability, get_capability, list_capabilities
@@ -91,7 +92,9 @@ __all__ = [
     "Finding",
     "HyperparameterPlan",
     "ImportSummary",
+    "InstallPlan",
     "JobStatus",
+    "MLReadiness",
     "PlatformCapabilities",
     "PromptSpec",
     "QueueItem",
@@ -103,6 +106,7 @@ __all__ = [
     "annotation_progress",
     "assist_image",
     "cancel_job",
+    "check_ml_ready",
     "claim_image",
     "convert_dataset",
     "create_project",
@@ -132,6 +136,7 @@ __all__ = [
     "list_runs",
     "open_project",
     "pending_summary",
+    "plan_install",
     "platform_capabilities",
     "release_claim",
     "resplit",
