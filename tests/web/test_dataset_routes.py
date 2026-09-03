@@ -55,6 +55,27 @@ def test_validation_route(client):
     assert body["issues"] == []
 
 
+def test_validation_fix_route(client, project_root):
+    from horos.api import open_project
+
+    project = open_project(project_root)
+    record = project.list_images()[0]  # 64x48
+    stored = project.load_annotations(record.id)
+    jittered = [
+        stored.annotations[0].model_copy(update={"bbox": (0.5, 4.0, 64.0, 12.0)}),
+        *stored.annotations[1:],
+    ]
+    project.save_annotations(record.id, jittered, expected_version=stored.version)
+
+    report = client.get("/api/v1/dataset/validation").get_json()
+    assert any(i["fixable"] for i in report["issues"])
+
+    body = client.post("/api/v1/dataset/validation/fix").get_json()
+    assert body["num_fixed"] == 1
+    assert body["ok"] is True
+    assert body["report"]["issues"] == []
+
+
 def test_images_route(client):
     body = client.get("/api/v1/images").get_json()
     assert len(body) == 3

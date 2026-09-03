@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("validate", help="Validate the project dataset")
     p.add_argument("--project", required=True)
+    p.add_argument(
+        "--fix",
+        action="store_true",
+        help="Clamp auto-fixable out-of-bounds boxes (small annotation-tool "
+        "overshoots) back into their images, then re-validate",
+    )
 
     p = sub.add_parser("stats", help="Show dataset statistics")
     p.add_argument("--project", required=True)
@@ -257,7 +263,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             _emit({"path": str(written)})
         elif args.command == "validate":
-            report = api.validate_project(api.open_project(args.project))
+            project = api.open_project(args.project)
+            if args.fix:
+                result = api.fix_validation_issues(project)
+                _emit(result.model_dump() | {"ok": result.report.ok})
+                return 0 if result.report.ok else 1
+            report = api.validate_project(project)
             _emit(report.model_dump() | {"ok": report.ok})
             return 0 if report.ok else 1
         elif args.command == "stats":

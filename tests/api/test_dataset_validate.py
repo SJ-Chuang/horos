@@ -32,12 +32,38 @@ def test_missing_image_file(tmp_path):
 def test_bbox_out_of_bounds(tmp_path):
     ds = _clean_dataset(tmp_path)
     ds.annotations[0] = ds.annotations[0].model_copy(
-        update={"bbox": (60.0, 40.0, 20.0, 20.0)}  # exceeds 64x48
+        update={"bbox": (60.0, 40.0, 20.0, 20.0)}  # exceeds 64x48 by 16px
     )
     report = validate_dataset(ds, images_root=tmp_path)
     issue = next(i for i in report.issues if i.kind == "bbox_out_of_bounds")
     assert "64x48" in issue.message
     assert issue.annotation_id == ds.annotations[0].id
+    assert issue.level == "error" and not issue.fixable  # too far out for jitter
+    assert not report.ok
+
+
+def test_subpixel_overshoot_is_a_fixable_warning(tmp_path):
+    ds = _clean_dataset(tmp_path)
+    # 0.5px past the right edge, 0.4px above the top: annotation-tool jitter
+    ds.annotations[0] = ds.annotations[0].model_copy(
+        update={"bbox": (0.5, -0.4, 64.0, 12.0)}
+    )
+    report = validate_dataset(ds, images_root=tmp_path)
+    issue = next(i for i in report.issues if i.kind == "bbox_out_of_bounds")
+    assert issue.level == "warning" and issue.fixable
+    assert "auto-fixable" in issue.message
+    assert report.ok  # fixable jitter alone does not fail validation
+
+
+def test_small_overshoot_that_clamps_to_nothing_is_not_fixable(tmp_path):
+    ds = _clean_dataset(tmp_path)
+    # 1.5px out on the left but only 1px wide: clamping would erase the box
+    ds.annotations[0] = ds.annotations[0].model_copy(
+        update={"bbox": (-1.5, 4.0, 1.0, 5.0)}
+    )
+    report = validate_dataset(ds, images_root=tmp_path)
+    issue = next(i for i in report.issues if i.kind == "bbox_out_of_bounds")
+    assert issue.level == "error" and not issue.fixable
 
 
 def test_invalid_box_size(tmp_path):

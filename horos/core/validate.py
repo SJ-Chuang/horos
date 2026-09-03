@@ -11,6 +11,12 @@ never a silent pass (E1-S4):
 
 Plus one warning-level check: non_contiguous_category_ids (common after manual
 COCO surgery; harmless to horos but breaks some external tools).
+
+bbox_out_of_bounds is tiered: a box past the edge by at most FIXABLE_OVERSHOOT
+pixels is annotation-tool jitter (normalized-coordinate round-trips, off-by-one
+exports), semantically an object touching the frame — a warning, marked
+`fixable`, repaired by clamping (`horos validate --fix` / the UI's Fix button).
+A larger overshoot usually means genuinely broken labels and stays an error.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from horos.core.dataset import Dataset
+from horos.core.dataset import Annotation, Dataset, clamp_to_image
 
 IssueKind = Literal[
     "missing_image_file",
@@ -33,6 +39,35 @@ IssueKind = Literal[
 
 _EDGE_TOLERANCE = 1e-6
 
+#: Largest out-of-bounds overshoot (pixels) still treated as auto-fixable
+#: tool jitter rather than a broken label.
+FIXABLE_OVERSHOOT = 2.0
+
+
+def bbox_overshoot(
+    bbox: tuple[float, float, float, float], width: int, height: int
+) -> float:
+    """How far (pixels) the box extends past the image bounds; 0.0 if inside."""
+    x, y, w, h = bbox
+    return max(0.0, -x, -y, x + w - width, y + h - height)
+
+
+def clamp_fix(annotation: Annotation, width: int, height: int) -> Annotation | None:
+    """The clamped annotation if this is an auto-fixable overshoot, else None.
+
+    Fixable means: out of bounds, by at most FIXABLE_OVERSHOOT pixels, and
+    still a positive-size box after clamping. The validator uses this to mark
+    issues `fixable`; the fixer applies exactly the same decision (E1-S4:
+    what the report promises is what the fix does).
+    """
+    overshoot = bbox_overshoot(annotation.bbox, width, height)
+    if overshoot <= _EDGE_TOLERANCE or overshoot > FIXABLE_OVERSHOOT:
+        return None
+    clamped = clamp_to_image(annotation, width, height)
+    if clamped.bbox[2] <= 0 or clamped.bbox[3] <= 0:
+        return None
+    return clamped
+
 
 class ValidationIssue(BaseModel):
     kind: IssueKind
@@ -40,6 +75,8 @@ class ValidationIssue(BaseModel):
     message: str
     image_id: int | None = None
     annotation_id: int | None = None
+    #: True when `horos validate --fix` (or the UI's Fix button) repairs this
+    fixable: bool = False
 
 
 class ValidationReport(BaseModel):
@@ -107,23 +144,29 @@ def validate_dataset(
                     annotation_id=ann.id,
                 )
             )
-        elif image is not None and (
-            x < -_EDGE_TOLERANCE
-            or y < -_EDGE_TOLERANCE
-            or x + w > image.width + _EDGE_TOLERANCE
-            or y + h > image.height + _EDGE_TOLERANCE
+        elif (
+            image is not None
+            and bbox_overshoot(ann.bbox, image.width, image.height) > _EDGE_TOLERANCE
         ):
+            overshoot = bbox_overshoot(ann.bbox, image.width, image.height)
+            fixable = clamp_fix(ann, image.width, image.height) is not None
             issues.append(
                 ValidationIssue(
                     kind="bbox_out_of_bounds",
-                    level="error",
+                    level="warning" if fixable else "error",
                     message=(
                         f"Annotation {ann.id} bbox ({x:.1f}, {y:.1f}, {w:.1f}, {h:.1f}) "
                         f"exceeds image {ann.image_id} bounds "
-                        f"({image.width}x{image.height})"
+                        f"({image.width}x{image.height}) by {overshoot:.2f}px"
+                        + (
+                            " — auto-fixable: run 'horos validate --fix'"
+                            if fixable
+                            else ""
+                        )
                     ),
                     image_id=ann.image_id,
                     annotation_id=ann.id,
+                    fixable=fixable,
                 )
             )
 

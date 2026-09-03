@@ -20,7 +20,7 @@ from horos.core.formats import voc as voc_format
 from horos.core.formats import yolo as yolo_format
 from horos.core.project import Project
 from horos.core.stats import DatasetStats, compute_stats
-from horos.core.validate import ValidationReport, validate_dataset
+from horos.core.validate import ValidationReport, clamp_fix, validate_dataset
 from horos.errors import (
     ClassNamesRequiredError,
     DatasetFormatError,
@@ -39,6 +39,7 @@ __all__ = [
     "export_dataset",
     "convert_dataset",
     "validate_project",
+    "fix_validation_issues",
     "dataset_stats",
     "resplit",
     "list_images",
@@ -472,6 +473,65 @@ def validate_project(project: Project) -> ValidationReport:
     dataset = project.to_dataset()
     image_paths = {i.id: project.image_path(i) for i in dataset.images}
     return validate_dataset(dataset, image_paths=image_paths)
+
+
+class FixedBox(BaseModel):
+    image_id: int
+    annotation_id: int
+    before: tuple[float, float, float, float]
+    after: tuple[float, float, float, float]
+
+
+class ValidationFixResult(BaseModel):
+    num_fixed: int
+    fixed: list[FixedBox]
+    #: the validation state after fixing — what remains needs a human
+    report: ValidationReport
+
+
+@capability(
+    "dataset.validate_fix",
+    summary="Clamp auto-fixable out-of-bounds boxes back into their images",
+    web_route="/api/v1/dataset/validation/fix",
+    web_methods=("POST",),
+    cli="validate",  # exposed as `horos validate --fix`
+)
+def fix_validation_issues(project: Project) -> ValidationFixResult:
+    """Repair every issue the validator marked `fixable`: boxes past the image
+    edge by at most FIXABLE_OVERSHOOT pixels are clamped back in (polygons
+    included). Uses exactly the validator's `clamp_fix` decision, so the set
+    of repairs equals the set of `fixable` issues in the report — larger
+    overshoots are left alone for a human (E1-S4: never a silent pass).
+
+    Each change is reported with the before/after box; writes go through the
+    project's optimistic-locked per-image annotation files.
+    """
+    fixed: list[FixedBox] = []
+    for record in project.list_images():
+        stored = project.load_annotations(record.id)
+        updated: list = []
+        changed = False
+        for ann in stored.annotations:
+            clamped = clamp_fix(ann, record.width, record.height)
+            if clamped is not None:
+                fixed.append(
+                    FixedBox(
+                        image_id=record.id,
+                        annotation_id=ann.id,
+                        before=ann.bbox,
+                        after=clamped.bbox,
+                    )
+                )
+                ann = clamped
+                changed = True
+            updated.append(ann)
+        if changed:
+            project.save_annotations(
+                record.id, updated, expected_version=stored.version
+            )
+    return ValidationFixResult(
+        num_fixed=len(fixed), fixed=fixed, report=validate_project(project)
+    )
 
 
 @capability(

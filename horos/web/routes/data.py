@@ -119,6 +119,12 @@ def validation():
     return jsonify(report.model_dump() | {"ok": report.ok, "counts": report.counts()})
 
 
+@bp.post("/dataset/validation/fix")
+def validation_fix():
+    result = api.fix_validation_issues(_project())
+    return jsonify(result.model_dump() | {"ok": result.report.ok})
+
+
 @bp.get("/dataset/stats")
 def stats():
     return jsonify(api.dataset_stats(_project()).model_dump())

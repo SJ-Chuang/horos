@@ -27,9 +27,11 @@ from horos.api.autolabel import (
 )
 from horos.api.dataset import (
     ImportSummary,
+    ValidationFixResult,
     convert_dataset,
     dataset_stats,
     export_dataset,
+    fix_validation_issues,
     import_dataset,
     import_zip,
     list_images,
@@ -102,6 +104,7 @@ __all__ = [
     "RunVerdict",
     "TrainRunConfig",
     "TrainStatus",
+    "ValidationFixResult",
     "add_category",
     "annotation_progress",
     "assist_image",
@@ -118,6 +121,7 @@ __all__ = [
     "doctor_report",
     "ensure_supported",
     "export_dataset",
+    "fix_validation_issues",
     "get_annotations",
     "get_capability",
     "get_eval_report",

@@ -192,6 +192,12 @@
   <section class="panel hidden" id="issues-panel">
     <h2>Validation</h2>
     <ul class="issues" id="issues-list"></ul>
+    <div class="hidden" id="fix-row" style="margin-top:10px">
+      <button id="fix-btn" style="background:var(--bg);color:var(--accent);
+        border:1px solid var(--accent);border-radius:6px;padding:6px 14px;cursor:pointer">
+        Fix automatically</button>
+      <span id="fix-status" style="color:var(--dim);font-size:13px;margin-left:10px"></span>
+    </div>
   </section>
 
   <section class="panel">
@@ -249,8 +255,26 @@ async function refreshStats() {
       .map((i) => `<li class="${i.level}">[${i.kind}] ${i.message}</li>`)
       .join("");
   }
+  const fixable = v.issues.filter((i) => i.fixable).length;
+  $("fix-row").classList.toggle("hidden", fixable === 0);
+  if (fixable) $("fix-btn").textContent = `Fix ${fixable} issue${fixable > 1 ? "s" : ""} automatically`;
   $("issues-panel").classList.remove("hidden");
 }
+
+$("fix-btn").onclick = async () => {
+  const btn = $("fix-btn"), status = $("fix-status");
+  btn.disabled = true;
+  status.textContent = "Fixing…";
+  try {
+    const r = await api("/dataset/validation/fix", { method: "POST" });
+    status.textContent = `Clamped ${r.num_fixed} box${r.num_fixed === 1 ? "" : "es"} back into bounds`;
+    await refreshStats();
+  } catch (e) {
+    status.textContent = "Fix failed: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 function askDialog(dialog, setup) {
   // resolves with the value the clicked button carries, or null on cancel/esc
