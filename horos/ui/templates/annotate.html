@@ -1645,6 +1645,11 @@ const Page = {
         ? () => this.renameClass(id) : () => this.deleteClass(id);
     });
     $("class-tbody").querySelectorAll("input[type=color]").forEach((inp) => {
+      // live preview while the picker is open; the PATCH persists on commit
+      inp.oninput = () => {
+        const cat = this.categories.find((c) => c.id === Number(inp.dataset.id));
+        if (cat) { cat.color = inp.value; this.renderChips(); this._drawCanvas(); }
+      };
       inp.onchange = async () => {
         const cat = await api(`/categories/${inp.dataset.id}`,
           json("PATCH", { color: inp.value }));
@@ -1670,7 +1675,18 @@ const Page = {
     if (!name || name === cat.name) return;
     try {
       const updated = await api(`/categories/${id}`, json("PATCH", { name }));
+      const oldName = cat.name;
       Object.assign(cat, updated);
+      // everything else keys classes by NAME — remap it all, or the canvas
+      // keeps painting the old label and a later save would re-CREATE the
+      // old class from the stale shape labels
+      this.editorShapes.forEach((s) => { if (s.label === oldName) s.label = updated.name; });
+      if (oldName in this.classCounts) {
+        this.classCounts[updated.name] = this.classCounts[oldName];
+        delete this.classCounts[oldName];
+      }
+      if (this.sessionNames.delete(oldName)) this.sessionNames.add(updated.name);
+      if ($("class-input").value.trim() === oldName) $("class-input").value = updated.name;
       this.renderChips(); this._drawCanvas(); this.openClassManager();
     } catch (e) { toast(e.message, "err"); }
   },
@@ -1685,6 +1701,21 @@ const Page = {
       catch (e2) { toast(e2.message, "err"); return; }
     }
     this.categories = this.categories.filter((c) => c.id !== id);
+    delete this.classCounts[cat.name];
+    this.sessionNames.delete(cat.name);
+    // a force-delete removed this class's annotations server-side (bumping
+    // versions); reload the open image so the editor matches — keeping the
+    // stale shapes would re-create the class on the next auto-save
+    if (this.currentIdx >= 0 &&
+        this.editorShapes.some((s) => s.label === cat.name)) {
+      if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+      const image = this.queue[this.currentIdx].image;
+      const view = await api(`/images/${image.id}/annotations`);
+      this.version = view.version;
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      this.selectedShapeIdx = -1; this.isDirty = false;
+      this._setSaveState("", "");
+    }
     this.renderChips(); this._drawCanvas(); this.openClassManager();
   },
 };
