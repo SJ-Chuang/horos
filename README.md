@@ -27,9 +27,17 @@ a Python API, and a CLI that share one capability set.
 Install ([details & Jetson notes below](#installation)):
 
 ```bash
-pip install horos
+pip install horos   # lightweight core: datasets, annotation, web UI — no torch
+horos install       # ML stack (torch / rfdetr / transformers), matched to your machine
 horos doctor        # verifies the environment; --fix installs what's missing
 ```
+
+`pip install horos` deliberately ships without the ML stack: the right torch
+build depends on your platform (Windows needs a CUDA index, Jetson needs the
+JetPack wheel, GPU-less Linux wants the 2 GB-smaller CPU build) and pip cannot
+make that call. `horos install` detects your GPU and installs the right
+builds; ML commands check the environment on startup and tell you exactly
+what to run if something is missing or mis-built.
 
 Run the whole pipeline from the terminal:
 
@@ -133,27 +141,42 @@ Device priority: CUDA → MPS → CPU, recorded in each run's metadata.
 
 ## Installation
 
-The install scripts detect your platform (OS, NVIDIA GPU, Jetson) and install
-the matching torch build plus horos into `./.venv`:
+Two steps, on every platform:
 
 ```bash
-./install.sh        # Ubuntu / macOS / Jetson
-install.bat         # Windows
+pip install horos   # the core — datasets, annotation, web UI (no ML deps)
+horos install       # the ML stack, matched to this machine
 ```
 
+`horos install` detects your OS, NVIDIA driver and CUDA version and runs the
+right pip commands (`--dry-run` shows them first, `--cpu` forces the CPU
+build). `horos doctor` re-checks everything and plans the same fixes — it also
+catches the classic trap of a CPU-only torch sitting on a GPU machine.
+
 <details>
-<summary>What the scripts decide for you</summary>
+<summary>What <code>horos install</code> decides for you</summary>
 
 | Platform | torch source |
 |---|---|
 | Linux + NVIDIA GPU | PyPI (Linux wheels bundle CUDA) |
 | Linux without GPU | PyTorch CPU index (saves ~2 GB) |
 | macOS | PyPI universal build (MPS) |
-| Windows + NVIDIA GPU | PyTorch index matching your CUDA (cu118/cu124/cu126) — the PyPI Windows wheel is CPU-only |
+| Windows + NVIDIA GPU | PyTorch index matching your driver's CUDA (cu118 … cu132) — the PyPI Windows wheel is CPU-only |
 | Windows without GPU | PyPI (CPU) |
-| Jetson | **never installed by the script** — see below |
+| Jetson | **never pip-installed** — see below |
+
+For Linux/x86_64 CI and containers where the default PyPI torch is already
+right, `pip install horos[ml]` installs the same stack in one shot.
 
 </details>
+
+The repo also ships bootstrap scripts that create `./.venv`, install the core,
+and run `horos install` for you:
+
+```bash
+./install.sh        # Ubuntu / macOS / Jetson
+install.bat         # Windows
+```
 
 **Use a dedicated environment.** horos pins `rfdetr` exactly (upstream has had
 silent annotation-corruption bugs; reproducibility wins) and requires
@@ -163,32 +186,23 @@ other projects living in that environment.
 
 ### Jetson (read this — it matters)
 
-On Jetson, torch **must** come from NVIDIA's JetPack-matched wheel. The PyPI
-torch has no CUDA support on Jetson, and a plain `pip install horos` may
-silently replace your CUDA-enabled torch with a CPU-only build — everything
-still runs, just an order of magnitude slower.
+On Jetson, torch **must** come from NVIDIA's JetPack-matched wheel — the PyPI
+torch has no CUDA support there. `pip install horos` is safe (the core has no
+torch dependency), and `horos install` never pip-installs torch on Jetson: it
+prints the JetPack steps, installs `rfdetr` with `--no-deps` so pip can never
+swap torch out, and adds the training stack once the JetPack torch is in
+place. horos also warns at backend load time when it detects a Jetson
+platform where `torch.cuda.is_available()` is False.
 
-`./install.sh` handles this automatically on Jetson: it creates the venv with
-`--system-site-packages`, verifies the existing torch has CUDA (warning loudly
-if not), and installs horos with `--no-deps` so pip can never swap torch out.
-horos also warns at backend load time when it detects a Jetson platform where
-`torch.cuda.is_available()` is False.
-
-<details>
-<summary>Jetson install by hand</summary>
+Use a venv created with `--system-site-packages` so the JetPack torch stays
+visible (`./install.sh` does this automatically on Jetson):
 
 ```bash
-pip install horos --no-deps
-pip install pydantic flask pyyaml pillow imageio imageio-ffmpeg "transformers>=5.1,<6"
-# torch/torchvision: use the NVIDIA wheel matching your JetPack version — FIRST,
-# because the training stack below declares torch as a dependency
-pip install "rfdetr==1.9.4" --no-deps
-pip install supervision pycocotools scipy peft \
-    "pytorch_lightning>=2.6,!=2.6.2,!=2.6.3,<3" \
-    "torchmetrics[detection]>=1.2" "faster-coco-eval>=1.7.2"
+pip install horos
+# torch/torchvision: install the NVIDIA wheel matching your JetPack version —
+# https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/
+horos install       # rfdetr (--no-deps), training stack, transformers
 ```
-
-</details>
 
 ## Roadmap
 
@@ -205,8 +219,8 @@ pip install supervision pycocotools scipy peft \
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e . --no-deps
-pip install pydantic flask pyyaml pillow imageio pytest ruff
+pip install -e .[dev]      # the core is torch-free by design
+horos install              # ML stack — needed for the backend/training tests
 pytest tests/test_invariants.py && pytest
 ```
 
