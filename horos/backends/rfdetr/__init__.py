@@ -323,6 +323,14 @@ class RFDETRBackend(ModelBackend):
         kwargs = _train_kwargs(spec)
         if kwargs.get("device") is None:
             kwargs["device"] = self._resolve_device()
+        # rfdetr 1.9.4: an explicit device index ("cuda:0") is mapped to PTL
+        # devices=[0], a list its _requests_multiple_devices() cannot parse
+        # (AttributeError: 'list' object has no attribute 'strip'). horos
+        # always trains on the default device, so dropping the ":0" is the
+        # same device with the bug sidestepped. Remove on the next rfdetr
+        # upgrade (R5).
+        if str(kwargs["device"]).endswith(":0"):
+            kwargs["device"] = str(kwargs["device"]).partition(":")[0]
         yield RunStarted(
             config={k: str(v) if isinstance(v, Path) else v for k, v in kwargs.items()}
         )
