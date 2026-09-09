@@ -154,6 +154,27 @@ def _repoint_checkpoint_monitor(callback: Any, monitor: str, mode: str) -> None:
     callback._ModelCheckpoint__init_monitor_mode(mode)  # noqa: SLF001
 
 
+def _confident_detections(dets, logits, threshold: float) -> list[tuple[Any, int, float]]:
+    """(box cxcywh, class, score) for queries whose best sigmoid score >= threshold."""
+    import numpy as np
+
+    scores = 1.0 / (1.0 + np.exp(-logits))
+    classes = scores.argmax(axis=-1)
+    best = scores.max(axis=-1)
+    keep = np.nonzero(best >= threshold)[0]
+    return [(dets[i], int(classes[i]), float(best[i])) for i in keep]
+
+
+def _box_iou_cxcywh(a, b) -> float:
+    ax0, ay0, ax1, ay1 = a[0] - a[2] / 2, a[1] - a[3] / 2, a[0] + a[2] / 2, a[1] + a[3] / 2
+    bx0, by0, bx1, by1 = b[0] - b[2] / 2, b[1] - b[3] / 2, b[0] + b[2] / 2, b[1] + b[3] / 2
+    iw = max(0.0, float(min(ax1, bx1) - max(ax0, bx0)))
+    ih = max(0.0, float(min(ay1, by1) - max(ay0, by0)))
+    inter = iw * ih
+    union = float(a[2] * a[3] + b[2] * b[3]) - inter
+    return inter / union if union > 0 else 0.0
+
+
 class _BestTracker:
     """Answers "which epoch do the saved best weights come from" by watching
     the actual BestModelCallback state each epoch — exact under every
@@ -500,9 +521,199 @@ class RFDETRBackend(ModelBackend):
         yield RunCompleted(result={"images": len(paths)})
 
     # ----------------------------------------------------------------- export
+    def _export_io_spec(self, model, resolution: int) -> dict[str, Any]:
+        """Input/output description for the model card (E8-S5)."""
+        return {
+            "input": {
+                "name": "input",
+                "dtype": "float32",
+                "shape": [1, int(getattr(model.model_config, "num_channels", 3)),
+                          resolution, resolution],
+                "layout": "NCHW, RGB scaled to [0,1] then normalised with mean/std",
+                "mean": [float(v) for v in model.means],
+                "std": [float(v) for v in model.stds],
+            },
+            "outputs": [
+                {"name": "dets", "shape": ["batch", "queries", 4],
+                 "description": "boxes as (cx, cy, w, h) normalised to [0,1] of the input"},
+                {"name": "labels", "shape": ["batch", "queries", "num_classes"],
+                 "description": "class logits; apply sigmoid, take the max per query"},
+            ],
+        }
+
     def export(self, checkpoint: Path, spec: ExportSpec) -> Iterator[Event]:
-        raise BackendError(
-            "RF-DETR export is not implemented yet (E8 lands with the deployment "
-            "phase P4).",
-            backend=self.family,
-        )
+        """pytorch → weights.pt + class_names.txt (rfdetr's own loadable bundle);
+        onnx / tensorrt → rfdetr's exporter (the [onnx] extra, and NVIDIA's
+        tensorrt package for engines). tflite is not offered (§ E8 decision)."""
+        try:
+            yield RunStarted(config={"format": spec.format, "model": self.info.key,
+                                     "checkpoint": str(checkpoint)})
+            with translate_backend_errors(self.family):
+                yield ProgressUpdated(current=0, total=None, phase="loading checkpoint")
+                model = self._load()
+                out = Path(spec.output_dir)
+                out.mkdir(parents=True, exist_ok=True)
+                resolution = int(model.model.resolution)
+                if spec.format == "pytorch":
+                    yield ProgressUpdated(current=0, total=None, phase="writing weights bundle")
+                    model.export_for_roboflow(str(out))
+                    artifact = out / "weights.pt"
+                elif spec.format in ("onnx", "tensorrt"):
+                    import importlib.util
+
+                    if importlib.util.find_spec("onnx") is None:
+                        raise BackendError(
+                            "ONNX export needs rfdetr's [onnx] extra (onnx, onnxsim, "
+                            "onnxruntime) — run 'horos install' to add it.",
+                            backend=self.family,
+                        )
+                    if spec.format == "tensorrt" and importlib.util.find_spec("tensorrt") is None:
+                        raise BackendError(
+                            "TensorRT export needs NVIDIA's 'tensorrt' Python package on "
+                            "this machine; horos does not install it.",
+                            backend=self.family,
+                        )
+                    yield ProgressUpdated(
+                        current=0, total=None,
+                        phase=f"tracing and exporting {spec.format} (this takes a while)",
+                    )
+                    path = model.export(
+                        output_dir=str(out),
+                        format=spec.format,
+                        opset_version=int(spec.options.get("opset", 17)),
+                        batch_size=int(spec.options.get("batch_size", 1)),
+                        dynamic_batch=bool(spec.options.get("dynamic_batch", False)),
+                        fp16=bool(spec.options.get("fp16", True)),
+                        verbose=False,
+                    )
+                    artifact = Path(path)
+                    if spec.format == "tensorrt":
+                        # rfdetr builds the engine from an intermediate ONNX graph;
+                        # the bundle ships the engine only (export onnx separately)
+                        for stray in out.glob("*.onnx"):
+                            stray.unlink()
+                else:
+                    raise BackendError(
+                        f"RF-DETR cannot export '{spec.format}' through horos "
+                        f"(supported: pytorch, onnx, tensorrt)",
+                        backend=self.family,
+                    )
+                names_path = out / "class_names.txt"
+                if not names_path.is_file():
+                    names_path.write_text(
+                        "\n".join(list(getattr(model, "class_names", None) or [])) + "\n",
+                        "utf-8",
+                    )
+                files = sorted(p.name for p in out.iterdir() if p.is_file())
+                result = {"artifact": str(artifact), "files": files,
+                          **self._export_io_spec(model, resolution)}
+        except Exception as exc:  # noqa: BLE001 — R4: the stream terminates itself
+            code = getattr(exc, "code", "backend_error")
+            yield RunFailed(error_code=code, message=str(exc))
+            return
+        yield RunCompleted(result=result)
+
+    def export_parity(
+        self,
+        artifact: Path,
+        spec: ExportSpec,
+        images: list[Path],
+        *,
+        tolerance: float = 0.02,
+    ) -> dict[str, Any] | None:
+        """ONNX only: feed the same preprocessed tensors to the original weights
+        (rfdetr's export-mode forward, on CPU) and to onnxruntime, then compare
+        the DETECTIONS, not the raw query order (E8-T5).
+
+        RF-DETR's two-stage transformer picks its decoder queries by encoder
+        score; on near-ties a 1e-5 numeric difference flips the selection and
+        whole rows swap places, so an element-wise diff of the raw tensors is
+        meaningless for this architecture. What must match is what a user
+        sees: every detection scoring >= 0.25 on one side must have a same-class
+        partner on the other side with IoU >= 0.9 and a score within
+        `tolerance`. The raw max abs diff is still recorded for the record."""
+        if spec.format != "onnx":
+            return None
+        if not images:
+            return {"status": "skipped", "message": "no images in the run's snapshot",
+                    "passed": True, "images": 0}
+        with translate_backend_errors(self.family):
+            from copy import deepcopy
+
+            import numpy as np
+            import onnxruntime as ort
+            import torch
+            from PIL import Image
+
+            model = self._load()
+            resolution = int(model.model.resolution)
+            means = np.asarray(model.means, dtype=np.float32)
+            stds = np.asarray(model.stds, dtype=np.float32)
+            reference = deepcopy(model.model.model).to("cpu").eval()
+            reference.export()  # the same graph rfdetr traced for ONNX
+            session = ort.InferenceSession(str(artifact), providers=["CPUExecutionProvider"])
+            input_name = session.get_inputs()[0].name
+
+            score_threshold, iou_min = 0.25, 0.9
+            raw_max_diff = 0.0
+            max_score_diff = 0.0
+            min_iou = 1.0
+            compared = 0
+            unmatched = 0
+            for image in images:
+                with Image.open(image) as im:
+                    arr = np.asarray(
+                        im.convert("RGB").resize((resolution, resolution), Image.BILINEAR),
+                        dtype=np.float32,
+                    ) / 255.0
+                arr = ((arr - means) / stds).transpose(2, 0, 1)[None]
+                tensor = torch.from_numpy(np.ascontiguousarray(arr))
+                with torch.no_grad():
+                    outs = reference(tensor)
+                if not isinstance(outs, tuple | list):
+                    outs = [outs]
+                torch_outs = [o.detach().cpu().numpy().astype(np.float32) for o in outs]
+                ort_outs = [np.asarray(o, dtype=np.float32) for o in
+                            session.run(None, {input_name: tensor.numpy()})]
+                for a, b in zip(torch_outs, ort_outs, strict=False):
+                    if a.shape != b.shape:
+                        return {"status": "failed", "passed": False, "images": len(images),
+                                "message": f"output shape mismatch {a.shape} vs {b.shape}"}
+                    raw_max_diff = max(raw_max_diff, float(np.max(np.abs(a - b))))
+                ref_dets = _confident_detections(
+                    torch_outs[0][0], torch_outs[1][0], score_threshold
+                )
+                onnx_dets = _confident_detections(
+                    ort_outs[0][0], ort_outs[1][0], score_threshold
+                )
+                for side_a, side_b in ((ref_dets, onnx_dets), (onnx_dets, ref_dets)):
+                    for box, cls, score in side_a:
+                        best_iou, best_score = 0.0, None
+                        for box_b, cls_b, score_b in side_b:
+                            if cls_b != cls:
+                                continue
+                            iou = _box_iou_cxcywh(box, box_b)
+                            if iou > best_iou:
+                                best_iou, best_score = iou, score_b
+                        if best_score is None or best_iou < iou_min:
+                            unmatched += 1
+                            continue
+                        compared += 1
+                        min_iou = min(min_iou, best_iou)
+                        max_score_diff = max(max_score_diff, abs(float(score) - float(best_score)))
+            passed = unmatched == 0 and max_score_diff <= tolerance
+            return {
+                "images": len(images),
+                "detections_compared": compared,
+                "unmatched_detections": unmatched,
+                "score_threshold": score_threshold,
+                "max_score_diff": max_score_diff,
+                "min_iou": min_iou if compared else None,
+                "iou_min": iou_min,
+                "tolerance": tolerance,
+                "raw_max_abs_diff": raw_max_diff,
+                "passed": passed,
+                "method": "detections >= 0.25 from the original weights (export-mode forward, "
+                          "CPU) vs onnxruntime (CPU) on identical inputs: same class, IoU >= 0.9, "
+                          "score within tolerance; raw tensor diff recorded for reference",
+            }

@@ -6,7 +6,7 @@ from horos import cli
 
 
 def test_ml_command_is_refused_with_a_pointer_to_horos_install(monkeypatch, capsys):
-    monkeypatch.setattr(install_mod, "probe_missing", lambda: ["torch", "rfdetr"])
+    monkeypatch.setattr(install_mod, "probe_missing", lambda *_: ["torch", "rfdetr"])
     code = cli.main(["train", "--project", "nope"])
     assert code == 2
     err = capsys.readouterr().err
@@ -17,7 +17,7 @@ def test_ml_command_is_refused_with_a_pointer_to_horos_install(monkeypatch, caps
 def test_ui_warns_but_still_runs(monkeypatch, capsys):
     # dataset management and annotation work without the ML stack, so `ui`
     # must start; here it proceeds past the gate to its own usage error
-    monkeypatch.setattr(install_mod, "probe_missing", lambda: ["torch"])
+    monkeypatch.setattr(install_mod, "probe_missing", lambda *_: ["torch"])
     code = cli.main(["ui"])
     err = capsys.readouterr().err
     assert code == 2  # missing <project> argument — the gate let it through

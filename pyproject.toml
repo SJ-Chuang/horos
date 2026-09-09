@@ -43,7 +43,14 @@ dependencies = [
 # [train] pulls the Lightning training stack (pytorch_lightning, torchmetrics,
 # ...) — rfdetr 1.9.4 cannot train without it, and training is a core feature.
 ml = [
-    'rfdetr[train]==1.9.4; platform_machine != "aarch64" or sys_platform != "linux"',
+    # [onnx] adds the ONNX export path (onnx, onnxsim, onnx_graphsurgeon,
+    # onnxruntime, polygraphy — Apache-2.0 / MIT, verified 2026-09). tensorrt and
+    # tflite extras are deliberately absent: NVIDIA-licensed / ~600 MB (E8).
+    'rfdetr[train,onnx]==1.9.4; platform_machine != "aarch64" or sys_platform != "linux"',
+    # training-report export (E8): charts/PDF via matplotlib (PSF-style
+    # license), Excel via openpyxl (MIT). Both torch-free.
+    "matplotlib>=3.7",
+    "openpyxl>=3.1",
     # transformers hosts the OWLv2 backend; range chosen to match rfdetr 1.9.4's
     # own constraint (>=5.1.0,<6).
     "transformers>=5.1.0,<6",

@@ -47,6 +47,14 @@ from horos.api.evaluate import (
     infer_image,
     start_evaluation,
 )
+from horos.api.export import (
+    ExportArtifact,
+    ModelCard,
+    TrainingReport,
+    export_training_report,
+    list_exports,
+    start_model_export,
+)
 from horos.api.hparams import DerivedValue, HyperparameterPlan
 from horos.api.install import InstallPlan, MLReadiness, check_ml_ready, plan_install
 from horos.api.jobs import JobStatus, cancel_job, job_status
@@ -90,6 +98,12 @@ from horos.api.uploads import (
 from horos.api.verdict import Finding, RunVerdict, run_verdict
 
 __all__ = [
+    "ExportArtifact",
+    "ModelCard",
+    "TrainingReport",
+    "export_training_report",
+    "start_model_export",
+    "list_exports",
     "StagedUpload",
     "stage_upload",
     "start_upload_import",

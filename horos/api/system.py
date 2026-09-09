@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 from horos.api.install import (
     ALBUMENTATIONS_SPEC,
-    ML_IMPORT_NAMES,
+    ALL_IMPORT_NAMES,
+    RFDETR_SPEC,
     plan_install,
     torch_is_cpu_build,
 )
@@ -158,13 +159,19 @@ _RUNTIME_DEPS: list[tuple[str, str]] = [
     ("transformers", "transformers>=5.1,<6"),
     ("torch", "torch"),
     ("torchvision", "torchvision"),
-    ("rfdetr", "rfdetr[train]==1.9.4"),
+    ("rfdetr", RFDETR_SPEC),
     # the [train] extra's marker package — missing means rfdetr was installed
     # without its training stack and horos cannot train
-    ("pytorch_lightning", "rfdetr[train]==1.9.4"),
+    ("pytorch_lightning", RFDETR_SPEC),
     # backs the derived aug_config presets; rfdetr fails at the first training
     # step without it
     ("albumentations", ALBUMENTATIONS_SPEC),
+    # the [onnx] extra's markers — ONNX model export and its parity check (E8)
+    ("onnx", RFDETR_SPEC),
+    ("onnxruntime", RFDETR_SPEC),
+    # training-report export: charts/PDF and Excel (E8)
+    ("matplotlib", "matplotlib>=3.7"),
+    ("openpyxl", "openpyxl>=3.1"),
 ]
 
 _IMPORT_TO_DIST = {
@@ -194,11 +201,11 @@ def _plan_fixes(
     transformers) is delegated to the `horos install` planner, so doctor and
     install can never disagree about the platform-correct sources."""
     plan = plan_install(
-        platform, missing=[name for name in missing if name in ML_IMPORT_NAMES]
+        platform, missing=[name for name in missing if name in ALL_IMPORT_NAMES]
     )
     commands = list(plan.pip_commands)
     for name in missing:
-        if name in ML_IMPORT_NAMES:
+        if name in ALL_IMPORT_NAMES:
             continue
         spec = dict(_RUNTIME_DEPS)[name]
         commands.append([spec])

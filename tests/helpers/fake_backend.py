@@ -82,10 +82,14 @@ class FakeBackend(ModelBackend):
         yield RunCompleted(result={"count": len(images)})
 
     def export(self, checkpoint: Path, spec: ExportSpec) -> Iterator[Event]:
-        yield RunStarted()
-        yield RunCompleted(
-            result={"artifact": str(spec.output_dir / f"model.{spec.format}")}
-        )
+        yield RunStarted(config={"format": spec.format})
+        yield ProgressUpdated(current=1, total=2, phase="exporting")
+        spec.output_dir.mkdir(parents=True, exist_ok=True)
+        suffix = {"pytorch": "pt", "onnx": "onnx", "tensorrt": "trt"}.get(spec.format, spec.format)
+        artifact = spec.output_dir / f"model.{suffix}"
+        artifact.write_bytes(b"fake-export:" + checkpoint.read_bytes()[:16])
+        yield ProgressUpdated(current=2, total=2, phase="exporting")
+        yield RunCompleted(result={"artifact": str(artifact), "files": [artifact.name]})
 
 
 class ExplodingBackend(FakeBackend):

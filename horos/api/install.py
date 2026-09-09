@@ -38,8 +38,35 @@ from horos.core.platform_info import PlatformInfo, detect_cuda_version, detect_p
 # runs unreproducible. Upgrading is a standalone task with a full regression run.
 # [train] pulls the Lightning training stack — rfdetr 1.9.4 cannot train
 # without it, and training is a core horos feature.
-RFDETR_SPEC = "rfdetr[train]==1.9.4"
+# [onnx] adds the ONNX export path (onnx, onnxsim, onnx_graphsurgeon,
+# onnxruntime, polygraphy — Apache-2.0 / MIT, verified in wheel metadata
+# 2026-09). TensorRT and TFLite extras are NOT installed: tensorrt is an
+# NVIDIA-licensed package the user installs on the target device, tensorflow
+# is ~600 MB for an experimental path.
+RFDETR_SPEC = "rfdetr[train,onnx]==1.9.4"
 RFDETR_NO_DEPS_SPEC = "rfdetr==1.9.4"
+#: rfdetr's [onnx] stack spelled out for the Jetson --no-deps path (no torch
+#: in this dependency tree, so a plain install is safe there)
+EXPORT_STACK_SPECS = [
+    "onnx>=1.16.0,<2.0",
+    "onnxsim>=0.7.0",
+    "onnx_graphsurgeon",
+    "onnxruntime",
+    "polygraphy",
+]
+#: training-report export (E8): charts/PDF via matplotlib (PSF-style
+#: license), Excel via openpyxl (MIT). Torch-free, installed with the ML
+#: stack because reports describe training runs.
+REPORT_SPECS = ["matplotlib>=3.7", "openpyxl>=3.1"]
+#: TensorRT is opt-in (`horos install --tensorrt`): NVIDIA's wheels carry the
+#: NVIDIA TensorRT license, so horos never adds them silently. The CUDA major
+#: comes from the driver; the range tracks the polygraphy release rfdetr pins.
+TENSORRT_SPEC_TEMPLATE = "tensorrt-cu{major}>=10.13,<11"
+TENSORRT_LICENSE_NOTE = (
+    "TensorRT wheels are distributed under the NVIDIA TensorRT license (not "
+    "Apache 2.0); installing them is your choice — horos only uses them locally "
+    "to build engines and never redistributes them."
+)
 # transformers hosts the OWLv2 backend; range matches rfdetr 1.9.4's own
 # constraint (>=5.1.0,<6).
 TRANSFORMERS_SPEC = "transformers>=5.1.0,<6"
@@ -71,7 +98,8 @@ JETPACK_TORCH_ACTION = (
     "install-pytorch-jetson-platform/"
 )
 
-#: import names of the ML stack, as probed by the readiness check and doctor
+#: import names of the ML stack the training/inference commands need; the
+#: pre-flight gate for `horos train` etc. checks exactly these
 ML_IMPORT_NAMES = (
     "torch",
     "torchvision",
@@ -80,6 +108,10 @@ ML_IMPORT_NAMES = (
     "albumentations",
     "transformers",
 )
+#: import names of the export stack (E8): installed and doctored with the ML
+#: stack, but their absence must not block training
+EXPORT_IMPORT_NAMES = ("onnx", "onnxruntime", "matplotlib", "openpyxl")
+ALL_IMPORT_NAMES = ML_IMPORT_NAMES + EXPORT_IMPORT_NAMES
 
 _TORCH_INDEX_BASE = "https://download.pytorch.org/whl/"
 
@@ -137,9 +169,9 @@ def _find_spec(import_name: str) -> bool:
         return False
 
 
-def probe_missing() -> list[str]:
-    """ML-stack import names not importable in this environment."""
-    return [name for name in ML_IMPORT_NAMES if not _find_spec(name)]
+def probe_missing(names: Collection[str] = ALL_IMPORT_NAMES) -> list[str]:
+    """Import names (ML + export stack by default) not importable here."""
+    return [name for name in names if not _find_spec(name)]
 
 
 def torch_is_cpu_build() -> bool | None:
@@ -219,11 +251,15 @@ def plan_install(
     missing: Collection[str] | None = None,
     cuda_version: tuple[int, int] | None | Literal["auto"] = "auto",
     torch_cpu_build: bool | None | Literal["auto"] = "auto",
+    tensorrt: bool = False,
+    tensorrt_installed: bool | Literal["auto"] = "auto",
 ) -> InstallPlan:
     """Plan the pip commands that complete this environment's ML stack.
 
     Every parameter defaults to probing the live environment; tests (and
     doctor, which has already probed) inject explicit values instead.
+    `tensorrt=True` additionally plans NVIDIA's TensorRT wheels for the
+    driver's CUDA major (E8-T2) — opt-in because of their license.
     """
     plat = platform or detect_platform()
     if missing is None:
@@ -257,6 +293,8 @@ def plan_install(
                 )
             else:
                 commands.append(list(TRAIN_STACK_SPECS))
+        if {"onnx", "onnxruntime"} & missing:
+            commands.append(list(EXPORT_STACK_SPECS))
     else:
         if torch_missing:
             _plan_torch(commands, notes, plat, cuda_version, cpu=cpu, reinstall=False)
@@ -268,9 +306,34 @@ def plan_install(
                 "GPU is present — reinstalling the matching CUDA build."
             )
             _plan_torch(commands, notes, plat, cuda_version, cpu=False, reinstall=True)
-        if {"rfdetr", "pytorch_lightning"} & missing:
+        if {"rfdetr", "pytorch_lightning", "onnx", "onnxruntime"} & missing:
+            # one spec carries the training and the ONNX export stack
             commands.append([RFDETR_SPEC])
 
+    if {"matplotlib", "openpyxl"} & missing:
+        commands.append(list(REPORT_SPECS))
+
+    if tensorrt:
+        if tensorrt_installed == "auto":
+            tensorrt_installed = _find_spec("tensorrt")
+        if tensorrt_installed:
+            notes.append("tensorrt is already installed — nothing to add for TensorRT.")
+        elif plat.os_family == "macos":
+            notes.append("TensorRT is not available on macOS; export engines on the target device.")
+        elif plat.is_jetson:
+            manual.append(
+                "TensorRT on Jetson comes with JetPack (python3-libnvinfer). Use a venv "
+                "created with --system-site-packages so the system tensorrt module is "
+                "visible; never pip-install a tensorrt wheel on Jetson."
+            )
+        elif cuda_version is None or cpu:
+            notes.append(
+                "No NVIDIA GPU detected (or --cpu given): TensorRT engines can only be "
+                "built on the GPU they run on, so nothing was planned."
+            )
+        else:
+            commands.append([TENSORRT_SPEC_TEMPLATE.format(major=cuda_version[0])])
+            notes.append(TENSORRT_LICENSE_NOTE)
     if "albumentations" in missing:
         # safe with deps on every platform, Jetson included: albumentations
         # depends on numpy/scipy/opencv-python-headless/albucore, never torch
@@ -290,7 +353,7 @@ def plan_install(
 def check_ml_ready() -> MLReadiness:
     """Pre-flight for ML-dependent CLI commands. Fast: find_spec + metadata;
     nvidia-smi runs only when torch is already known to be a CPU build."""
-    missing = probe_missing()
+    missing = probe_missing(ML_IMPORT_NAMES)  # the export stack never blocks training
     warnings: list[str] = []
     plat = detect_platform()
     if (

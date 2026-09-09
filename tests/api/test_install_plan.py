@@ -170,3 +170,30 @@ def test_albumentations_is_never_installed_via_the_rfdetr_augment_extra():
 def test_present_albumentations_is_left_alone():
     plan = _plan(missing=["transformers"])
     assert plan.pip_commands == [[TRANSFORMERS_SPEC]]
+
+
+def _trt_plan(platform=None, *, cuda=(13, 0), installed=False, cpu=False):
+    return plan_install(
+        platform or _plat(), cpu=cpu, missing=[], cuda_version=cuda,
+        torch_cpu_build=False, tensorrt=True, tensorrt_installed=installed,
+    )
+
+
+def test_tensorrt_is_opt_in_and_follows_the_cuda_major():
+    assert not any("tensorrt" in arg for c in _plan(missing=[]).pip_commands for arg in c)
+    plan = _trt_plan(cuda=(13, 0))
+    assert ["tensorrt-cu13>=10.13,<11"] in plan.pip_commands
+    assert any("NVIDIA TensorRT license" in n for n in plan.notes)
+    assert ["tensorrt-cu12>=10.13,<11"] in _trt_plan(cuda=(12, 6)).pip_commands
+    assert ["tensorrt-cu13>=10.13,<11"] in _trt_plan(_plat("windows")).pip_commands
+
+
+def test_tensorrt_is_never_pip_installed_where_it_cannot_run():
+    already = _trt_plan(installed=True)
+    assert already.pip_commands == [] and any("already installed" in n for n in already.notes)
+    mac = _trt_plan(_plat("macos", "arm64"), cuda=None)
+    assert mac.pip_commands == [] and any("not available on macOS" in n for n in mac.notes)
+    nogpu = _trt_plan(cuda=None)
+    assert nogpu.pip_commands == [] and any("No NVIDIA GPU" in n for n in nogpu.notes)
+    jetson = _trt_plan(_plat(arch="aarch64", is_jetson=True), cuda=(12, 6))
+    assert jetson.pip_commands == [] and any("JetPack" in m for m in jetson.manual_actions)

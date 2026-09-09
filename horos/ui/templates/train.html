@@ -291,6 +291,36 @@
        style="color:var(--dim);font-size:12px;margin:10px 0 4px"></p>
     <div class="chips" id="metric-chips"></div>
     <p id="run-checkpoint" class="mono" style="color:var(--dim)"></p>
+    <div id="export-panel" class="hidden"
+         style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+      <h2 style="margin-top:4px">Export</h2>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="color:var(--dim);font-size:13px;min-width:52px">Report</span>
+        <select id="report-format">
+          <option value="png">PNG · one 16:9 dashboard image</option>
+          <option value="pdf">PDF · dashboard + detail pages</option>
+          <option value="xlsx">Excel · metrics per epoch, hyperparameters, evaluation</option>
+        </select>
+        <button id="report-export-btn">Export report</button>
+        <span class="note" id="report-status"></span>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <span style="color:var(--dim);font-size:13px;min-width:52px">Model</span>
+        <select id="model-format">
+          <option value="pytorch">PyTorch weights (weights.pt + class_names.txt)</option>
+          <option value="onnx">ONNX (opset 17, batch 1)</option>
+          <option value="tensorrt">TensorRT engine (this GPU only)</option>
+        </select>
+        <button id="model-export-btn">Export model</button>
+        <span class="note" id="model-status"></span>
+      </div>
+      <p id="model-format-note" class="note" style="margin:6px 0 0"></p>
+      <div id="export-progress-row" class="row hidden" style="margin-top:8px">
+        <div class="bar" style="flex:1"><div id="export-bar"></div></div>
+        <span id="export-phase" class="note"></span>
+      </div>
+      <ul id="export-list" style="margin:8px 0 0;padding-left:18px;font-size:13px"></ul>
+    </div>
     <p id="run-error" class="hidden"></p>
     <div id="verdict" class="hidden">
       <h2 style="margin-top:16px">Conclusion &amp; suggestions</h2>
@@ -727,6 +757,13 @@ function renderRun(run) {
     $("run-bar").style.width = "100%";
     $("run-phase").textContent = "done";
   }
+  // export needs a finished run with weights on disk (E8)
+  const exportable = run.state === "completed" && !!run.checkpoint;
+  $("export-panel").classList.toggle("hidden", !exportable);
+  if (exportable && exportRunShown !== run.run_id) {
+    exportRunShown = run.run_id;
+    loadExports(run.run_id);
+  }
   if (run.checkpoint) $("run-checkpoint").textContent = "checkpoint: " + run.checkpoint;
   if (run.state === "failed" && run.error && $("run-error").classList.contains("hidden")) {
     $("run-error").textContent = run.error;
@@ -737,6 +774,130 @@ function renderRun(run) {
     .concat(warnings)
     .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
 }
+
+// -------------------------------------------------------------------- export (E8)
+let exportRunShown = null;
+let exporting = false;
+let tensorrtSupport = null;   // {level, note} from /capabilities
+
+const MODEL_FORMAT_NOTES = {
+  pytorch: "rfdetr loads weights.pt directly (inference or further fine-tuning); "
+    + "model_card.json carries the license, classes and metrics.",
+  onnx: "Portable graph for onnxruntime / TensorRT builders. After export horos "
+    + "re-runs sample images through the original weights and the ONNX graph and "
+    + "records the largest difference in model_card.json.",
+  tensorrt: "A TensorRT engine is compiled for THIS machine's GPU architecture and "
+    + "TensorRT version — it will not load elsewhere. Export again on each "
+    + "deployment device. Needs NVIDIA's tensorrt package: horos install --tensorrt.",
+};
+
+function fmtBytes(n) {
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function updateModelFormatNote() {
+  const fmt = $("model-format").value;
+  let note = MODEL_FORMAT_NOTES[fmt] || "";
+  const trtOpt = $("model-format").querySelector('option[value="tensorrt"]');
+  if (tensorrtSupport && tensorrtSupport.level === "unavailable") {
+    trtOpt.disabled = true;
+    trtOpt.textContent = "TensorRT engine — unavailable on this platform";
+    if (fmt === "tensorrt") note = tensorrtSupport.note;
+  }
+  $("model-format-note").textContent = note;
+  $("model-export-btn").disabled = exporting || (fmt === "tensorrt" && !!trtOpt.disabled);
+}
+
+async function loadExports(runId) {
+  let items = [];
+  try { items = await api(`/train/runs/${runId}/exports`); } catch (e) { return; }
+  $("export-list").innerHTML = items.length ? items.map((a) =>
+    `<li><a href="${a.download_url}" style="color:var(--accent)">${a.name}</a>
+       <span class="note">· ${a.kind} · ${a.format} · ${fmtBytes(a.size_bytes)} ·
+       ${new Date(a.created_at).toLocaleString()}</span></li>`).join("")
+    : '<li class="note">nothing exported yet</li>';
+}
+
+$("report-export-btn").onclick = async () => {
+  if (!activeRun) return;
+  const status = $("report-status");
+  $("report-export-btn").disabled = true;
+  status.textContent = "rendering…";
+  try {
+    const r = await post(`/train/runs/${activeRun}/export/report`,
+                         { format: $("report-format").value });
+    status.innerHTML = `ready — <a href="${r.download_url}" style="color:var(--accent)">download ${r.name}</a>`;
+    await loadExports(activeRun);
+  } catch (e) {
+    status.textContent = "failed: " + e.message;
+  } finally {
+    $("report-export-btn").disabled = false;
+  }
+};
+
+function pollExportJob(jobId, onEvent) {
+  return new Promise((resolve, reject) => {
+    let seen = 0, result = null;
+    const tick = async () => {
+      let job;
+      try { job = await api(`/jobs/${jobId}?after=${seen}`); }
+      catch (e) { return reject(e); }
+      seen = job.num_events;
+      for (const ev of job.events) {
+        if (onEvent) onEvent(ev);
+        if (ev.type === "completed") result = ev.result;
+        if (ev.type === "failed") return reject(new Error(ev.message));
+      }
+      if (job.state === "running") setTimeout(tick, 800);
+      else if (job.state === "completed") resolve(result);
+      else reject(new Error("export job " + job.state));
+    };
+    tick();
+  });
+}
+
+$("model-export-btn").onclick = async () => {
+  if (!activeRun || exporting) return;
+  const runId = activeRun, fmt = $("model-format").value;
+  const status = $("model-status");
+  exporting = true;
+  updateModelFormatNote();
+  $("export-progress-row").classList.remove("hidden");
+  $("export-bar").style.width = "0";
+  $("export-phase").textContent = "starting…";
+  status.textContent = "";
+  try {
+    const { job_id } = await post(`/train/runs/${runId}/export/model`, { format: fmt });
+    const warnings = [];
+    const result = await pollExportJob(job_id, (ev) => {
+      if (ev.type === "progress") {
+        $("export-phase").textContent = ev.phase + (ev.total ? ` ${ev.current}/${ev.total}` : "…");
+        if (ev.total) $("export-bar").style.width = (100 * ev.current / ev.total) + "%";
+      } else if (ev.type === "warning") {
+        warnings.push(ev.message);
+      }
+    });
+    $("export-bar").style.width = "100%";
+    const parity = result.parity || {};
+    const parityText = parity.status === "passed"
+      ? ` · parity OK (${parity.detections_compared ?? 0} detections matched, `
+        + `max score diff ${Number(parity.max_score_diff ?? 0).toFixed(4)})`
+      : parity.status === "failed" ? " · ⚠ parity FAILED — see model_card.json"
+      : "";
+    status.innerHTML = `ready — <a href="/api/v1/train/runs/${runId}/exports/${result.bundle}"
+      style="color:var(--accent)">download ${result.bundle}</a>${parityText}`;
+    if (warnings.length) setStatus(warnings.join(" "), "");
+    await loadExports(runId);
+  } catch (e) {
+    status.textContent = "failed: " + e.message;
+  } finally {
+    exporting = false;
+    updateModelFormatNote();
+    $("export-progress-row").classList.add("hidden");
+  }
+};
+$("model-format").onchange = updateModelFormatNote;
 
 // knobs editable in place on a QUEUED run (PATCH /train/runs/<id>); the rest
 // (grad accumulation etc.) are re-derived by the server after every save
@@ -1170,6 +1331,8 @@ async function init() {
   // platform capability drives the note and the button state (E4-T13, R2)
   try {
     const caps = await api("/capabilities");
+    tensorrtSupport = caps.features.find((f) => f.feature === "export_tensorrt") || null;
+    updateModelFormatNote();
     const training = caps.features.find((f) => f.feature === "training");
     if (training && training.level !== "full") {
       $("platform-note").textContent = training.note;

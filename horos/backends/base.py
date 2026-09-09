@@ -156,7 +156,9 @@ class TrainSpec(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-ExportFormat = Literal["onnx", "tensorrt", "tflite"]
+#: "pytorch" is the weights bundle (weights.pt + class_names.txt) the source
+#: framework loads directly; the others are deployment graphs/engines
+ExportFormat = Literal["pytorch", "onnx", "tensorrt", "tflite"]
 
 
 class ExportSpec(BaseModel):
@@ -210,6 +212,20 @@ class ModelBackend(ABC):
         per image, terminated by RunCompleted/RunFailed."""
 
     # -- export --------------------------------------------------------------
+    def export_parity(
+        self,
+        artifact: Path,
+        spec: ExportSpec,
+        images: list[Path],
+        *,
+        tolerance: float = 0.02,
+    ) -> dict[str, Any] | None:
+        """Compare the exported artifact's outputs with the original weights on
+        the given images (E8-T5). Return {"max_abs_diff", "passed", ...}, or
+        None when the backend cannot verify this format. Never raises for an
+        unsupported format — the caller records "not available"."""
+        return None
+
     @abstractmethod
     def export(self, checkpoint: Path, spec: ExportSpec) -> Iterator[Event]:
         """Export a trained checkpoint. RunCompleted carries result["artifact"]."""

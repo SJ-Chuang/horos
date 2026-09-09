@@ -7,6 +7,7 @@ state, so assertions are membership-based (extra mismatch-repair commands may
 legitimately appear on some machines).
 """
 
+from horos.api.install import RFDETR_SPEC
 from horos.api.system import _RUNTIME_DEPS, _plan_fixes, doctor_report
 from horos.core.platform_info import PlatformInfo
 
@@ -33,13 +34,13 @@ def test_report_on_current_env():
 
 def test_missing_rfdetr_plans_pinned_install_with_training_stack():
     commands, manual = _plan_fixes(["rfdetr"], _plat())
-    assert ["rfdetr[train]==1.9.4"] in commands and manual == []
+    assert [RFDETR_SPEC] in commands and manual == []
 
 
 def test_missing_training_stack_alone_reinstalls_the_extra():
     # rfdetr installed without [train] (e.g. an old horos env): fix via the extra
     commands, manual = _plan_fixes(["pytorch_lightning"], _plat())
-    assert ["rfdetr[train]==1.9.4"] in commands and manual == []
+    assert [RFDETR_SPEC] in commands and manual == []
 
 
 def test_missing_albumentations_plans_the_pin():

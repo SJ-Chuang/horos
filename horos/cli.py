@@ -11,10 +11,70 @@ import json
 import sys
 import zipfile
 from collections.abc import Sequence
+from pathlib import Path
 
 import horos
 import horos.api as api
-from horos.errors import HorosError
+from horos.errors import HorosError, ProjectError
+
+MANIFEST_NAME = "horos.json"
+
+
+def find_project_root(start: Path | str | None = None) -> Path | None:
+    """The nearest horos project at or above `start` (default: the cwd).
+
+    Lets every project command be run from inside the project — the same way
+    git works — instead of repeating --project on each invocation."""
+    current = Path(start or Path.cwd()).resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / MANIFEST_NAME).is_file():
+            return candidate
+    return None
+
+
+def _project_arg(args, attribute: str = "project"):
+    """Open the project named by the flag, else the one containing the cwd."""
+    explicit = getattr(args, attribute, None)
+    if explicit:
+        return api.open_project(explicit)
+    root = find_project_root()
+    if root is None:
+        raise ProjectError(
+            f"No horos project here: run 'horos {args.command}' from inside a "
+            f"project directory (one containing {MANIFEST_NAME}), or pass "
+            f"--project <dir>. 'horos init' creates one."
+        )
+    return api.open_project(root)
+
+
+def _resolve_run(project, run_id: str | None, *, need_checkpoint: bool = True) -> str:
+    """`--run` defaults to the newest usable run of the project.
+
+    With `need_checkpoint` (infer, evaluate, export-model) that means the
+    newest completed run that actually has weights; report accepts any run."""
+    if run_id:
+        return run_id
+    runs = api.list_runs(project)
+    if not runs:
+        raise ProjectError(
+            f"Project '{project.manifest.name}' has no training runs yet — "
+            f"run 'horos train' first."
+        )
+    usable = [
+        r for r in runs
+        if not need_checkpoint or (r.state == "completed" and r.checkpoint)
+    ]
+    if not usable:
+        states = ", ".join(sorted({r.state for r in runs}))
+        raise ProjectError(
+            f"No completed training run with a checkpoint in project "
+            f"'{project.manifest.name}' (runs are: {states}). Pass --run <id> "
+            f"to pick one explicitly."
+        )
+    chosen = usable[0]  # list_runs is newest first
+    print(f"using run {chosen.run_id} ({chosen.model})", file=sys.stderr)  # noqa: T201
+    return chosen.run_id
+
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -135,6 +195,38 @@ def build_parser() -> argparse.ArgumentParser:
         "classes as background negatives (default: drop them)",
     )
 
+    p = sub.add_parser(
+        "report", help="Render a run's training report (16:9 PNG dashboard, PDF, or Excel)"
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument(
+        "--run",
+        dest="run_id",
+        help="Training run id (default: the newest completed run of this project)",
+    )
+    p.add_argument("--format", choices=["png", "pdf", "xlsx"], default="png")
+    p.add_argument("--out", help="Output file (default: <run>/exports/training_report.<format>)")
+
+    p = sub.add_parser(
+        "export-model",
+        help="Export a completed run's model with its model card (streams events)",
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument(
+        "--run",
+        dest="run_id",
+        help="Training run id (default: the newest completed run of this project)",
+    )
+    p.add_argument("--format", choices=["pytorch", "onnx", "tensorrt"], default="onnx")
+    p.add_argument("--dynamic-batch", action="store_true", help="ONNX: dynamic batch axis")
+    p.add_argument("--opset", type=int, default=17, help="ONNX opset version")
+
     p = sub.add_parser("infer", help="Run a trained run's model on image(s)")
     p.add_argument("images", nargs="+")
     p.add_argument("--project", required=True)
@@ -153,8 +245,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "install",
-        help="Install the ML stack (torch, rfdetr, albumentations, transformers) matched to "
-        "this machine's platform and GPU",
+        help="Install the ML stack (torch, rfdetr, albumentations, transformers, "
+        "plus the ONNX export and report libraries) matched to this machine",
     )
     p.add_argument(
         "--cpu",
@@ -165,6 +257,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Show the planned pip commands without running them",
+    )
+    p.add_argument(
+        "--tensorrt",
+        action="store_true",
+        help="Also install NVIDIA's TensorRT wheels for this GPU (NVIDIA license; "
+        "needed for TensorRT engine export)",
     )
 
     p = sub.add_parser(
@@ -197,7 +295,7 @@ def _emit(payload) -> None:
 
 
 #: commands that cannot run without the ML stack `horos install` provides
-_ML_GATED_COMMANDS = frozenset({"autolabel", "train", "infer", "evaluate"})
+_ML_GATED_COMMANDS = frozenset({"autolabel", "train", "infer", "evaluate", "export-model"})
 
 
 def _ml_preflight(command: str) -> int | None:
@@ -378,6 +476,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 api.stop_training(project, record.run_id)
                 print(f"stopping run {record.run_id} ...", file=sys.stderr)  # noqa: T201
                 return 130
+        elif args.command == "report":
+            project = _project_arg(args)
+            # a report is readable for any run, finished or not
+            run_id = _resolve_run(project, args.run_id, need_checkpoint=False)
+            path = api.export_training_report(
+                project, run_id, format=args.format, out_path=args.out,
+            )
+            _emit({"path": str(path), "format": args.format})
+        elif args.command == "export-model":
+            from horos.api.export import model_export_events
+
+            project = _project_arg(args)
+            failed = False
+            for event in model_export_events(
+                project, _resolve_run(project, args.run_id), format=args.format,
+                options={"dynamic_batch": args.dynamic_batch, "opset": args.opset},
+            ):
+                sys.stdout.write(event.model_dump_json() + "\n")
+                sys.stdout.flush()
+                failed = failed or event.type == "failed"
+            if failed:
+                return 2
         elif args.command == "infer":
             project = api.open_project(args.project)
             for image in args.images:
@@ -408,7 +528,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             from horos.api.install import plan_install
 
-            plan = plan_install(cpu=args.cpu)
+            plan = plan_install(cpu=args.cpu, tensorrt=args.tensorrt)
             plat = plan.platform
             print(f"platform : {plat.os_family}/{plat.arch}"  # noqa: T201
                   f"{' (Jetson)' if plat.is_jetson else ''}  python {plat.python_version}")
