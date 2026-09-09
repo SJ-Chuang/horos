@@ -5,7 +5,7 @@ Keep this module free of backend imports; `tests/test_invariants.py` enforces it
 at runtime in a subprocess.
 """
 
-__version__ = "0.2.0.dev1"
+__version__ = "0.2.0.dev2"
 
 from horos import errors
 
