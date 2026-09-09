@@ -24,10 +24,11 @@ ALL_EVENTS = [
     PredictionReady(index=0, prediction=ImagePrediction(image="a.jpg")),
     RunCompleted(result={"checkpoint": "best.pt"}),
     RunFailed(error_code="backend_error", message="boom"),
+    RunFailed(error_code="import_conflict", message="a.png", details={"conflicts": ["a.png"]}),
 ]
 
 
-@pytest.mark.parametrize("event", ALL_EVENTS, ids=lambda e: e.type)
+@pytest.mark.parametrize("event", ALL_EVENTS, ids=lambda e: f"{e.type}:{e.ts}")
 def test_events_roundtrip_through_json(event):
     line = dump_event(event)
     assert "\n" not in line  # JSONL-safe
@@ -44,6 +45,10 @@ def test_parse_event_dispatches_on_type_discriminator():
 def test_events_reject_missing_required_fields():
     with pytest.raises(ValidationError):
         parse_event({"type": "metrics"})  # step + metrics required
+
+
+def test_failed_event_details_default_empty():
+    assert RunFailed(message="x").details == {}
 
 
 def test_events_have_timestamps():

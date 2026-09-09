@@ -6,7 +6,9 @@ import hashlib
 import logging
 import tempfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -29,9 +31,54 @@ from horos.errors import (
     ProjectError,
 )
 
+if TYPE_CHECKING:
+    from horos.backends.base import Event
+
 CONFLICT_POLICIES = ("ask", "overwrite", "skip", "rename")
 
+#: R4 progress sink for import: receives ProgressUpdated (and WarningRaised)
+#: events; import_dataset itself emits no started/completed — the caller that
+#: owns the run (a job, the CLI) frames the stream.
+ProgressCallback = Callable[["Event"], None]
+
 logger = logging.getLogger(__name__)
+
+
+class _Reporter:
+    """Throttled phase/tick emitter so a 5k-image import does not produce 5k
+    events per phase: at most ~50 ticks per phase plus the final one."""
+
+    def __init__(self, progress: ProgressCallback | None):
+        self._progress = progress
+        self._phase = ""
+        self._total: int | None = None
+        self._step = 1
+
+    def phase(self, name: str, total: int | None = None, message: str = "") -> None:
+        self._phase, self._total = name, total
+        self._step = max(1, (total or 0) // 50)
+        self._emit(0, message)
+
+    def tick(self, current: int, message: str = "") -> None:
+        if current == self._total or current % self._step == 0:
+            self._emit(current, message)
+
+    def warn(self, message: str) -> None:
+        if self._progress is not None:
+            from horos.backends.base import WarningRaised
+
+            self._progress(WarningRaised(message=message))
+
+    def _emit(self, current: int, message: str) -> None:
+        if self._progress is None:
+            return
+        from horos.backends.base import ProgressUpdated
+
+        self._progress(
+            ProgressUpdated(
+                current=current, total=self._total, phase=self._phase, message=message
+            )
+        )
 
 __all__ = [
     "ImportSummary",
@@ -145,6 +192,7 @@ def import_dataset(
     on_conflict: str = "ask",
     class_names: list[str] | None = None,
     require_class_names: bool = False,
+    progress: ProgressCallback | None = None,
 ) -> ImportSummary:
     """Import a dataset directory (or annotation file) into the project.
 
@@ -165,14 +213,28 @@ def import_dataset(
     (placeholder index names plus a warning otherwise); `require_class_names`
     makes that case raise ClassNamesRequiredError instead — the WebUI upload
     path uses it to show an editable name list.
+
+    `progress` receives R4 ProgressUpdated events (phases: reading annotations,
+    checking for duplicates, copying images, saving annotations, applying
+    default split) and WarningRaised for reader warnings, throttled to ~50
+    ticks per phase.
     """
     if on_conflict not in CONFLICT_POLICIES:
         raise ProjectError(f"on_conflict must be one of {CONFLICT_POLICIES}")
     source = Path(source)
     if not source.exists():
         raise DatasetFormatError(f"Dataset source does not exist: {source}")
+    report = _Reporter(progress)
+    report.phase("reading annotations", message=format or "detecting format")
     detected, dataset, image_paths = _read_any(source, format, class_names=class_names)
+    report.phase(
+        "reading annotations",
+        message=f"{detected}: {len(dataset.images)} images, "
+        f"{len(dataset.annotations)} annotations",
+    )
     pre_warnings: list[str] = list(dataset.reader_warnings)
+    for message in pre_warnings:
+        report.warn(message)
     if (
         detected == "darknet"
         and class_names is None
@@ -244,7 +306,9 @@ def import_dataset(
     existing_by_name = {r.file_name: r for r in project.list_images()}
     actions: dict[int, str] = {}  # image.id -> duplicate | overwrite | skip | rename
     conflict_files: list[str] = []
-    for image in dataset.images:
+    report.phase("checking for duplicates", total=len(dataset.images))
+    for position, image in enumerate(dataset.images, start=1):
+        report.tick(position)
         src = image_paths.get(image.id)
         existing = existing_by_name.get(image.file_name)
         if src is None or existing is None or not src.exists():
@@ -268,7 +332,10 @@ def import_dataset(
     image_map: dict[int, int] = {}
     overwritten_ids: set[int] = set()
     duplicates_skipped = conflicts_skipped = renamed = 0
-    for image in dataset.images:
+    report.phase("copying images" if copy_images else "registering images",
+                 total=len(dataset.images))
+    for position, image in enumerate(dataset.images, start=1):
+        report.tick(position)
         src = image_paths.get(image.id)
         if src is None or not src.exists():
             warnings.append(
@@ -309,7 +376,9 @@ def import_dataset(
 
     imported_annotations = 0
     instances: dict[str, int] = {}
-    for old_image_id, new_image_id in image_map.items():
+    report.phase("saving annotations", total=len(image_map))
+    for position, (old_image_id, new_image_id) in enumerate(image_map.items(), start=1):
+        report.tick(position)
         annotations = []
         current = project.load_annotations(new_image_id)
         next_id = 1
@@ -340,6 +409,7 @@ def import_dataset(
     # test at 0 (deterministic under seed 42; re-split to change it)
     incoming_splits = {img.split for img in dataset.images if img.id in image_map}
     if incoming_splits == {"train"} and len(image_map) >= 3:
+        report.phase("applying default split", total=len(image_map))
         assignment = _assign_splits(
             sorted(image_map.values()), train=0.8, valid=0.1, test=0.1, seed=42
         )
@@ -377,22 +447,31 @@ def import_dataset(
     )
 
 
-def _safe_extract(zip_path: Path, target: Path) -> None:
+def _safe_extract(
+    zip_path: Path, target: Path, progress: ProgressCallback | None = None
+) -> None:
+    report = _Reporter(progress)
     with zipfile.ZipFile(zip_path) as zf:
-        for member in zf.namelist():
-            member_path = Path(member)
+        members = zf.infolist()
+        for member in members:
+            member_path = Path(member.filename)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise DatasetFormatError(
-                    f"Zip contains an unsafe path: {member!r}"
+                    f"Zip contains an unsafe path: {member.filename!r}"
                 )
-        zf.extractall(target)
+        report.phase("extracting", total=len(members), message=zip_path.name)
+        for position, member in enumerate(members, start=1):
+            zf.extract(member, target)
+            report.tick(position)
 
 
 @capability(
     "dataset.import_zip",
-    summary="Import a zipped COCO/YOLO dataset (the WebUI upload path)",
-    web_route="/api/v1/dataset/upload",
-    web_methods=("POST",),
+    summary="Import a zipped dataset of any supported format (extract, then import)",
+    not_web_because=(
+        "The Web path stages the zip (dataset.stage_upload) and imports it as a "
+        "polled job (dataset.import_upload) so the UI can show progress."
+    ),
     cli=None,
     not_cli_because="The CLI imports directories directly via 'import'.",
 )
@@ -403,13 +482,15 @@ def import_zip(
     on_conflict: str = "ask",
     class_names: list[str] | None = None,
     require_class_names: bool = False,
+    progress: ProgressCallback | None = None,
 ) -> ImportSummary:
-    """Extract a dataset zip to a temp dir and import it (always copies)."""
+    """Extract a dataset zip to a temp dir and import it (always copies).
+    `progress` gets an "extracting" phase first, then import_dataset's phases."""
     zip_path = Path(zip_path)
     if not zipfile.is_zipfile(zip_path):
         raise DatasetFormatError(f"{zip_path} is not a valid zip archive")
     with tempfile.TemporaryDirectory(prefix="horos_upload_") as tmp:
-        _safe_extract(zip_path, Path(tmp))
+        _safe_extract(zip_path, Path(tmp), progress)
         return import_dataset(
             project,
             Path(tmp),
@@ -418,15 +499,21 @@ def import_zip(
             on_conflict=on_conflict,
             class_names=class_names,
             require_class_names=require_class_names,
+            progress=progress,
         )
 
 
-def filter_dataset_categories(dataset: Dataset, names: list[str]) -> Dataset:
+def filter_dataset_categories(
+    dataset: Dataset, names: list[str], *, include_background: bool = False
+) -> Dataset:
     """Keep only the named categories and their annotations.
 
-    Every image stays — pictures whose objects all belong to unselected
-    classes become negatives (their other-class objects are background as far
-    as the filtered dataset is concerned)."""
+    Images with no annotation of a selected class are dropped by default, so
+    "3 of 4 classes" really means a smaller dataset (and the image-count
+    rules — epochs, augmentation, patience — see that). With
+    `include_background=True` every image stays and those pictures become
+    negatives: their other-class objects are background as far as this
+    dataset is concerned."""
     known = {c.name for c in dataset.categories}
     unknown = [n for n in names if n not in known]
     if unknown:

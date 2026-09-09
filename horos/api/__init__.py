@@ -81,9 +81,19 @@ from horos.api.train import (
     training_status,
     update_queued_run,
 )
+from horos.api.uploads import (
+    StagedUpload,
+    discard_upload,
+    stage_upload,
+    start_upload_import,
+)
 from horos.api.verdict import Finding, RunVerdict, run_verdict
 
 __all__ = [
+    "StagedUpload",
+    "stage_upload",
+    "start_upload_import",
+    "discard_upload",
     "AnnotationProgress",
     "AnnotationSetView",
     "AssistResult",

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import zipfile
 from collections.abc import Sequence
 
 import horos
@@ -238,18 +239,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             project = api.create_project(args.path, name=args.name)
             _emit({"root": str(project.root), "name": project.manifest.name})
         elif args.command == "import":
-            summary = api.import_dataset(
-                api.open_project(args.project),
-                args.source,
-                format=args.format,
-                copy_images=not args.no_copy,
-                on_conflict=args.on_conflict,
-                class_names=(
-                    [n.strip() for n in args.class_names.split(",")]
-                    if args.class_names
-                    else None
-                ),
+            last_phase = [""]
+
+            def report(event) -> None:
+                # one stderr line per phase change plus the final tick of each
+                if event.type != "progress":
+                    return
+                done = event.total is not None and event.current == event.total
+                if event.phase != last_phase[0] or done:
+                    last_phase[0] = event.phase
+                    count = f" {event.current}/{event.total}" if event.total else ""
+                    note = f" ({event.message})" if event.message else ""
+                    print(f"{event.phase}{count}{note}", file=sys.stderr)  # noqa: T201
+
+            project = api.open_project(args.project)
+            names = (
+                [n.strip() for n in args.class_names.split(",")] if args.class_names else None
             )
+            if zipfile.is_zipfile(args.source):
+                summary = api.import_zip(
+                    project,
+                    args.source,
+                    on_conflict=args.on_conflict,
+                    class_names=names,
+                    progress=report,
+                )
+            else:
+                summary = api.import_dataset(
+                    project,
+                    args.source,
+                    format=args.format,
+                    copy_images=not args.no_copy,
+                    on_conflict=args.on_conflict,
+                    class_names=names,
+                    progress=report,
+                )
             _emit(summary.model_dump())
         elif args.command == "export":
             written = api.export_dataset(

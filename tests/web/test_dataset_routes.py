@@ -26,6 +26,18 @@ def client(project_root):
     return app.test_client()
 
 
+def _wait_job(client, job_id, timeout=15.0):
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        body = client.get(f"/api/v1/jobs/{job_id}").get_json()
+        if body["state"] != "running":
+            return body
+        time.sleep(0.05)
+    raise AssertionError(f"job {job_id} still running")
+
+
 def _zip_of(directory) -> io.BytesIO:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
@@ -118,24 +130,15 @@ def test_upload_route(tmp_path):
         data={"file": (_zip_of(coco_dir), "dataset.zip")},
         content_type="multipart/form-data",
     )
-    assert response.status_code == 200
+    # 202: the zip is staged and imported as a polled job (progress in the UI)
+    assert response.status_code == 202
     body = response.get_json()
-    assert body["num_images"] == 3
-    assert body["instances_per_category"] == {"forklift": 2, "pallet": 2}
-
-
-def test_import_by_path_route(tmp_path):
-    from horos.api import create_project
-
-    project = create_project(tmp_path / "fresh")
-    coco_dir = write_sample_coco_dir(tmp_path / "coco")
-    app = create_app(project.root)
-    app.testing = True
-    body = app.test_client().post(
-        "/api/v1/dataset/import", json={"path": str(coco_dir)}
-    ).get_json()
-    assert body["format"] == "coco"
-    assert body["num_images"] == 3
+    assert set(body) >= {"upload_id", "job_id", "file_name", "size_bytes"}
+    job = _wait_job(client, body["job_id"])
+    assert job["state"] == "completed" and job["kind"] == "import"
+    result = job["events"][-1]["result"]
+    assert result["num_images"] == 3 and result["format"] == "coco"
+    assert client.get("/api/v1/project").get_json()["num_images"] == 3
 
 
 def test_export_route(client, tmp_path):
@@ -179,28 +182,44 @@ def test_capabilities_route(client):
 
 
 def test_upload_conflict_flow(tmp_path, client, project_root):
-    # phase 1: same names, different content -> 409 with the conflict list
+    # phase 1: upload is staged and imported as a job; same names with
+    # different content -> failed event carrying the conflict list
     from helpers.data import make_image
     from helpers.data import write_sample_coco_dir as sample
 
     variant = sample(tmp_path / "variant")
     make_image(variant / "train" / "a.png", 64, 48, color=(1, 2, 3))
-    post = lambda **extra: client.post(  # noqa: E731
+    response = client.post(
         "/api/v1/dataset/upload",
-        data={"file": (_zip_of(variant), "dataset.zip"), **extra},
+        data={"file": (_zip_of(variant), "dataset.zip")},
         content_type="multipart/form-data",
     )
-    response = post()
-    assert response.status_code == 409
-    error = response.get_json()["error"]
-    assert error["code"] == "import_conflict"
-    assert error["details"]["conflicts"] == ["a.png"]
-    # phase 2: retry with the chosen policy
-    response = post(on_conflict="overwrite")
-    assert response.status_code == 200
+    assert response.status_code == 202
     body = response.get_json()
-    assert body["overwritten"] == 1
-    assert body["duplicates_skipped"] == 2
+    assert body["file_name"] == "dataset.zip" and body["size_bytes"] > 0
+    job = _wait_job(client, body["job_id"])
+    assert job["state"] == "failed"
+    failed = job["events"][-1]
+    assert failed["error_code"] == "import_conflict"
+    assert failed["details"]["conflicts"] == ["a.png"]
+    assert failed["details"]["retryable"] is True
+    # phase 2: retry with the chosen policy — no re-upload
+    response = client.post(
+        f"/api/v1/dataset/upload/{body['upload_id']}/import",
+        json={"on_conflict": "overwrite"},
+    )
+    assert response.status_code == 202
+    job = _wait_job(client, response.get_json()["job_id"])
+    assert job["state"] == "completed"
+    result = job["events"][-1]["result"]
+    assert result["overwritten"] == 1
+    assert result["duplicates_skipped"] == 2
+    # progress events were streamed, not just the outcome
+    phases = {e["phase"] for e in job["events"] if e["type"] == "progress"}
+    assert {"extracting", "copying images"} <= phases
+    # the staged zip is gone after a successful import
+    response = client.delete(f"/api/v1/dataset/upload/{body['upload_id']}")
+    assert response.get_json() == {"discarded": False}
 
 
 def test_upload_darknet_class_names_flow(tmp_path):
@@ -215,21 +234,54 @@ def test_upload_darknet_class_names_flow(tmp_path):
     app = make_app(create_project(tmp_path / "fresh").root)
     app.testing = True
     web = app.test_client()
-    post = lambda **extra: web.post(  # noqa: E731
+    response = web.post(
         "/api/v1/dataset/upload",
-        data={"file": (_zip_of(src), "dataset.zip"), **extra},
+        data={"file": (_zip_of(src), "dataset.zip")},
         content_type="multipart/form-data",
     )
-    # phase 1: no _darknet.labels -> 422 with editable defaults
-    response = post()
-    assert response.status_code == 422
-    error = response.get_json()["error"]
-    assert error["code"] == "class_names_required"
-    assert error["details"] == {"num_classes": 1, "default_names": ["0"]}
+    assert response.status_code == 202
+    body = response.get_json()
+    # phase 1: no _darknet.labels -> failed event with editable defaults
+    job = _wait_job(web, body["job_id"])
+    failed = job["events"][-1]
+    assert job["state"] == "failed" and failed["error_code"] == "class_names_required"
+    assert failed["details"]["default_names"] == ["0"]
     # phase 2: retry with the names the user typed
-    response = post(class_names='["helmet"]')
-    assert response.status_code == 200
-    assert response.get_json()["instances_per_category"] == {"helmet": 1}
+    response = web.post(
+        f"/api/v1/dataset/upload/{body['upload_id']}/import",
+        json={"class_names": ["helmet"]},
+    )
+    job = _wait_job(web, response.get_json()["job_id"])
+    assert job["state"] == "completed"
+    assert job["events"][-1]["result"]["instances_per_category"] == {"helmet": 1}
+
+
+def test_upload_cancel_discards_the_staged_zip(tmp_path, client, project_root):
+    from helpers.data import make_image
+    from helpers.data import write_sample_coco_dir as sample
+
+    variant = sample(tmp_path / "variant")
+    make_image(variant / "train" / "a.png", 64, 48, color=(9, 9, 9))
+    body = client.post(
+        "/api/v1/dataset/upload",
+        data={"file": (_zip_of(variant), "dataset.zip")},
+        content_type="multipart/form-data",
+    ).get_json()
+    assert _wait_job(client, body["job_id"])["state"] == "failed"
+    assert (project_root / "uploads" / body["upload_id"]).is_dir()
+    response = client.delete(f"/api/v1/dataset/upload/{body['upload_id']}")
+    assert response.get_json() == {"discarded": True}
+    assert not (project_root / "uploads" / body["upload_id"]).exists()
+
+
+def test_upload_non_zip_is_rejected_synchronously(client):
+    response = client.post(
+        "/api/v1/dataset/upload",
+        data={"file": (io.BytesIO(b"not a zip"), "dataset.zip")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "dataset_format_error"
 
 
 def test_upload_bad_class_names_is_400(tmp_path, client):

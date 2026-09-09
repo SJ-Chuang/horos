@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -84,21 +82,42 @@ def import_dataset():
 
 @bp.post("/dataset/upload")
 def upload_dataset():
+    """Stage the zip and start its import job. The page polls /jobs/<job_id>;
+    the completed event's result is the ImportSummary, a failed event with
+    details.retryable=true is answered by POST /dataset/upload/<id>/import."""
     upload = request.files.get("file")
     if upload is None or not upload.filename:
         raise ProjectError("Attach the dataset zip as multipart field 'file'")
-    with tempfile.TemporaryDirectory(prefix="horos_upload_") as tmp:
-        zip_path = Path(tmp) / "upload.zip"
-        upload.save(zip_path)
-        summary = api.import_zip(
-            _project(),
-            zip_path,
-            on_conflict=request.form.get("on_conflict", "ask"),
-            class_names=_class_names(request.form.get("class_names")),
-            # the UI shows an editable class-name dialog instead of placeholders
-            require_class_names=True,
-        )
-    return jsonify(summary.model_dump())
+    class_names = _class_names(request.form.get("class_names"))
+    project = _project()
+    staged = api.stage_upload(project, upload.stream, file_name=upload.filename)
+    job_id = api.start_upload_import(
+        project,
+        staged.upload_id,
+        on_conflict=request.form.get("on_conflict", "ask"),
+        class_names=class_names,
+        # the UI shows an editable class-name dialog instead of placeholders
+        require_class_names=True,
+    )
+    return jsonify(staged.model_dump() | {"job_id": job_id}), 202
+
+
+@bp.post("/dataset/upload/<upload_id>/import")
+def import_upload(upload_id: str):
+    body = _body()
+    job_id = api.start_upload_import(
+        _project(),
+        upload_id,
+        on_conflict=body.get("on_conflict", "ask"),
+        class_names=body.get("class_names"),
+        require_class_names=True,
+    )
+    return jsonify({"upload_id": upload_id, "job_id": job_id}), 202
+
+
+@bp.delete("/dataset/upload/<upload_id>")
+def discard_upload(upload_id: str):
+    return jsonify({"discarded": api.discard_upload(_project(), upload_id)})
 
 
 @bp.post("/dataset/export")

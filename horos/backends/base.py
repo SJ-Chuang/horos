@@ -99,6 +99,10 @@ class RunFailed(_EventBase):
     type: Literal["failed"] = "failed"
     error_code: str = "backend_error"
     message: str = ""
+    #: structured payload mirroring HorosError.details (e.g. an import's
+    #: conflicting file names), so a job failure carries what the synchronous
+    #: Web error format would have carried
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 Event = Annotated[

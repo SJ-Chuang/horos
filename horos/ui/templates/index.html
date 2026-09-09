@@ -56,11 +56,20 @@
             margin-right: 8px; vertical-align: baseline; }
   .bar { background: var(--line); border-radius: 4px; height: 8px; overflow: hidden; }
   .bar > div { background: var(--accent); height: 100%; }
+  #upload-progress-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  #upload-progress-row.hidden { display: none; }  /* the id rule outranks bare .hidden */
+  #upload-progress-row .bar { flex: 1; }
+  #upload-progress-row .bar > div { transition: width .15s; }
+  #upload-phase { color: var(--dim); font-size: 13px; white-space: nowrap; }
+  #dropzone.busy { opacity: .55; cursor: progress; }
   #status { min-height: 20px; color: var(--dim); }
   #status.error { color: var(--err); }
   #status.ok { color: var(--ok); }
   .issues li { color: var(--err); margin-bottom: 4px; }
   .issues li.warning { color: #fcc419; }
+  .issues a.issue-link { color: var(--accent); text-decoration: none; white-space: nowrap;
+                         font-size: 12px; margin-left: 6px; }
+  .issues a.issue-link:hover { text-decoration: underline; }
   .license { color: var(--ok); font-size: 12px; border: 1px solid var(--ok);
              border-radius: 4px; padding: 1px 6px;
              display: inline-block; white-space: nowrap; }
@@ -311,46 +320,164 @@ async function editClassNames(defaults) {
     .map((inp) => inp.value.trim() || inp.getAttribute("value"));
 }
 
-async function upload(file, extras = {}) {
+// ------------------------------------------------------------ upload with progress
+// Two phases, both visible: the browser streams the zip (XHR upload progress),
+// then the server imports it as a background job whose R4 events we poll.
+let uploading = false;
+
+function showProgress(fraction, text) {
+  $("upload-progress-row").classList.remove("hidden");
+  if (fraction != null) $("upload-bar").style.width = (100 * fraction).toFixed(1) + "%";
+  $("upload-phase").textContent = text;
+}
+
+function hideProgress() {
+  $("upload-progress-row").classList.add("hidden");
+  $("upload-bar").style.width = "0";
+  $("upload-phase").textContent = "";
+}
+
+function fmtBytes(n) {
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+  return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
+}
+
+// POST multipart with upload progress — fetch() cannot report bytes sent
+function uploadZip(file, extras) {
+  return new Promise((resolve, reject) => {
+    const body = new FormData();
+    body.append("file", file);
+    if (extras.on_conflict) body.append("on_conflict", extras.on_conflict);
+    if (extras.class_names) body.append("class_names", JSON.stringify(extras.class_names));
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/v1/dataset/upload");
+    xhr.responseType = "json";
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      showProgress(e.loaded / e.total,
+        `Uploading ${Math.round(100 * e.loaded / e.total)}% · ${fmtBytes(e.loaded)} / ${fmtBytes(e.total)}`);
+    };
+    xhr.onerror = () => reject(new Error("network error during upload"));
+    xhr.onload = () => {
+      const data = xhr.response || {};
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data);
+      const err = new Error((data.error && data.error.message) || xhr.statusText);
+      err.code = data.error && data.error.code;
+      err.details = (data.error && data.error.details) || {};
+      reject(err);
+    };
+    xhr.send(body);
+  });
+}
+
+// poll /jobs/<id>; resolves with the completed event's result, rejects with an
+// Error carrying the failed event's error_code and details
+function pollJob(jobId, onEvent) {
+  return new Promise((resolve, reject) => {
+    let seen = 0, result = null;
+    const tick = async () => {
+      let job;
+      try { job = await api(`/jobs/${jobId}?after=${seen}`); }
+      catch (e) { return reject(e); }
+      seen = job.num_events;
+      for (const ev of job.events) {
+        if (onEvent) onEvent(ev);
+        if (ev.type === "completed") result = ev.result;
+        if (ev.type === "failed") {
+          const err = new Error(ev.message);
+          err.code = ev.error_code;
+          err.details = ev.details || {};
+          return reject(err);
+        }
+      }
+      if (job.state === "running") setTimeout(tick, 500);
+      else if (job.state === "completed") resolve(result);
+      else reject(new Error("import job " + job.state));
+    };
+    tick();
+  });
+}
+
+function describeProgress(ev) {
+  if (ev.type !== "progress") return;
+  const label = ev.phase.charAt(0).toUpperCase() + ev.phase.slice(1);
+  if (ev.total) {
+    showProgress(ev.current / ev.total, `${label} ${ev.current}/${ev.total}`);
+  } else {
+    showProgress(null, label + (ev.message ? ` — ${ev.message}` : "") + "…");
+  }
+}
+
+function showSummary(summary) {
   const status = $("status");
-  status.className = "";
-  status.textContent = "Uploading and parsing " + file.name + "…";
-  const body = new FormData();
-  body.append("file", file);
-  if (extras.on_conflict) body.append("on_conflict", extras.on_conflict);
-  if (extras.class_names) body.append("class_names", JSON.stringify(extras.class_names));
+  const resolved = [];
+  if (summary.duplicates_skipped) resolved.push(`${summary.duplicates_skipped} identical duplicate(s) skipped`);
+  if (summary.overwritten) resolved.push(`${summary.overwritten} overwritten`);
+  if (summary.conflicts_skipped) resolved.push(`${summary.conflicts_skipped} conflict(s) skipped`);
+  if (summary.renamed) resolved.push(`${summary.renamed} renamed`);
+  status.className = "ok";
+  status.textContent =
+    `Imported ${summary.num_images} images, ${summary.num_annotations} annotations, ` +
+    `${summary.num_categories} classes (${summary.format.toUpperCase()})` +
+    (resolved.length ? ` — ${resolved.join(", ")}` : "") +
+    (summary.warnings.length ? ` — ${summary.warnings.length} warning(s)` : "");
+}
+
+// runs (and re-runs, after a dialog) the import job for a staged upload
+async function importStaged(uploadId, jobId, extras) {
   try {
-    const summary = await api("/dataset/upload", { method: "POST", body });
-    const resolved = [];
-    if (summary.duplicates_skipped) resolved.push(`${summary.duplicates_skipped} identical duplicate(s) skipped`);
-    if (summary.overwritten) resolved.push(`${summary.overwritten} overwritten`);
-    if (summary.conflicts_skipped) resolved.push(`${summary.conflicts_skipped} conflict(s) skipped`);
-    if (summary.renamed) resolved.push(`${summary.renamed} renamed`);
-    status.className = "ok";
-    status.textContent =
-      `Imported ${summary.num_images} images, ${summary.num_annotations} annotations, ` +
-      `${summary.num_categories} classes (${summary.format.toUpperCase()})` +
-      (resolved.length ? ` — ${resolved.join(", ")}` : "") +
-      (summary.warnings.length ? ` — ${summary.warnings.length} warning(s)` : "");
+    showProgress(0, "Import queued…");
+    const summary = await pollJob(jobId, describeProgress);
+    showSummary(summary);
     await refreshStats();
     await refreshProject();
   } catch (e) {
-    if (e.code === "import_conflict") {
-      const policy = await resolveConflicts(e.details.conflicts || []);
-      if (policy) return upload(file, { ...extras, on_conflict: policy });
-      status.className = "";
-      status.textContent = "Import cancelled — nothing was changed.";
+    if (e.code === "import_conflict" || e.code === "class_names_required") {
+      let next = null;
+      if (e.code === "import_conflict") {
+        const policy = await resolveConflicts(e.details.conflicts || []);
+        if (policy) next = { ...extras, on_conflict: policy };
+      } else {
+        const names = await editClassNames(e.details.default_names || []);
+        if (names) next = { ...extras, class_names: names };
+      }
+      if (next) {
+        // the zip is still on the server — retry with the decision, no re-upload
+        const { job_id } = await api(`/dataset/upload/${uploadId}/import`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(next),
+        });
+        return importStaged(uploadId, job_id, next);
+      }
+      await api(`/dataset/upload/${uploadId}`, { method: "DELETE" }).catch(() => {});
+      $("status").className = "";
+      $("status").textContent = "Import cancelled — nothing was changed.";
       return;
     }
-    if (e.code === "class_names_required") {
-      const names = await editClassNames(e.details.default_names || []);
-      if (names) return upload(file, { ...extras, class_names: names });
-      status.className = "";
-      status.textContent = "Import cancelled — nothing was changed.";
-      return;
-    }
+    throw e;
+  }
+}
+
+async function upload(file, extras = {}) {
+  if (uploading) { $("status").textContent = "Still importing the previous upload…"; return; }
+  uploading = true;
+  zone.classList.add("busy");
+  const status = $("status");
+  status.className = "";
+  status.textContent = `Uploading ${file.name} (${fmtBytes(file.size)})…`;
+  showProgress(0, "Uploading 0%");
+  try {
+    const staged = await uploadZip(file, extras);
+    status.textContent = `Importing ${file.name}…`;
+    await importStaged(staged.upload_id, staged.job_id, extras);
+  } catch (e) {
     status.className = "error";
     status.textContent = "Import failed: " + e.message;
+  } finally {
+    uploading = false;
+    zone.classList.remove("busy");
+    hideProgress();
   }
 }
 

@@ -41,17 +41,20 @@ horos ui ./demo_project
 3. 修改 zip 裡任一張影像的內容（檔名不變）後重新上傳
 4. 應彈出「Some file names already exist」對話框，列出衝突檔名
 5. 按「Overwrite」：狀態列顯示 `1 overwritten`，該影像與其標註被新版取代
+   （確認後不會重新上傳：zip 已留在伺服器，只送出決定並重跑匯入 job，進度列從 Extracting 重新開始）
 6. 重做步驟 3–4 改按「Skip them」：顯示 `1 conflict(s) skipped`，專案維持原樣
 7. 重做步驟 3–4 改按「Import renamed」：顯示 `1 renamed`，出現 `xxx_1.jpg` 新檔
-8. 重做步驟 3–4 改按「Cancel」：狀態列顯示 cancelled，任何東西都沒被改動
+8. 重做步驟 3–4 改按「Cancel」：狀態列顯示 cancelled，任何東西都沒被改動，伺服器上暫存的 zip 一併刪除
 
 ## 預期結果
 
-- 四種格式（COCO / YOLO / VOC / Darknet）拖進去都直接匯入，格式自動偵測
+- 六種格式（COCO / YOLO / VOC / Darknet / VIA / LabelMe）拖進去都直接匯入，格式自動偵測
 - 內容相同的重複上傳永不彈窗；真正的衝突一定先問、未確認前不寫入任何資料
 
 ## 已知限制
 
 - VOC 只讀 bbox（VOC 無標準 polygon 表示法）；Darknet 只讀 bbox
-- VOC / Darknet 為僅匯入格式，匯出仍為 COCO / YOLO
+- VOC / Darknet / VIA 為僅匯入格式；匯出支援 COCO / YOLO / LabelMe（`horos export --format labelme`
+  或 Web API `/api/v1/dataset/export`），UI 目前沒有匯出格式選單
+- LabelMe 的 line / linestrip / point / mask 形狀不匯入（有警告計數）；circle 轉為外接框
 - 衝突對話框一次套用同一策略到整批衝突，不支援逐張選擇
