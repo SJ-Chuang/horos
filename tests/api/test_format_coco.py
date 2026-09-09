@@ -96,3 +96,89 @@ def test_rle_segmentation_is_dropped_not_crashed(tmp_path):
     (tmp_path / COCO_CONVENTION_NAME).write_text(json.dumps(data), encoding="utf-8")
     dataset, _ = read_coco(tmp_path)
     assert dataset.annotations[0].segmentation == []
+
+
+def test_annotation_ids_are_unique_within_each_written_file(tmp_path):
+    """Regression: horos numbers annotations per image (every image's first
+    box is id 1), but a COCO file needs ids unique across the whole file.
+
+    pycocotools indexes annotations by id in a dict, so duplicates silently
+    overwrite each other: metrics and torchvision-style CocoDetection loaders
+    (which fetch targets via loadAnns(getAnnIds(...))) then read OTHER images'
+    boxes as this image's ground truth. The file looks fine; training just
+    quietly produces bad models."""
+    from horos.core.dataset import Annotation, Category, Dataset, ImageRecord
+
+    # two images, each with per-image annotation ids restarting at 1
+    dataset = Dataset(
+        categories=[Category(id=1, name="balloon", color="#e6194b")],
+        images=[
+            ImageRecord(id=1, file_name="a.png", width=64, height=48, split="train"),
+            ImageRecord(id=2, file_name="b.png", width=64, height=48, split="train"),
+            ImageRecord(id=3, file_name="c.png", width=64, height=48, split="valid"),
+        ],
+        annotations=[
+            Annotation(id=1, image_id=1, category_id=1, bbox=(1.0, 1.0, 8.0, 8.0)),
+            Annotation(id=2, image_id=1, category_id=1, bbox=(2.0, 2.0, 8.0, 8.0)),
+            Annotation(id=1, image_id=2, category_id=1, bbox=(3.0, 3.0, 8.0, 8.0)),
+            Annotation(id=1, image_id=3, category_id=1, bbox=(4.0, 4.0, 8.0, 8.0)),
+        ],
+    )
+    for path in write_coco(dataset, tmp_path):
+        payload = read_json(path)
+        ids = [a["id"] for a in payload["annotations"]]
+        assert len(ids) == len(set(ids)), f"duplicate annotation ids in {path}"
+        # renumbering must not move any box to another image
+        by_image: dict[int, list] = {}
+        for ann in payload["annotations"]:
+            by_image.setdefault(ann["image_id"], []).append(ann["bbox"])
+        for image_id, boxes in by_image.items():
+            expected = [
+                list(a.bbox) for a in dataset.annotations if a.image_id == image_id
+            ]
+            assert sorted(boxes) == sorted(expected)
+
+
+def test_written_coco_survives_a_pycocotools_round_trip(tmp_path):
+    """End-to-end guard on the same bug: scoring the ground truth against
+    itself must give a perfect score. Any id collision drops mAP well below
+    1.0, which is what makes this failure mode so hard to spot by eye."""
+    pytest.importorskip("pycocotools")
+    import contextlib
+    import io
+
+    from pycocotools.coco import COCO
+    from pycocotools.cocoeval import COCOeval
+
+    ds = sample_dataset()
+    # give every image several boxes with per-image ids, as Project does
+    from horos.core.dataset import Annotation
+
+    ds.annotations = [
+        Annotation(
+            id=n + 1,
+            image_id=image.id,
+            category_id=ds.categories[0].id,
+            bbox=(2.0 + n, 2.0 + n, 10.0, 10.0),
+        )
+        for image in ds.images
+        for n in range(3)
+    ]
+    (written,) = [p for p in write_coco(ds, tmp_path) if p.parent.name == "train"]
+    payload = read_json(written)
+    detections = [
+        {
+            "image_id": a["image_id"],
+            "category_id": a["category_id"],
+            "bbox": list(a["bbox"]),
+            "score": 1.0,
+        }
+        for a in payload["annotations"]
+    ]
+    with contextlib.redirect_stdout(io.StringIO()):
+        coco = COCO(str(written))
+        ev = COCOeval(coco, coco.loadRes(detections), "bbox")
+        ev.evaluate()
+        ev.accumulate()
+        ev.summarize()
+    assert ev.stats[1] == pytest.approx(1.0), "ground truth must score 1.0 mAP50"

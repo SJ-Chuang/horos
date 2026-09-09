@@ -205,9 +205,18 @@ def write_coco(
                 }
                 for i in images
             ],
+            # Annotation ids are renumbered from 1 per written file. horos
+            # stores them per image (each image's first box is id 1), but a
+            # COCO file needs ids unique across the WHOLE file: pycocotools
+            # indexes annotations by id in a dict, so duplicates silently
+            # overwrite each other — every consumer (metrics, and torchvision
+            # -style CocoDetection loaders, which fetch targets via
+            # loadAnns(getAnnIds(...))) then reads other images' boxes as
+            # this image's ground truth. That corruption is invisible in the
+            # file and only shows up as inexplicably poor training.
             "annotations": [
                 {
-                    "id": a.id,
+                    "id": new_id,
                     "image_id": a.image_id,
                     "category_id": a.category_id,
                     "bbox": list(a.bbox),
@@ -215,8 +224,10 @@ def write_coco(
                     "segmentation": a.segmentation,
                     "iscrowd": a.iscrowd,
                 }
-                for a in dataset.annotations
-                if a.image_id in image_ids
+                for new_id, a in enumerate(
+                    (a for a in dataset.annotations if a.image_id in image_ids),
+                    start=1,
+                )
             ],
         }
         json_path = target_dir / COCO_CONVENTION_NAME
