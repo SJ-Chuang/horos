@@ -1,0 +1,747 @@
+# CLAUDE.md — horos
+
+> Working document for Claude Code on this project. Before implementing anything, read §2 "Rules That Must Never Be Violated" and §7 "Development Process" in full.
+
+---
+
+## 1. What This Project Is
+
+**horos** (ὅρος, ancient Greek for "boundary stone, limit, definition") is an end-to-end toolchain for detection tasks: annotate → train → evaluate → deploy.
+
+The problem it solves is not "which model is more accurate". It is **the path that gets a detection model into production**.
+
+### Core design premises
+
+1. **Models expire; workflows do not.** The first supported backend is RF-DETR, but anything `rfdetr`-specific must be isolated behind an adapter layer. When the architecture is replaced two years from now, users' code must not have to change.
+2. **Licensing is a first-class concern, not a footnote in the docs.** Every model, weight file and dataset carries queryable license metadata.
+3. **The target deployment environment is NVIDIA Jetson.** When "runs on a desktop" conflicts with "runs on Jetson", Jetson wins.
+4. **Naming is not tied to detection.** The project will expand beyond detection; no new module may contain `det` in its name.
+
+### Support matrix (v1)
+
+| Item | Scope |
+|---|---|
+| Models | RF-DETR Nano / Small / Medium / Large (Apache 2.0) |
+| Auto-labeling | OWLv2 open-vocabulary zero-shot (Apache 2.0) |
+| Data formats | COCO JSON, YOLO (read + write); Pascal VOC, Darknet (import only) |
+| Export | ONNX, TensorRT, TFLite |
+| Interfaces | Python API, Web API (Flask), WebUI (Flask) |
+
+### Explicit non-goals
+
+- No bundling or redistribution of model weights (licensing risk) — always download at runtime and cache
+- No semantic segmentation. horos handles detection and instance segmentation
+- No wrapping of cloud training services; no uploading user data to any external service
+- No search-based hyperparameter optimization in v1 (see E5)
+
+---
+
+## 2. Rules That Must Never Be Violated
+
+These are the load-bearing rules. A change that violates any one of them is rejected outright, no matter what else it does well.
+
+### R1 — Model dependencies may only appear under backends/
+
+`horos/core`, `horos/api`, `horos/web` and `horos/ui` must **not** contain `import rfdetr` or `from rfdetr import`, and must not import `torch` or `transformers` directly.
+
+Those dependencies may only appear under `horos/backends/<backend_name>/`. Everything above calls through the abstract interface defined in `horos/backends/base.py`.
+
+The same rule applies to OWLv2 (`transformers`) and to any model backend added later.
+
+**The purpose of this rule is replaceability.** When RF-DETR is superseded by a better architecture two years from now, the change should be confined to one directory and users' code should not need to change.
+
+`tests/test_invariants.py` enforces this by statically scanning the source.
+
+### R1b — Backends are always lazily loaded
+
+After `import horos`, `sys.modules` must **not** contain `torch`, `rfdetr` or `transformers`.
+
+Backend modules are imported only on first actual use. None of the following may trigger a backend load:
+
+- `import horos`
+- Creating or opening a project, reading/writing datasets, format conversion
+- Listing available models and their metadata (the registry holds static data only and does not import backends)
+- Starting the web service or opening the annotation page
+
+Therefore **type annotations always go inside `TYPE_CHECKING` blocks**; backend types must never be imported at module level.
+
+This rule has a dedicated runtime test (see E4-T10). Without it, lazy loading will silently break in some commit that added a type annotation, and nobody will notice.
+
+Practical effect: for someone who only uses the annotation features, `import horos` should complete in under a second and must not require a working GPU.
+
+### R2 — The three layers may not be bypassed
+
+```
+WebUI  ──→  Web API  ──→  Python API  ──→  core
+(templates/JS) (Flask routes) (public functions)
+```
+
+- The WebUI must not import horos core modules; it only calls the Web API
+- Web API routes contain no business logic — only parameter validation and delegation
+- Business logic always lives in the Python API layer
+
+**The purpose of this rule is testability.** Follow it and verifying a feature only requires testing the Python API, with UI tests degenerating into "does the button hit the right endpoint". Break it and the UI needs a second complete set of test logic.
+
+### R3 — License metadata is a first-class citizen
+
+Every model definition must carry a `license` field, and it must surface in three places: the WebUI model picker, the training run metadata, and `model_card.json` next to the export artifact.
+
+Hardcoding the assumption "it's all Apache anyway" is not allowed.
+
+### R4 — Long-running work always reports structured progress events
+
+Training, batch inference and auto-labeling must not return results only at the end. They must report progress continuously through a unified event interface.
+
+- Events are schema'd `pydantic` objects, not free-form strings
+- The Python API delivers them via callback or generator; the Web API turns them into SSE or a polling endpoint
+- Event kinds must cover at least: started, progress update, metrics update, warning, completed, failed
+
+Backend implementations do not get to choose their own reporting format — they always use the event types from `horos/backends/base.py`. This is what lets all three interface layers share one progress display.
+
+### R5 — Pin versions
+
+The `rfdetr` version must be pinned exactly. The package has had several **silent annotation-corruption bugs** (under specific augmentation settings), and a floating version makes training results unreproducible. Upgrading is a standalone task that requires a full regression run, not something done in passing.
+
+### R6 — ROS 2-compatible naming
+
+Module and package names must follow ROS 2 conventions: all lowercase, underscore-separated, not starting with a digit. Topos may reference horos directly in the future.
+
+### R7 — Platform neutrality
+
+Four platforms are supported: Ubuntu, macOS, Windows, Jetson. The following are always forbidden:
+
+- **Hardcoded path separators.** Always use `pathlib.Path`; never string-concatenate `/` or `\\`
+- **Assuming POSIX file locks.** `fcntl` does not exist on Windows. Cross-platform locking must use atomic file creation (`O_EXCL`) or a database-level mechanism
+- **Assuming fork.** Windows and macOS default to `spawn`, which re-imports the main module. Any code that starts a subprocess (including DataLoader `num_workers`) must be spawn-safe, and entry points need an `if __name__ == "__main__"` guard
+- **Assuming CUDA exists.** Device selection always goes through the `backends/device.py` abstraction; never write `.cuda()` or `device="cuda"` directly
+- **Assuming symlinks work.** Creating a symlink on Windows requires administrator rights; dataset splitting must not depend on symlinks — use copies or an index file
+- **Long paths.** Windows defaults to a 260-character path limit; be careful when generating nested output directories
+
+CI must run at least two runners: Ubuntu and Windows. macOS and Jetson are verified manually.
+
+### R8 — Every commit and push must leave the remote pullable
+
+The author works across several machines and updates content and versions on the others. A commit or push that breaks the next `git fetch` / `git pull` — or that silently discards another machine's work — is a defect regardless of the code it carries.
+
+Concretely:
+
+- **Never rewrite published history.** No `git push --force` (or `--force-with-lease`), and no amending, rebasing or squashing of commits that have already been pushed. Another clone is already built on them.
+- **Always push a real, tracking branch.** Never push from a detached HEAD, and make sure the local branch tracks its remote counterpart (`git push -u` on the first push) so that a bare `git pull` works afterwards.
+- **Integrate the remote before pushing.** Fetch first; if the remote has moved on, merge it (or rebase only your *unpushed* commits) and re-run the tests before pushing.
+- **Leave a clean working tree.** No half-staged or uncommitted leftovers at the end of a task — they turn the next machine's `git pull` into a conflict.
+- **Never commit anything that makes a clone expensive or broken**: weights, datasets, `~/.horos/` cache contents, run outputs, virtualenvs. `.gitignore` must actually cover these (see §10).
+- **Verify, don't assume.** After pushing, `git fetch && git status` must report the branch as up to date with its upstream and the working tree as clean. Report that check as part of the task.
+
+---
+
+## 3. Directory Structure
+
+```
+horos/
+├── core/                  # data models, project structure, configuration
+│   ├── project.py         # Project: the single authority on the on-disk layout
+│   ├── dataset.py         # Dataset / Split / Annotation data models
+│   ├── formats/           # COCO and YOLO read/write and conversion
+│   └── registry.py        # model registry (including license metadata)
+├── backends/              # the only home for model dependencies (R1)
+│   ├── base.py            # abstract interface + event types (R4)
+│   ├── env.py             # torch / CUDA environment checks
+│   ├── rfdetr/            # the only place allowed to import rfdetr
+│   └── owlv2/             # the only place allowed to import transformers
+├── api/                   # Python API — business logic lives in this layer
+│   ├── annotate.py
+│   ├── autolabel.py
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── experiment.py
+│   └── export.py
+├── web/                   # Web API (Flask)
+│   ├── app.py
+│   └── routes/            # thin routes
+├── ui/                    # WebUI (Flask templates + frontend)
+│   ├── templates/
+│   └── static/
+└── cli.py
+
+tests/                     # all test scripts live here
+├── test_invariants.py     # static R1/R2 checks, runs first in CI
+├── unit/
+├── api/                   # Python API tests
+├── web/                   # Web API tests
+├── contract/              # three-layer capability parity
+├── fixtures/              # small test datasets
+└── ui_scenarios/          # interface scenario checklists (markdown)
+```
+
+`~/.horos/weights/` holds the runtime-downloaded weight cache.
+
+---
+
+## 4. Technical Constraints
+
+- Python >= 3.10
+- Web framework: Flask (do not introduce FastAPI or Django)
+- Configuration objects always use `pydantic`, never bare dicts
+- Tests use `pytest`; formatting/linting uses `ruff`
+- Library code must not call `print()` — always use `logging`
+- TensorRT engines are not portable: the export flow must be run on the target device, and both the API and the UI must say so explicitly
+
+### Dependency strategy: a single environment
+
+Both `rfdetr` and `transformers` are **primary dependencies**, installed alongside `pip install horos`. No virtual environment isolation, no subprocess isolation.
+
+The cost is install size (~2–3 GB including torch). That is a deliberate trade for a simpler workflow.
+
+### Platform support matrix
+
+| Feature | Ubuntu (x86 + CUDA) | Windows | macOS | Jetson |
+|---|---|---|---|---|
+| Dataset management, format conversion | Full | Full | Full | Full |
+| Manual annotation | Full | Full | Full | Full |
+| Auto-labeling (OWLv2) | Full | Full | Works; slower on MPS/CPU | Full |
+| Training | Full | Full | Only for validating the workflow on small datasets | Not recommended, but not blocked |
+| ONNX / TFLite export | Full | Full | Full | Full |
+| TensorRT export | Full | Full | **Unsupported** | Full |
+| Inference serving | Full | Full | Full | Full |
+
+Unsupported combinations must raise an explicit error at the API layer and disable the button with an explanation at the UI layer. They must **never fail silently or quietly fall back to CPU**.
+
+Device priority: CUDA → MPS (Apple Silicon) → CPU. The device actually selected must be recorded in the run metadata.
+
+### The Jetson torch trap (required reading)
+
+**On Jetson, torch must be the dedicated wheel NVIDIA releases for the matching JetPack version. The torch on PyPI has no CUDA support.**
+
+Running `pip install horos` directly on Jetson may install a CPU-only torch that overwrites the system's CUDA build. This failure is **silent** — the program still runs, just an order of magnitude slower at inference, and it is extremely hard to trace.
+
+Therefore:
+
+1. The Jetson install path must use `--no-deps`, or a pre-prepared environment
+2. `horos/backends/env.py` must check at import time and emit an explicit warning when the platform is detected as Jetson but `torch.cuda.is_available()` is False
+3. The install documentation must give Jetson its own section, not mixed into the general instructions
+
+---
+
+## 5. Phase Plan
+
+The user's priority order is: annotate → train → evaluate → deploy. Annotation has prerequisites, so the actual schedule is:
+
+| Phase | Content | Rationale |
+|---|---|---|
+| **P0** | E1 + E4 + E9 skeleton | Prerequisites for annotation. Without data models there is nowhere to store annotations; without the model layer there is no auto-labeling |
+| **P1** | E2 manual annotation + E3 auto-labeling | The user's top priority |
+| **P2** | E5 training | |
+| **P3** | E6 evaluation and testing | |
+| **P4** | E7 experiment management + E8 export and deployment | |
+
+---
+
+## 6. Epics
+
+Each Epic contains User stories (S) and Tasks (T). A Task's definition of done must include the corresponding test file.
+
+---
+
+### E1 — Project and Dataset Core
+
+**Goal:** provide the single source of truth for data. Every other Epic builds on this layer.
+
+#### User stories
+
+- **E1-S1** (Python API) A researcher creates a horos project from an existing COCO directory in three lines of code
+- **E1-S2** (Python API) An engineer converts a CVAT-exported YOLO dataset to COCO without losing any annotation
+- **E1-S3** (WebUI) A non-engineer uploads a zip and sees a parse summary: how many images, how many classes, how many instances per class
+- **E1-S4** (Python API) A user imports a problematic dataset (boxes out of bounds, non-contiguous class ids, missing images) and the system states exactly what is wrong instead of failing silently
+- **E1-S5** (Web API) The frontend requests dataset statistics for use in downstream hyperparameter derivation
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E1-T1 | `Project` object and on-disk layout spec | Create, load, validate; `tests/unit/test_project.py` |
+| E1-T2 | `Dataset` / `Split` / `Annotation` data models | Support bbox and polygon; `tests/unit/test_dataset_model.py` |
+| E1-T3 | COCO JSON read/write | Support the `_annotations.coco.json` convention; `tests/api/test_format_coco.py` |
+| E1-T4 | YOLO format read/write | Including `data.yaml`; `tests/api/test_format_yolo.py` |
+| E1-T5 | Round-trip format conversion | COCO→YOLO→COCO leaves annotations identical; `tests/api/test_format_roundtrip.py` |
+| E1-T6 | Dataset validator | Five common error classes, each with an explicit message; `tests/api/test_dataset_validate.py` |
+| E1-T7 | Statistics computation | Class distribution, relative object area distribution, image size distribution; `tests/api/test_dataset_stats.py` |
+| E1-T8 | Split management | Reuse existing splits or re-split (with a specifiable random seed); `tests/api/test_split.py` |
+| E1-T9 | Web API endpoints | `tests/web/test_dataset_routes.py` |
+| E1-T10 | WebUI upload and summary page | Interface scenario (see §8) |
+
+#### How it is accepted
+
+API tests, primarily. The core condition is **E1-T5: lossless round-tripping** — once that passes, the data layer can be trusted.
+
+---
+
+### E2 — Manual Annotation
+
+**Goal:** an annotation interface fast enough that nobody wants to go back to CVAT.
+
+#### User stories
+
+- **E2-S1** (WebUI) An annotator works entirely from the keyboard: switch class, draw box, next image — without touching a mouse menu
+- **E2-S2** (WebUI) An annotator closes the browser and comes back to find progress fully preserved at the point they left
+- **E2-S3** (WebUI) An annotator edits an existing box: drag corners, delete, change class
+- **E2-S4** (WebUI) An annotator draws polygons for instance segmentation annotation
+- **E2-S5** (Python API) An engineer inserts or corrects annotations programmatically in bulk
+- **E2-S6** (WebUI) Several people annotate different images of the same project simultaneously without overwriting each other
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E2-T1 | Annotation canvas (zoom, pan, draw) | Interface scenario |
+| E2-T2 | bbox creation and editing | `tests/api/test_annotate_bbox.py` + interface scenario |
+| E2-T3 | polygon creation and editing | `tests/api/test_annotate_polygon.py` + interface scenario |
+| E2-T4 | Class management (add, rename, recolor) | `tests/api/test_labels.py` |
+| E2-T5 | Keyboard shortcuts | Interface scenario (including a shortcut reference table) |
+| E2-T6 | Progress persistence and resume | `tests/api/test_annotate_progress.py` |
+| E2-T7 | Image queue and navigation | `tests/api/test_image_queue.py` |
+| E2-T8 | Optimistic locking for concurrent writes | Cross-platform implementation (no `fcntl`); two sessions writing the same image, the second gets a conflict; `tests/api/test_annotate_concurrency.py` |
+| E2-T9 | Web API endpoints | `tests/web/test_annotate_routes.py` |
+
+#### How it is accepted
+
+Interface scenarios primarily, with API tests covering persistence and concurrency. **E2-T8 cannot be skipped** — multi-person annotation is the norm, and retrofitting this mechanism later means rewriting the data layer.
+
+---
+
+### E3 — Auto-labeling
+
+**Goal:** let annotators start from corrections rather than from a blank canvas.
+
+The backend uses **OWLv2** (`google/owlv2-*`, Apache 2.0), implemented in `horos/backends/owlv2/`.
+
+#### User stories
+
+- **E3-S1** (WebUI) A user enters text prompts (`forklift`, `pallet`, `person`) and the system produces pre-annotations for an entire batch of unlabeled images
+- **E3-S2** (WebUI) A user adjusts the confidence threshold and sees the retained box count change live
+- **E3-S3** (WebUI) The system sorts images by confidence so the user reviews the least certain first
+- **E3-S4** (Python API) An engineer calls auto-labeling programmatically and post-processes the results themselves
+- **E3-S5** (WebUI) A user accepts, corrects or bulk-rejects pre-annotations; accepted ones enter the official annotation set
+- **E3-S6** (WebUI) First use requires a weight download, and the user sees download progress instead of a frozen screen
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E3-T1 | OWLv2 backend implementation | Follows the `backends/base.py` interface; `tests/api/test_backend_owlv2.py` |
+| E3-T2 | Text-prompt-to-class mapping | One class may map to several prompt terms; `tests/api/test_autolabel_prompt.py` |
+| E3-T3 | Batch inference and progress streaming | Line-delimited JSON events; `tests/api/test_autolabel_stream.py` |
+| E3-T4 | Confidence filtering and NMS post-processing | `tests/api/test_autolabel_postprocess.py` |
+| E3-T5 | Pre-annotations written as "pending review" | Distinguishable from human annotations in the data model; `tests/api/test_autolabel_review.py` |
+| E3-T6 | Uncertainty ranking | `tests/api/test_autolabel_ranking.py` |
+| E3-T7 | Weight download and caching | Resumable, with progress reporting; `tests/api/test_weights_cache.py` |
+| E3-T8 | Review UI (accept/correct/reject) | Interface scenario |
+| E3-T9 | Web API endpoints | `tests/web/test_autolabel_routes.py` |
+
+#### How it is accepted
+
+API tests cover pipeline correctness (fixture images with known prompts, asserting box counts and classes fall in a sensible range). The UI goes through interface scenarios.
+
+---
+
+### E4 — Model Integration Layer
+
+**Goal:** implement R1 and R4. All model dependencies converge into `horos/backends/`, and the layers above have no idea which model is underneath. This comes first in P0.
+
+#### User stories
+
+- **E4-S1** (Python API) A user lists available models and sees size, expected latency and **license**
+- **E4-S2** (WebUI) A user sees the Apache 2.0 marking directly in the model picker
+- **E4-S3** (Python API) A maintainer adds a third model backend by implementing only the `base.py` interface, without touching core
+- **E4-S4** (Python API) A user running on Jetson gets an explicit warning at startup if torch has no CUDA support, rather than discovering it when inference turns out ten times slower
+- **E4-S5** (Python API) A user attempting to load RF-DETR XL / 2XL is blocked, with an error message explaining the license difference
+- **E4-S6** (Python API) Exceptions raised by a backend are translated into horos's unified error types; the layers above never need to know rfdetr's exceptions
+- **E4-S7** (Python API) A user who only annotates gets `import horos` in under a second, with no torch loaded along the way
+- **E4-S8** (Python API) A user calling TensorRT export on macOS gets an explicit "unsupported on this platform" error, not a strange low-level exception
+- **E4-S9** (WebUI) A user on macOS sees the TensorRT export button disabled, with an explanation on hover
+- **E4-S10** (Python API) A user queries which features the current platform supports and gets a structured capability list
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E4-T1 | Model registry and metadata schema | Includes license, input resolution, parameter count; `tests/unit/test_registry.py` |
+| E4-T2 | `backends/base.py` abstract interface | Three method groups: train, infer, export; `tests/api/test_backend_interface.py` |
+| E4-T3 | Event types and progress reporting interface (R4) | pydantic schema; `tests/unit/test_events.py` |
+| E4-T4 | RF-DETR backend implementation | Training + inference; `tests/api/test_backend_rfdetr.py` |
+| E4-T5 | Exception translation layer | Backend exceptions become horos error types; `tests/api/test_backend_errors.py` |
+| E4-T6 | **torch / CUDA environment check** | Warn on Jetson without CUDA; `tests/api/test_env_check.py` |
+| E4-T7 | **Static R1 check** | `core`/`api`/`web`/`ui` must not import rfdetr, torch or transformers; `tests/test_invariants.py` |
+| E4-T8 | **Static R2 check** | `horos/ui/` must not import core modules; `tests/test_invariants.py` |
+| E4-T9 | Blocking non-Apache models | Loading XL / 2XL raises an error explaining the license difference; requires `acknowledge_non_apache=True` to proceed; `tests/api/test_license_guard.py` |
+| E4-T10 | **Lazy-loading invariant (R1b)** | Runtime assertion that `sys.modules` has no torch/rfdetr/transformers after `import horos`; `tests/test_invariants.py` |
+| E4-T11 | Lazy-loading mechanism | Backends imported on first use, type annotations guarded by `TYPE_CHECKING`; `tests/api/test_lazy_backend.py` |
+| E4-T12 | `backends/device.py` device abstraction | CUDA → MPS → CPU priority, overridable; `tests/api/test_device.py` |
+| E4-T13 | Platform capability query | Returns a feature-availability list for the current platform; `tests/api/test_platform_capabilities.py` |
+| E4-T14 | Error handling for unsupported combinations | macOS + TensorRT raises an explicit error, no CPU fallback; `tests/api/test_unsupported_combos.py` |
+
+#### How it is accepted
+
+`tests/test_invariants.py` is the core acceptance gate and must run first in CI.
+
+E4-T7 statically scans import statements (in a single environment rfdetr is always installable, so a runtime check cannot detect the violation); E4-T10 is the opposite — it must be a runtime check, because only a real import reveals whether torch got dragged in. Neither substitutes for the other.
+
+E4-T13's capability list feeds both the Web API and the WebUI; the UI's disabled-button state is driven directly by it, never by hardcoded platform checks in the frontend.
+
+---
+
+### E5 — Training
+
+**Goal:** a user who knows nothing about hyperparameters still gets reasonable results, while a user who does can take over completely.
+
+#### Hyperparameter adaptation strategy
+
+**Rule-based first; no search-based tuning in v1.** Starting values are derived from the E1-T7 statistics:
+
+| Statistic | Influences |
+|---|---|
+| Total image count | epochs, augmentation strength |
+| Instances per class | warmup length, class weights |
+| Mean relative object area | training resolution (raise it for small objects) |
+| Available VRAM | batch size, with automatic step-down retry on OOM |
+| Class imbalance | sampling strategy |
+
+Every derived value must be explicitly overridable, and **the reason for the derivation must be recorded in the run metadata** — the user has to be able to see "why did the system pick this resolution".
+
+Search-based HPO (Optuna and friends) is left as a pluggable extension. Rationale: rule-based is usually sufficient on small datasets, and search-based has poor returns in a compute-constrained iteration setting like Jetson.
+
+#### User stories
+
+- **E5-S1** (WebUI) A non-engineer presses one "start training" button and it runs without filling in any hyperparameter
+- **E5-S2** (WebUI) A user sees the system-derived hyperparameters together with **the reason for each**, and can override them individually
+- **E5-S3** (WebUI) A user watches loss curves and validation metrics live
+- **E5-S4** (WebUI) A user stops training partway through and the best weights are already preserved
+- **E5-S5** (Python API) An engineer bypasses adaptation entirely and specifies every hyperparameter
+- **E5-S6** (Python API) A user resumes training from an existing checkpoint
+- **E5-S7** (WebUI) When training fails with OOM, the system automatically lowers the batch size, retries, and tells the user
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E5-T1 | Hyperparameter deriver | Every derived value carries a reason string; `tests/api/test_hparam_derive.py` |
+| E5-T2 | Override mechanism | A partial override does not disturb the other derived values; `tests/api/test_hparam_override.py` |
+| E5-T3 | Training run lifecycle | Create, run, stop, clean up; `tests/api/test_train_lifecycle.py` |
+| E5-T4 | Metric streaming and persistence | `tests/api/test_train_metrics.py` |
+| E5-T5 | Checkpoint management and resume | `tests/api/test_train_resume.py` |
+| E5-T6 | Automatic OOM step-down | Simulated OOM halves the batch size and retries; `tests/api/test_train_oom.py` |
+| E5-T6b | **spawn-safe training entry point** | Starting training from a Flask process with `num_workers>0` does not re-initialize the app; must run in Windows CI; `tests/api/test_train_spawn.py` |
+| E5-T6c | Cross-platform memory detection | CUDA reads VRAM, MPS reads unified memory, CPU uses a conservative default; `tests/api/test_memory_probe.py` |
+| E5-T7 | End-to-end small-dataset training | Fixture dataset completes 2 epochs and produces weights; `tests/api/test_train_e2e.py` |
+| E5-T8 | Training monitoring UI | Interface scenario |
+| E5-T9 | Web API endpoints | `tests/web/test_train_routes.py` |
+
+#### How it is accepted
+
+**E5-T7 is a hard acceptance condition**: a 20-image fixture dataset completes 2 epochs and produces a loadable weight file. It is fast, covers the full path, and is suitable for CI.
+
+---
+
+### E6 — Evaluation and Testing
+
+**Goal:** let the user know whether the model is actually usable, not just look at a single mAP number.
+
+#### User stories
+
+- **E6-S1** (WebUI) A user uploads a few new photos and immediately sees detection results overlaid
+- **E6-S2** (WebUI) A user uploads a video and sees per-frame detection results
+- **E6-S3** (WebUI) A user adjusts the confidence threshold and sees results change live
+- **E6-S4** (Python API) An engineer obtains full metrics on the held-out test set (mAP, per-class AP, PR curves)
+- **E6-S5** (WebUI) A user sees error analysis: which classes are missed most often, which are false-positived most often, which pairs are most confused
+- **E6-S6** (WebUI) A user sees the N worst predictions and can judge directly whether it is a model problem or an annotation problem
+- **E6-S7** (Python API) An engineer runs a whole directory of images in batch and exports the results
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E6-T1 | Single-image and batch inference API | `tests/api/test_inference.py` |
+| E6-T2 | Per-frame video inference | `tests/api/test_inference_video.py` |
+| E6-T3 | COCO metric computation | Aligned with the reference implementation; `tests/api/test_metrics.py` |
+| E6-T4 | Confusion matrix and per-class analysis | `tests/api/test_error_analysis.py` |
+| E6-T5 | Worst-case mining | `tests/api/test_worst_cases.py` |
+| E6-T6 | Result visualization (overlay generation) | `tests/api/test_visualize.py` |
+| E6-T7 | Upload-and-test UI | Interface scenario |
+| E6-T8 | Error analysis UI | Interface scenario |
+| E6-T9 | Web API endpoints | `tests/web/test_eval_routes.py` |
+
+#### How it is accepted
+
+E6-T3 validates metric values against a fixture with known answers. The rest goes through API tests plus interface scenarios.
+
+---
+
+### E7 — Experiment Management
+
+**Goal:** answer "which training run was best, and why".
+
+#### User stories
+
+- **E7-S1** (WebUI) A user compares hyperparameters and metrics across several runs side by side
+- **E7-S2** (WebUI) A user picks a run straight from the comparison table and enters the export flow
+- **E7-S3** (Python API) An engineer queries all runs programmatically, sorted by a metric
+- **E7-S4** (WebUI) A user sees which dataset version each run used — after the dataset changes, older runs' metrics are no longer directly comparable and the system must flag that
+- **E7-S5** (WebUI) A user adds notes and tags to a run
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E7-T1 | Run metadata schema and storage | `tests/api/test_run_store.py` |
+| E7-T2 | Dataset version fingerprint | Content hash, detects dataset changes; `tests/api/test_dataset_fingerprint.py` |
+| E7-T3 | Run query and sorting API | `tests/api/test_run_query.py` |
+| E7-T4 | Non-comparability warning logic | Flag when dataset fingerprints differ; `tests/api/test_run_comparability.py` |
+| E7-T5 | Notes and tags | `tests/api/test_run_tags.py` |
+| E7-T6 | Comparison UI | Interface scenario |
+| E7-T7 | Web API endpoints | `tests/web/test_experiment_routes.py` |
+
+#### How it is accepted
+
+API tests. **E7-T2, the dataset fingerprint, is the key to this Epic** — without it, comparisons between runs produce misleading conclusions.
+
+---
+
+### E8 — Export and Deployment
+
+**Goal:** get the trained model onto Jetson.
+
+#### User stories
+
+- **E8-S1** (WebUI) A user selects a run, exports to ONNX and downloads it
+- **E8-S2** (Python API) An engineer exports a TensorRT engine on Jetson
+- **E8-S3** (WebUI) A user exporting sees an explicit notice: a TensorRT engine is bound to the current GPU architecture and TensorRT version and cannot be moved to another machine
+- **E8-S4** (Python API) A user exports TFLite
+- **E8-S5** (Python API) The export artifact is accompanied by `model_card.json` containing the model license, training dataset fingerprint, metrics, and input/output specification
+- **E8-S6** (Python API) A user runs inference directly with the export artifact and verifies the results match the original weights
+- **E8-S7** (WebUI) A user starts a local inference service and tests it by posting images over HTTP
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E8-T1 | ONNX export | `tests/api/test_export_onnx.py` |
+| E8-T2 | TensorRT export | Availability decided by the E4-T13 capability list; macOS explicitly refused; `tests/api/test_export_tensorrt.py` |
+| E8-T3 | TFLite export | `tests/api/test_export_tflite.py` |
+| E8-T4 | `model_card.json` generation | Includes the license field; `tests/api/test_model_card.py` |
+| E8-T5 | Post-export parity verification | Output difference from the original weights within tolerance on the same input; `tests/api/test_export_parity.py` |
+| E8-T6 | Portability warnings | `tests/api/test_export_warnings.py` |
+| E8-T7 | Local inference service | `tests/web/test_serve.py` |
+| E8-T8 | Export UI | Interface scenario |
+
+#### How it is accepted
+
+**E8-T5 is the core acceptance gate**: an export feature whose results differ before and after export is worthless.
+
+---
+
+### E9 — Three-Layer Interface Parity
+
+**Goal:** ensure that whatever the Python API can do, the Web API and WebUI can do too.
+
+#### User stories
+
+- **E9-S1** (Maintainer) After adding a Python API feature, the contract test immediately points out that the Web API has no corresponding endpoint yet
+- **E9-S2** (User) Any operation performed in the WebUI can be reproduced as a script with the Python API
+- **E9-S3** (User) The full workflow can be run from the CLI without opening a browser
+- **E9-S4** (Maintainer) The Web API has a machine-readable specification document
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E9-T1 | Capability manifest | The Python API's public capabilities are enumerable; `tests/contract/test_capabilities.py` |
+| E9-T2 | Contract test framework | Compares capability coverage across the three layers; `tests/contract/test_layer_parity.py` |
+| E9-T3 | Flask app skeleton and error handling | Unified error format; `tests/web/test_error_format.py` |
+| E9-T4 | OpenAPI specification generation | `tests/web/test_openapi.py` |
+| E9-T5 | CLI | `tests/api/test_cli.py` |
+
+#### How it is accepted
+
+Contract tests. Deliberate exceptions are allowed (some features are intentionally not exposed over the Web), but every exception must be explicitly registered in the capability manifest — never left to an omission.
+
+---
+
+## 7. Development Process
+
+### Confirm before starting each Epic
+
+**Before implementing any Epic, present the design options for that Epic to the user and wait for a reply.** The options must be concrete enough to affect code structure — do not ask vague questions like "what do you think".
+
+Decisions already made; no need to ask again:
+
+- **Single environment**: rfdetr and transformers are both primary dependencies installed with horos, with no isolation of any kind
+- The licensing boundary is **model size** (XL/2XL are PML 1.0), not install behavior. Install prompts talk about cost, not licensing
+- The Jetson install path uses `--no-deps` and checks CUDA availability at import time
+- **Lazy backend loading**: `import horos` must not pull in torch; people who only annotate should not pay that cost
+- **Four platforms supported**: Ubuntu, macOS, Windows, Jetson. Unsupported combinations error explicitly and never fall back silently
+- Auto-labeling uses **OWLv2 open-vocabulary zero-shot** (Apache 2.0)
+- First-version priority: annotate → train → evaluate → deploy
+- Hyperparameter adaptation is **rule-based**; search-based is left as a later extension
+
+### Definition of done for a task
+
+A task card is done when three things hold simultaneously:
+
+1. The feature works
+2. The corresponding test is written and passing
+3. If UI is involved, the interface scenario has been reported in the §8 format
+
+All three are required. "Implement first, add tests later" is not accepted.
+
+### Test location
+
+**All test scripts live under `tests/`**, organized into the subdirectories from §3. Do not put test files next to the source.
+
+### Commit
+
+The commit message format is in §10. The format is fixed; variants are not accepted. Pushing must satisfy R8.
+
+---
+
+## 8. Interface Scenario Report Format
+
+When a completed task involves the WebUI, **tell the user in the following format — do not just say "done"**:
+
+```
+[Done] E2-T5 keyboard shortcuts
+
+[How to run]
+  horos ui --project ./demo_project
+  Open http://localhost:5000 in a browser
+
+[Test steps]
+  1. Go to the "Annotate" page and open any image
+  2. Press number keys 1–9 to switch class; confirm the highlight in the
+     left-hand class list follows
+  3. Hold W and drag the mouse to draw a box; the box should remain on release
+  4. Press D for the next image, A for the previous one
+  5. Press Ctrl+Z to undo the last action
+
+[Expected result]
+  The whole annotate-and-advance loop can be completed without clicking any menu
+
+[Known limitations]
+  Polygon shortcuts are not implemented yet (to be added once E2-T3 lands)
+```
+
+All four blocks are required. Even when "Known limitations" is empty, write "None" — do not omit it.
+
+Write the report in the language the user is using; only the block labels are fixed.
+
+---
+
+## 9. License Discipline
+
+horos itself is released under **Apache 2.0**. The user has commercial requirements, so licensing is a hard constraint.
+
+**Any new dependency must have its license verified as compatible before being added.** Forbidden list:
+
+| Forbidden | Reason |
+|---|---|
+| `ultralytics` (YOLOv8/11/12/26) | AGPL-3.0, viral |
+| `mmyolo` / `mmdetection` / YOLO-World | GPL-3.0 |
+| `rfdetr[plus]` (RF-DETR XL / 2XL) | PML 1.0, not Apache |
+| SegFormer official pretrained weights | NVIDIA Source Code License, research use only |
+
+**Code license is not the same as weight license.** Before introducing any pretrained weights, verify the code license and the weight license separately and record both in the model registry.
+
+**RF-DETR size boundary:** Nano / Small / Medium / Large are Apache 2.0 along with the code. The registry lists only those four. If a user attempts to load XL or 2XL, an explicit error must be raised explaining the license difference and requiring `acknowledge_non_apache=True` — never allow it silently.
+
+---
+
+## 10. Commit Conventions
+
+This project will be public on GitHub. The commit message format is fixed as follows, and **variants are not accepted**:
+
+```
+[Commit Type] Title for this commit
+
+[Description]
+1.
+
+[Verification]
+1.
+```
+
+### Commit Type
+
+Use only these nine, with the first letter capitalized inside the brackets:
+
+| Type | Use |
+|---|---|
+| `Feat` | New feature |
+| `Fix` | Bug fix |
+| `Refactor` | Refactoring, behavior unchanged |
+| `Test` | Tests only |
+| `Docs` | Documentation only |
+| `Chore` | Build, CI, dependency versions, miscellany |
+| `Perf` | Performance improvement |
+| `Style` | Formatting, naming, no logic change |
+| `Revert` | Revert |
+
+### Title
+
+- English, imperative present tense (`Add`, `Fix`, `Remove` — not `Added`, `Fixes`)
+- No trailing period, 50 characters or fewer
+- **If it corresponds to a task card, put the id in parentheses at the end**: `[Feat] Add COCO format reader (E1-T3)`
+
+Task card ids are this project's traceability mechanism. When someone later asks "what exactly did E1-T3 change", `git log --grep="E1-T3"` has to find it.
+
+### Description
+
+Enumerate **what changed, and why**. "What changed" alone is not enough — three months later, the reasoning is the valuable part.
+
+One commit corresponds to one task card as a rule. If a card needs to be split across several commits, each commit's Description must state where it sits within the card.
+
+### Verification
+
+Enumerate **how someone else confirms this commit is correct**. This section must not be left empty, and must not contain content-free statements like "tested".
+
+Two styles, depending on the kind of change:
+
+**Changes with tests** — give commands that can be copy-pasted and run:
+
+```
+[Verification]
+1. pytest tests/api/test_format_coco.py -v
+2. pytest tests/api/test_format_roundtrip.py -v
+```
+
+**Interface changes** — give a summary of the steps in the §8 format, and point at the full scenario file:
+
+```
+[Verification]
+1. horos ui --project ./demo_project, open http://localhost:5000
+2. On the annotate page, press number keys 1-9 to switch class and confirm
+   the left-hand highlight follows
+3. Full steps in tests/ui_scenarios/E2-T5.md
+```
+
+### Example
+
+```
+[Feat] Add lazy backend loading (E4-T11)
+
+[Description]
+1. Backend modules are now imported on first use; import horos no longer
+   pulls in torch
+2. Type annotations moved into TYPE_CHECKING blocks to avoid loading backend
+   types at module level
+3. For annotation-only usage, import time drops from 8.2s to 0.4s
+
+[Verification]
+1. pytest tests/api/test_lazy_backend.py -v
+2. pytest tests/test_invariants.py::test_no_torch_after_import -v
+3. python -c "import horos, sys; assert 'torch' not in sys.modules"
+```
+
+### Rules that cannot be skipped
+
+- **Never credit AI collaborators in a commit message** — no `Co-Authored-By`, no generated-by tool attribution
+- All four blocks are required. A commit without a Description or a Verification is rejected
+- Never commit weight files, datasets, or `~/.horos/` cache contents. `.gitignore` must cover these
+- Pushing must satisfy R8: never rewrite published history, and after pushing confirm that `git fetch && git status` reports the branch up to date with its upstream and the tree clean
