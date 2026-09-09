@@ -10,7 +10,7 @@ set -Eeuo pipefail
 #   bash scripts/release.sh --test         # build + upload to TestPyPI
 #   bash scripts/release.sh --pypi         # build + upload to PyPI (asks first)
 #
-# Extra flags: --yes (skip the PyPI prompt), --skip-test (skip local_test.sh).
+# Extra flags: -y/--yes (skip the PyPI prompt), --skip-test (skip local_test.sh).
 # Combine: bash scripts/release.sh 0.2.0 --pypi
 #
 # Credentials (one-time): pip install twine keyring, then
@@ -34,7 +34,7 @@ for arg in "$@"; do
     --build)     BUILD="true" ;;
     --test)      TESTPYPI="true"; BUILD="true" ;;
     --pypi)      PYPI="true"; BUILD="true" ;;
-    --yes)       YES="true" ;;
+    -y|--yes)    YES="true" ;;
     --skip-test) SKIP_TEST="true" ;;
     -h|--help)   sed -n '4,19p' "$0"; exit 0 ;;
     -*)          echo "ERROR: unknown flag $arg (see --help)"; exit 1 ;;
