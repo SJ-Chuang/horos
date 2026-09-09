@@ -78,6 +78,9 @@ class TrainRunConfig(BaseModel):
     batch_size: int | None = None
     resolution: int | None = None
     lr: float | None = None
+    #: mosaic composites per train image added to the snapshot (0 disables;
+    #: None derives from dataset size). See horos/core/mosaic.py.
+    mosaic_ratio: float | None = None
     device: str | None = None
     seed: int | None = None
     resume_from: str | None = None
@@ -470,6 +473,7 @@ def derive_hyperparameters(
             "batch_size": config.batch_size,
             "resolution": config.resolution,
             "lr": config.lr,
+            "mosaic_ratio": config.mosaic_ratio,
         },
     )
 
@@ -553,6 +557,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
             "epochs": spec_values["epochs"],
             "batch_size": spec_values["batch_size"],
             "resolution": spec_values.get("resolution", config.resolution),
+            "mosaic_ratio": plan.values.get("mosaic_ratio", config.mosaic_ratio),
             # derived backend knobs ride in extra; the user's own extra wins
             "extra": {**plan.extra_fields(), **config.extra},
         }
@@ -571,6 +576,18 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     export_dataset(
         project, run_dir / "dataset", format="coco", categories=config.categories
     )
+
+    # mosaic composites are baked into the train snapshot here, before the
+    # worker sees it — backend-neutral by construction (see core/mosaic.py)
+    mosaic_ratio = float(plan.api_fields().get("mosaic_ratio") or 0.0)
+    if mosaic_ratio > 0:
+        from horos.core.mosaic import synthesize_mosaics
+
+        synthesize_mosaics(
+            run_dir / "dataset" / "train",
+            count=max(1, round(train_count * mosaic_ratio)),
+            seed=config.seed if config.seed is not None else 42,
+        )
 
     (run_dir / _CONFIG_JSON).write_text(resolved.model_dump_json(indent=2), "utf-8")
     record = RunRecord(

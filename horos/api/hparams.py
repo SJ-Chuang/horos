@@ -39,6 +39,59 @@ _BASE_PARAMS_M = 30.5
 
 #: TrainSpec-level knobs; everything else derived goes through spec.extra
 _SPEC_FIELDS = ("epochs", "batch_size", "resolution")
+#: knobs consumed by the training API itself (snapshot preparation) — they
+#: are shown in the plan like any derived value but never reach the backend
+_API_FIELDS = ("mosaic_ratio",)
+
+#: fraction of the schedule's peak LR that cosine decay ends at
+_LR_MIN_FACTOR = 0.01
+#: below this image count the fine-tuning LR is halved to curb divergence
+_SMALL_DATASET_IMAGES = 100
+
+# Augmentation presets, keyed by dataset size. Plain data in Albumentations'
+# transform-name convention: the backend maps them onto its own augmentation
+# pipeline, so no model dependency is needed here (R1). Values follow the
+# backend's own preset guidance (conservative under ~2000 images) with a mild
+# affine added — small datasets are the ones that overfit without geometric
+# variety.
+_AUG_STANDARD = {
+    "HorizontalFlip": {"p": 0.5},
+    "RandomBrightnessContrast": {
+        "brightness_limit": 0.15,
+        "contrast_limit": 0.15,
+        "p": 0.4,
+    },
+    "Affine": {
+        "scale": (0.85, 1.15),
+        "translate_percent": (-0.1, 0.1),
+        "rotate": (-10, 10),
+        "p": 0.5,
+    },
+}
+_AUG_HEAVY = {
+    "HorizontalFlip": {"p": 0.5},
+    "RandomBrightnessContrast": {
+        "brightness_limit": 0.2,
+        "contrast_limit": 0.2,
+        "p": 0.5,
+    },
+    "Affine": {
+        "scale": (0.8, 1.2),
+        "translate_percent": (-0.1, 0.1),
+        "rotate": (-15, 15),
+        "shear": (-5, 5),
+        "p": 0.5,
+    },
+    "ColorJitter": {
+        "brightness": 0.2,
+        "contrast": 0.2,
+        "saturation": 0.2,
+        "hue": 0.1,
+        "p": 0.5,
+    },
+}
+#: image count at which the heavy augmentation preset takes over
+_HEAVY_AUG_IMAGES = 2000
 
 
 class DerivedValue(BaseModel):
@@ -61,12 +114,29 @@ class HyperparameterPlan(BaseModel):
         return {k: v for k, v in self.values.items() if k in _SPEC_FIELDS}
 
     def extra_fields(self) -> dict[str, Any]:
-        return {k: v for k, v in self.values.items() if k not in _SPEC_FIELDS}
+        return {
+            k: v
+            for k, v in self.values.items()
+            if k not in _SPEC_FIELDS and k not in _API_FIELDS
+        }
+
+    def api_fields(self) -> dict[str, Any]:
+        return {k: v for k, v in self.values.items() if k in _API_FIELDS}
 
 
 def _derive_epochs(stats: DatasetStats) -> tuple[int, str]:
     n = stats.num_images
-    for limit, epochs in ((100, 100), (500, 60), (2000, 40), (10000, 25)):
+    if n < 500:
+        # the epoch count is also the cosine schedule's horizon: it must be
+        # short enough that the LR anneal actually completes on runs early
+        # stopping is likely to end — a 100-epoch horizon stopped at ~25
+        # leaves the LR near its peak and the consolidation phase never runs
+        return 60, (
+            f"{n} images: 60 epochs — enough passes for a small dataset to "
+            f"converge, and a cosine horizon short enough that the LR anneal "
+            f"completes before early stopping ends the run"
+        )
+    for limit, epochs in ((2000, 40), (10000, 25)):
         if n < limit:
             return epochs, (
                 f"{n} images: small datasets need more passes to converge "
@@ -167,17 +237,48 @@ def derive_plan(
         f"(batch {batch} × accumulation)",
     )
 
+    if stats.num_images < _SMALL_DATASET_IMAGES:
+        put(
+            "lr",
+            5e-5,
+            f"{stats.num_images} images (<{_SMALL_DATASET_IMAGES}): the "
+            f"backend's tuned default (1e-4) diverges on very small datasets "
+            f"once early convergence ends — halved to 5e-5",
+        )
+    else:
+        put(
+            "lr",
+            1e-4,
+            f"backend's tuned fine-tuning default; the schedule is calibrated "
+            f"for an effective batch of {_TARGET_EFFECTIVE_BATCH}, which the "
+            f"gradient accumulation above maintains — no scaling needed",
+        )
+
     put(
-        "lr",
-        1e-4,
-        f"backend's tuned fine-tuning default; the schedule is calibrated for "
-        f"an effective batch of {_TARGET_EFFECTIVE_BATCH}, which the gradient "
-        f"accumulation above maintains — no scaling needed",
+        "lr_scheduler",
+        "cosine",
+        "backend default 'step' only drops the LR at its lr_drop epoch (100), "
+        "i.e. never within a typical run — full LR to the last epoch destroys "
+        "converged fine-tunes; cosine decays smoothly to the floor below",
+    )
+    put(
+        "lr_scheduler_kwargs",
+        {"min_factor": _LR_MIN_FACTOR},
+        f"cosine decays to {_LR_MIN_FACTOR:.0%} of the peak LR by the final "
+        f"epoch (the convention YOLO-family trainers use for fine-tuning)",
     )
 
     populated = [c for c in stats.per_class if c.instances > 0]
     weakest = min(populated, key=lambda c: c.instances, default=None)
-    if weakest is not None and weakest.instances < 100:
+    if stats.num_images < 500:
+        put(
+            "warmup_epochs",
+            3.0,
+            f"{stats.num_images} images: few optimizer steps per epoch, so a "
+            f"3-epoch linear warmup replaces the usual step-count warmup and "
+            f"stabilizes the re-initialized detection head",
+        )
+    elif weakest is not None and weakest.instances < 100:
         put(
             "warmup_epochs",
             1.0,
@@ -186,6 +287,70 @@ def derive_plan(
         )
     else:
         put("warmup_epochs", 0.0, "every class has ≥100 instances, no warmup needed")
+
+    patience = 15 if stats.num_images < 500 else 10
+    put(
+        "early_stopping",
+        True,
+        "stop when validation mAP plateaus instead of training to the last "
+        "epoch — small datasets degrade catastrophically past their peak, and "
+        "the best checkpoint is already kept either way",
+    )
+    put(
+        "early_stopping_patience",
+        patience,
+        (
+            f"{stats.num_images} images: a small valid split makes per-epoch "
+            f"mAP noisy — wait {patience} epochs without improvement"
+            if stats.num_images < 500
+            else f"{patience} epochs without validation improvement"
+        ),
+    )
+    put(
+        "early_stopping_use_ema",
+        True,
+        "monitor the EMA weights' mAP: smoother than per-epoch raw mAP, so "
+        "one noisy validation dip cannot stop training early",
+    )
+
+    heavy = stats.num_images >= _HEAVY_AUG_IMAGES
+    put(
+        "aug_config",
+        _AUG_HEAVY if heavy else _AUG_STANDARD,
+        (
+            f"{stats.num_images} images (≥{_HEAVY_AUG_IMAGES}): heavy "
+            f"augmentation (flip, brightness/contrast, affine with shear, "
+            f"color jitter) — large datasets tolerate and benefit from it"
+            if heavy
+            else f"{stats.num_images} images: standard augmentation (flip, "
+            f"brightness/contrast, mild affine) — the backend's default "
+            f"pipeline applies only a horizontal flip, which is not enough "
+            f"variety to prevent overfitting"
+        ),
+    )
+    put(
+        "augmentation_backend",
+        "cpu",
+        "CPU augmentation gives identical pixels on CUDA, MPS and CPU "
+        "platforms (R7); the GPU path would make runs device-dependent",
+    )
+
+    # Off by default after a controlled A/B (balloon, 74 images, seed 42,
+    # 60 epochs): at ratio 0.5 the composites carried ~70% of the training
+    # annotation mass at quarter scale, and val mAP decayed monotonically
+    # after its early peak (0.155 → 0.013) while the mosaic-free twin peaked
+    # higher and stayed healthy (0.186) with 3× better confidence
+    # calibration. Opt in per run via mosaic_ratio when the deployment
+    # distribution really is many-small-objects.
+    put(
+        "mosaic_ratio",
+        0.0,
+        "mosaic snapshots are opt-in: at the ratios that add meaningful "
+        "variety they dominate the annotation mass with quarter-scale "
+        "objects, which measurably degraded validation mAP and confidence "
+        "calibration on small datasets — set mosaic_ratio explicitly for "
+        "many-small-object domains",
+    )
 
     put(
         "num_workers",

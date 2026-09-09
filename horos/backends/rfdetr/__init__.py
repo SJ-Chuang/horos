@@ -43,6 +43,7 @@ _MODEL_CLASSES = {
 }
 
 # Best-first order among the files rfdetr training writes to output_dir.
+# best_total is rfdetr's own pick of the better of its regular/EMA tracks.
 _CHECKPOINT_PREFERENCE = (
     "checkpoint_best_total.pth",
     "checkpoint_best_ema.pth",

@@ -64,7 +64,9 @@ def test_every_derivation_has_a_nonempty_reason():
 
 @pytest.mark.parametrize(
     ("num_images", "expected_epochs"),
-    [(30, 100), (300, 60), (1500, 40), (5000, 25), (50000, 15)],
+    # <500 images share one 60-epoch tier: the epoch count doubles as the
+    # cosine anneal horizon, which must stay reachable under early stopping
+    [(30, 60), (300, 60), (1500, 40), (5000, 25), (50000, 15)],
 )
 def test_epochs_scale_down_with_dataset_size(num_images, expected_epochs):
     plan = _plan(_stats(num_images=num_images))
@@ -113,17 +115,20 @@ def test_resolution_bump_raises_per_sample_memory_cost():
 
 
 def test_scarce_class_adds_warmup():
+    # ≥500 images so the small-dataset 3-epoch warmup rule does not apply and
+    # the instance-count rule is what decides
     scarce = [
         ClassStats(category_id=1, name="common", instances=500, images=100),
         ClassStats(category_id=2, name="rare", instances=12, images=8),
     ]
-    plan = _plan(_stats(per_class=scarce))
+    plan = _plan(_stats(num_images=800, per_class=scarce))
     assert plan.values["warmup_epochs"] == 1.0
     reason = next(d.reason for d in plan.derivations if d.name == "warmup_epochs")
     assert "rare" in reason
 
     plentiful = [ClassStats(category_id=1, name="common", instances=500, images=100)]
-    assert _plan(_stats(per_class=plentiful)).values["warmup_epochs"] == 0.0
+    plan = _plan(_stats(num_images=800, per_class=plentiful))
+    assert plan.values["warmup_epochs"] == 0.0
 
 
 def test_small_dataset_disables_loader_workers():
@@ -146,13 +151,15 @@ def test_unknown_model_skips_resolution_but_derives_the_rest():
 
 
 def test_lr_is_derived_with_reason_and_overridable():
-    plan = _plan()
+    # ≥100 images: the backend default applies (below 100 it is halved, see
+    # test_hparam_schedule.py)
+    plan = _plan(_stats(num_images=300))
     entry = next(d for d in plan.derivations if d.name == "lr")
     assert entry.value == pytest.approx(1e-4)
     assert "effective batch" in entry.reason
     assert "lr" in plan.extra_fields()  # rides to the backend via spec.extra
 
-    overridden = _plan(overrides={"lr": 5e-5})
+    overridden = _plan(_stats(num_images=300), overrides={"lr": 5e-5})
     entry = next(d for d in overridden.derivations if d.name == "lr")
     assert entry.value == pytest.approx(5e-5) and entry.overridden is True
     # an lr override does not disturb the other derivations (E5-T2)

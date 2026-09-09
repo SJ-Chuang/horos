@@ -193,3 +193,42 @@ def test_checkpoint_criterion_is_recorded_in_hparams(project):
     entry = next(h for h in default.hparams if h.name == "checkpoint_criterion")
     assert entry.value == "map" and entry.overridden is False
     _wait_terminal(project, default.run_id)
+
+
+def test_mosaic_snapshots_are_opt_in(project):
+    """E5: mosaics are baked into the train snapshot only when the user opts
+    in with mosaic_ratio > 0; the derived default is 0 (A/B-tested off)."""
+    import json
+
+    record = start_training(project, _config())
+    try:
+        ann = (
+            project.root / "runs" / record.run_id
+            / "dataset" / "train" / "_annotations.coco.json"
+        )
+        data = json.loads(ann.read_text(encoding="utf-8"))
+        assert not any(
+            i["file_name"].startswith("mosaic_") for i in data["images"]
+        )
+        entry = next(h for h in record.hparams if h.name == "mosaic_ratio")
+        assert entry.value == 0.0 and entry.overridden is False and entry.reason
+    finally:
+        _wait_terminal(project, record.run_id)
+
+    opted_in = start_training(project, _config(mosaic_ratio=0.5))
+    try:
+        ann = (
+            project.root / "runs" / opted_in.run_id
+            / "dataset" / "train" / "_annotations.coco.json"
+        )
+        data = json.loads(ann.read_text(encoding="utf-8"))
+        mosaics = [
+            i for i in data["images"] if i["file_name"].startswith("mosaic_")
+        ]
+        # 2 train images × ratio 0.5 → 1 composite
+        assert len(mosaics) == 1
+        assert (ann.parent / mosaics[0]["file_name"]).is_file()
+        entry = next(h for h in opted_in.hparams if h.name == "mosaic_ratio")
+        assert entry.overridden is True
+    finally:
+        _wait_terminal(project, opted_in.run_id)

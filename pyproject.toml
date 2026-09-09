@@ -47,6 +47,13 @@ ml = [
     # transformers hosts the OWLv2 backend; range chosen to match rfdetr 1.9.4's
     # own constraint (>=5.1.0,<6).
     "transformers>=5.1.0,<6",
+    # Backs rfdetr's aug_config path (the derived augmentation presets, E5).
+    # MIT (verified in wheel metadata 2026-09; the AGPL fork is the separate
+    # "albumentationsx" package). Pinned exactly for the same reason as rfdetr
+    # (R5): augmentation changes silently shift annotations and mAP.
+    # kornia (rfdetr's GPU aug backend) is deliberately NOT installed — horos
+    # passes augmentation_backend="cpu" for identical behavior on all platforms.
+    'albumentations==2.0.8; platform_machine != "aarch64" or sys_platform != "linux"',
 ]
 dev = ["pytest>=8", "ruff>=0.4"]
 
