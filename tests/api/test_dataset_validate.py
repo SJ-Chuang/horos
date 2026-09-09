@@ -26,7 +26,7 @@ def test_missing_image_file(tmp_path):
     assert not report.ok
     issue = next(i for i in report.issues if i.kind == "missing_image_file")
     assert "b.png" in issue.message
-    assert issue.image_id == 2
+    assert issue.image_id == 2 and issue.file_name == "b.png"
 
 
 def test_bbox_out_of_bounds(tmp_path):
@@ -38,6 +38,9 @@ def test_bbox_out_of_bounds(tmp_path):
     issue = next(i for i in report.issues if i.kind == "bbox_out_of_bounds")
     assert "64x48" in issue.message
     assert issue.annotation_id == ds.annotations[0].id
+    # the report names the file, not only the image id, so the reader (and the
+    # UI's "open annotation" link) can find the picture
+    assert issue.file_name == "a.png" and "'a.png'" in issue.message
     assert issue.level == "error" and not issue.fixable  # too far out for jitter
     assert not report.ok
 

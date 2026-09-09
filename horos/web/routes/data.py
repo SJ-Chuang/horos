@@ -146,7 +146,14 @@ def validation_fix():
 
 @bp.get("/dataset/stats")
 def stats():
-    return jsonify(api.dataset_stats(_project()).model_dump())
+    raw = request.args.get("categories")
+    categories = [n for n in raw.split(",") if n] if raw is not None else None
+    include_background = request.args.get("include_background", "0").lower() in ("1", "true")
+    return jsonify(
+        api.dataset_stats(
+            _project(), categories=categories, include_background=include_background
+        ).model_dump()
+    )
 
 
 @bp.post("/dataset/split")

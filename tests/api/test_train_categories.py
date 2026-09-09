@@ -45,16 +45,25 @@ def project(tmp_path):
     return proj
 
 
-def test_filter_keeps_images_drops_other_annotations(project):
+def test_filter_drops_background_only_images_by_default(project):
+    # sample data: a (forklift + pallet), b (forklift) in train; c (pallet) in valid
     dataset = project.to_dataset()
     filtered = filter_dataset_categories(dataset, ["forklift"])
     assert [c.name for c in filtered.categories] == ["forklift"]
-    assert len(filtered.images) == len(dataset.images)  # negatives stay
+    assert sorted(i.file_name for i in filtered.images) == ["a.png", "b.png"]  # c.png gone
     assert all(
         filtered.category_by_id(a.category_id).name == "forklift"
         for a in filtered.annotations
     )
     assert len(filtered.annotations) < len(dataset.annotations)
+
+
+def test_filter_can_keep_background_images_as_negatives(project):
+    dataset = project.to_dataset()
+    filtered = filter_dataset_categories(dataset, ["forklift"], include_background=True)
+    assert len(filtered.images) == len(dataset.images)  # negatives stay
+    assert [c.name for c in filtered.categories] == ["forklift"]
+    assert len(filtered.annotations) == 2
 
 
 def test_filter_rejects_unknown_and_empty(project):
@@ -71,7 +80,15 @@ def test_export_with_categories_writes_filtered_coco(project, tmp_path):
         (tmp_path / "out" / "train" / "_annotations.coco.json").read_text("utf-8")
     )
     assert [c["name"] for c in gt["categories"]] == ["forklift"]
-    assert len(gt["images"]) > 0  # images kept even when their objects dropped
+    assert sorted(i["file_name"] for i in gt["images"]) == ["a.png", "b.png"]
+    assert not (tmp_path / "out" / "valid").exists()  # c.png had no forklift
+
+    export_dataset(project, tmp_path / "bg", categories=["forklift"], include_background=True)
+    gt_valid = json.loads(
+        (tmp_path / "bg" / "valid" / "_annotations.coco.json").read_text("utf-8")
+    )
+    assert [i["file_name"] for i in gt_valid["images"]] == ["c.png"]  # kept as a negative
+    assert gt_valid["annotations"] == []
 
 
 def test_derivation_sees_the_filtered_data(project):
@@ -92,11 +109,36 @@ def test_derivation_sees_the_filtered_data(project):
     assert full is not None  # both plans derive without error
 
 
+def test_derivation_explains_the_background_decision(project):
+    dropped = derive_hyperparameters(project, TrainRunConfig(categories=["forklift"]))
+    note = next(n for n in dropped.notes if "none of the selected classes" in n)
+    assert "1 of 3 images" in note and "excluded" in note and "remaining 2 images" in note
+
+    kept = derive_hyperparameters(
+        project, TrainRunConfig(categories=["forklift"], include_background=True)
+    )
+    note = next(n for n in kept.notes if "none of the selected classes" in n)
+    assert "kept as background" in note and "all 3 images" in note
+
+    # every class selected: nothing to explain
+    assert not any("selected classes" in n for n in derive_hyperparameters(project).notes)
+
+
+def test_dropping_background_can_empty_a_split_and_says_so(project):
+    # forklift never appears in the valid split: with negatives dropped the
+    # run has nothing to validate on — refused explicitly, never silently
+    with pytest.raises(ProjectError, match="no annotated images in the valid split"):
+        start_training(
+            project,
+            TrainRunConfig(entrypoint_override=FAKE, epochs=1, categories=["forklift"]),
+        )
+
+
 def test_run_snapshot_and_record_carry_the_selection(project):
     record = start_training(
         project,
         TrainRunConfig(entrypoint_override=FAKE, epochs=1,
-                       categories=["forklift"]),
+                       categories=["forklift"], include_background=True),
     )
     deadline = time.monotonic() + 30
     while training_status(project, record.run_id).run.state in ("pending", "running"):
@@ -105,6 +147,9 @@ def test_run_snapshot_and_record_carry_the_selection(project):
     status = training_status(project, record.run_id)
     assert status.run.state == "completed"
     assert status.run.config["categories"] == ["forklift"]
+    assert status.run.config["include_background"] is True
+    assert status.run.dataset_images == 3
+    assert any("kept as background" in n for n in status.run.hparam_notes)
 
     gt = json.loads(
         (project.root / "runs" / record.run_id / "dataset" / "train"
@@ -131,7 +176,7 @@ def test_selection_without_train_annotations_is_refused(project, tmp_path):
         kept = [a for a in view.annotations if a.category_id != pallet.id]
         if len(kept) != len(view.annotations):
             save_annotations(proj, image.id, kept, expected_version=view.version)
-    with pytest.raises(ProjectError, match="no\\s+annotations in the train split"):
+    with pytest.raises(ProjectError, match="no annotated images in the train split"):
         start_training(
             proj,
             TrainRunConfig(entrypoint_override=FAKE, epochs=1,
@@ -143,7 +188,7 @@ def test_run_records_its_class_set_for_resume_locking(project):
     record = start_training(
         project,
         TrainRunConfig(entrypoint_override=FAKE, epochs=1,
-                       categories=["forklift"]),
+                       categories=["forklift"], include_background=True),
     )
     deadline = time.monotonic() + 30
     while training_status(project, record.run_id).run.state in ("pending", "running"):

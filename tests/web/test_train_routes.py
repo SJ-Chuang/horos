@@ -85,6 +85,18 @@ def test_derive_preview_over_http(client):
     assert epochs["overridden"] is False and epochs["reason"]
 
 
+def test_derive_with_a_class_subset_explains_dropped_images(client):
+    body = client.post(
+        "/api/v1/train/derive", json={"categories": ["forklift"]}
+    ).get_json()
+    assert any("excluded from this run" in n for n in body["notes"])
+    body = client.post(
+        "/api/v1/train/derive",
+        json={"categories": ["forklift"], "include_background": True},
+    ).get_json()
+    assert any("kept as background" in n for n in body["notes"])
+
+
 def test_verdict_over_http(client):
     response = client.post(
         "/api/v1/train", json={"entrypoint_override": FAKE, "epochs": 2}

@@ -524,19 +524,23 @@ def filter_dataset_categories(
     if not names:
         raise ProjectError("Select at least one category")
     keep_ids = {c.id for c in dataset.categories if c.name in names}
+    annotations = [a for a in dataset.annotations if a.category_id in keep_ids]
+    images = dataset.images
+    if not include_background:
+        with_objects = {a.image_id for a in annotations}
+        images = [i for i in dataset.images if i.id in with_objects]
     return dataset.model_copy(
         update={
             "categories": [c for c in dataset.categories if c.id in keep_ids],
-            "annotations": [
-                a for a in dataset.annotations if a.category_id in keep_ids
-            ],
+            "images": images,
+            "annotations": annotations,
         }
     )
 
 
 @capability(
     "dataset.export",
-    summary="Export the project's dataset as COCO or YOLO",
+    summary="Export the project's dataset as COCO, YOLO or LabelMe",
     web_route="/api/v1/dataset/export",
     web_methods=("POST",),
     cli="export",
@@ -547,12 +551,16 @@ def export_dataset(
     *,
     format: str = "coco",
     categories: list[str] | None = None,
+    include_background: bool = False,
 ) -> Path:
     """Write the project dataset to `out_dir` in the requested format,
-    optionally restricted to the named categories."""
+    optionally restricted to the named categories (see
+    filter_dataset_categories for `include_background`)."""
     dataset = project.to_dataset()
     if categories is not None:
-        dataset = filter_dataset_categories(dataset, categories)
+        dataset = filter_dataset_categories(
+            dataset, categories, include_background=include_background
+        )
     image_paths = {i.id: project.image_path(i) for i in dataset.images}
     out_dir = Path(out_dir)
     if format == "coco":
@@ -718,9 +726,22 @@ def fix_validation_issues(project: Project) -> ValidationFixResult:
     web_methods=("GET",),
     cli="stats",
 )
-def dataset_stats(project: Project) -> DatasetStats:
-    """Class distribution, relative object area, image sizes, splits (E1-T7)."""
-    return compute_stats(project.to_dataset())
+def dataset_stats(
+    project: Project,
+    *,
+    categories: list[str] | None = None,
+    include_background: bool = False,
+) -> DatasetStats:
+    """Class distribution, relative object area, image sizes, splits (E1-T7).
+
+    With `categories`, the statistics describe the data a run on those classes
+    would train on (the Train page shows them live as classes are toggled)."""
+    dataset = project.to_dataset()
+    if categories is not None:
+        dataset = filter_dataset_categories(
+            dataset, categories, include_background=include_background
+        )
+    return compute_stats(dataset)
 
 
 @capability(

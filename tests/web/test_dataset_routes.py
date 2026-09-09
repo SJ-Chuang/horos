@@ -61,6 +61,33 @@ def test_stats_route(client):
     assert body["num_annotations"] == 4
 
 
+def test_stats_route_for_a_class_selection(client):
+    body = client.get("/api/v1/dataset/stats?categories=forklift").get_json()
+    assert body["num_images"] == 2 and body["num_annotations"] == 2
+    body = client.get(
+        "/api/v1/dataset/stats?categories=forklift&include_background=1"
+    ).get_json()
+    assert body["num_images"] == 3 and body["unannotated_images"] == 1
+
+
+def test_validation_issues_name_the_file(client, project_root):
+    from horos.api import open_project
+    from horos.core.dataset import Annotation
+
+    # written through the core Project (the annotate API clamps boxes on save)
+    project = open_project(project_root)
+    image = project.list_images()[0]
+    current = project.load_annotations(image.id)
+    bad = Annotation(id=1, image_id=image.id, category_id=project.categories[0].id,
+                     bbox=(-30.0, 0.0, 40.0, 10.0))
+    project.save_annotations(image.id, [bad], expected_version=current.version)
+    issue = next(i for i in client.get("/api/v1/dataset/validation").get_json()["issues"]
+                 if i["kind"] == "bbox_out_of_bounds")
+    # the UI builds /annotate#<image_id>:<annotation_id> from these
+    assert issue["image_id"] == image.id and issue["annotation_id"] == 1
+    assert issue["file_name"] == image.file_name and image.file_name in issue["message"]
+
+
 def test_validation_route(client):
     body = client.get("/api/v1/dataset/validation").get_json()
     assert body["ok"] is True

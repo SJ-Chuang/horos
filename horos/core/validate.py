@@ -75,6 +75,9 @@ class ValidationIssue(BaseModel):
     message: str
     image_id: int | None = None
     annotation_id: int | None = None
+    #: the image's file name, so a report reader (and the UI's "open" link)
+    #: can find the picture without resolving ids
+    file_name: str | None = None
     #: True when `horos validate --fix` (or the UI's Fix button) repairs this
     fixable: bool = False
 
@@ -124,11 +127,18 @@ def validate_dataset(
                             f"by the dataset but missing from {images_root}"
                         ),
                         image_id=record.id,
+                        file_name=record.file_name,
                     )
                 )
 
     for ann in dataset.annotations:
         image = images_by_id.get(ann.image_id)
+        file_name = image.file_name if image is not None else None
+        where = (
+            f"on '{file_name}' (image {ann.image_id})"
+            if file_name
+            else f"on image {ann.image_id}"
+        )
         x, y, w, h = ann.bbox
 
         if w <= 0 or h <= 0:
@@ -137,11 +147,11 @@ def validate_dataset(
                     kind="invalid_box_size",
                     level="error",
                     message=(
-                        f"Annotation {ann.id} on image {ann.image_id} has "
-                        f"non-positive size (w={w}, h={h})"
+                        f"Annotation {ann.id} {where} has non-positive size (w={w}, h={h})"
                     ),
                     image_id=ann.image_id,
                     annotation_id=ann.id,
+                    file_name=file_name,
                 )
             )
         elif (
@@ -155,8 +165,8 @@ def validate_dataset(
                     kind="bbox_out_of_bounds",
                     level="warning" if fixable else "error",
                     message=(
-                        f"Annotation {ann.id} bbox ({x:.1f}, {y:.1f}, {w:.1f}, {h:.1f}) "
-                        f"exceeds image {ann.image_id} bounds "
+                        f"Annotation {ann.id} {where}: bbox ({x:.1f}, {y:.1f}, {w:.1f}, "
+                        f"{h:.1f}) exceeds the image bounds "
                         f"({image.width}x{image.height}) by {overshoot:.2f}px"
                         + (
                             " — auto-fixable: run 'horos validate --fix'"
@@ -166,6 +176,7 @@ def validate_dataset(
                     ),
                     image_id=ann.image_id,
                     annotation_id=ann.id,
+                    file_name=file_name,
                     fixable=fixable,
                 )
             )
@@ -176,12 +187,13 @@ def validate_dataset(
                     kind="unknown_category",
                     level="error",
                     message=(
-                        f"Annotation {ann.id} references category id "
+                        f"Annotation {ann.id} {where} references category id "
                         f"{ann.category_id}, which is not defined "
                         f"(defined ids: {sorted(category_ids)})"
                     ),
                     image_id=ann.image_id,
                     annotation_id=ann.id,
+                    file_name=file_name,
                 )
             )
 
@@ -192,12 +204,13 @@ def validate_dataset(
                         kind="invalid_polygon",
                         level="error",
                         message=(
-                            f"Annotation {ann.id} polygon #{poly_index} has "
+                            f"Annotation {ann.id} {where} polygon #{poly_index} has "
                             f"{len(poly)} coordinates; polygons need an even count "
                             f"of at least 6 (3 points)"
                         ),
                         image_id=ann.image_id,
                         annotation_id=ann.id,
+                        file_name=file_name,
                     )
                 )
 

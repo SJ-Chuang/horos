@@ -76,3 +76,21 @@ def test_empty_categories_are_not_listed():
     stats = compute_stats(dataset)
     assert "never_annotated" not in [c.name for c in stats.per_class]
     assert stats.num_categories == len(stats.per_class) == 2
+
+
+def test_stats_for_a_class_selection(tmp_path):
+    from helpers.data import write_sample_coco_dir
+
+    from horos.api.dataset import dataset_stats, import_dataset
+    from horos.api.project import create_project
+
+    project = create_project(tmp_path / "proj")
+    import_dataset(project, write_sample_coco_dir(tmp_path / "coco"))
+    subset = dataset_stats(project, categories=["forklift"])
+    assert subset.num_images == 2 and subset.num_annotations == 2
+    assert subset.split_counts == {"train": 2}
+    assert [c.name for c in subset.per_class] == ["forklift"]
+
+    with_bg = dataset_stats(project, categories=["forklift"], include_background=True)
+    assert with_bg.num_images == 3 and with_bg.unannotated_images == 1
+    assert with_bg.split_counts == {"train": 2, "valid": 1}

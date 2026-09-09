@@ -85,10 +85,12 @@ def test_resume_with_a_different_class_set_is_refused(project):
     """The checkpoint's class head is shape-fixed: resuming with different
     classes fails deep in the backend with a raw state_dict size mismatch —
     horos must refuse it up front with the actual fix."""
+    # include_background: the sample's valid split has no forklift image, and
+    # the default (drop background images) would leave nothing to validate on
     source = start_training(
         project,
         TrainRunConfig(entrypoint_override=FAKE, epochs=1,
-                       categories=["forklift"]),
+                       categories=["forklift"], include_background=True),
     )
     checkpoint = _finish(project, source.run_id).run.checkpoint
 
@@ -102,8 +104,8 @@ def test_resume_with_a_different_class_set_is_refused(project):
     # matching selection resumes fine
     resumed = start_training(
         project,
-        TrainRunConfig(entrypoint_override=FAKE, epochs=2,
-                       categories=["forklift"], resume_from=checkpoint),
+        TrainRunConfig(entrypoint_override=FAKE, epochs=2, categories=["forklift"],
+                       include_background=True, resume_from=checkpoint),
     )
     assert _finish(project, resumed.run_id).run.state == "completed"
 

@@ -128,6 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated category names to train on (default: all); "
         "objects of unselected classes become background",
     )
+    p.add_argument(
+        "--include-background",
+        action="store_true",
+        help="With --classes: keep images that contain none of the selected "
+        "classes as background negatives (default: drop them)",
+    )
 
     p = sub.add_parser("infer", help="Run a trained run's model on image(s)")
     p.add_argument("images", nargs="+")
@@ -350,6 +356,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         if args.classes
                         else None
                     ),
+                    include_background=args.include_background,
                 ),
             )
             print(f"run {record.run_id} started (pid {record.pid})", file=sys.stderr)  # noqa: T201

@@ -264,8 +264,16 @@ async function refreshStats() {
   if (v.issues.length === 0) {
     list.innerHTML = '<li style="color:var(--ok)">No issues found</li>';
   } else {
+    // an issue on a known image links straight into the editor; with an
+    // annotation id the editor selects that shape and blinks it twice
+    const link = (i) => {
+      if (i.image_id == null) return "";
+      const target = `/annotate#${i.image_id}${i.annotation_id != null ? ":" + i.annotation_id : ""}`;
+      const label = i.annotation_id != null ? "open annotation" : "open image";
+      return ` <a class="issue-link" href="${target}" title="${i.file_name || ""}">${label} ↗</a>`;
+    };
     list.innerHTML = v.issues
-      .map((i) => `<li class="${i.level}">[${i.kind}] ${i.message}</li>`)
+      .map((i) => `<li class="${i.level}">[${i.kind}] ${i.message}${link(i)}</li>`)
       .join("");
   }
   const fixable = v.issues.filter((i) => i.fixable).length;

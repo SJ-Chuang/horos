@@ -87,6 +87,10 @@ class TrainRunConfig(BaseModel):
     #: category names to train on; None = all. Unselected classes' objects
     #: become background in this run's dataset snapshot.
     categories: list[str] | None = None
+    #: with a category subset: keep images that contain none of the selected
+    #: classes as background negatives (True) or drop them (False, default —
+    #: the dataset shrinks and the image-count rules follow)
+    include_background: bool = False
     #: what "best checkpoint" means — "map" (detection quality, default),
     #: "smoothed_map" (mAP smoothed before comparison; robust when a tiny
     #: valid split makes per-epoch mAP noisy) or "loss" (lowest val loss)
@@ -454,16 +458,32 @@ def derive_hyperparameters(
     except UnknownModelError:
         model_info = None  # testing backends: derive without model metadata
     memory = probe_memory(config.device.partition(":")[0] if config.device else None)
+    notes: list[str] = []
     if config.categories is not None:
         # the rules must see the data this run will actually train on
         from horos.core.stats import compute_stats
 
-        stats = compute_stats(
-            filter_dataset_categories(project.to_dataset(), config.categories)
+        full = project.to_dataset()
+        filtered = filter_dataset_categories(
+            full, config.categories, include_background=config.include_background
         )
+        stats = compute_stats(filtered)
+        background = len(full.images) - len({a.image_id for a in filtered.annotations})
+        if background:
+            notes.append(
+                f"{background} of {len(full.images)} images contain none of the "
+                f"selected classes {sorted(config.categories)}: "
+                + (
+                    f"kept as background negatives (include_background=True) — the "
+                    f"image-count rules see all {stats.num_images} images"
+                    if config.include_background
+                    else f"excluded from this run (include_background=False) — the "
+                    f"image-count rules see the remaining {stats.num_images} images"
+                )
+            )
     else:
         stats = dataset_stats(project)
-    return derive_plan(
+    plan = derive_plan(
         stats,
         model=config.model,
         model_info=model_info,
@@ -476,6 +496,8 @@ def derive_hyperparameters(
             "mosaic_ratio": config.mosaic_ratio,
         },
     )
+    plan.notes = [*notes, *plan.notes]
+    return plan
 
 
 @capability(
@@ -510,7 +532,9 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
 
     dataset = project.to_dataset()
     if config.categories is not None:
-        dataset = filter_dataset_categories(dataset, config.categories)
+        dataset = filter_dataset_categories(
+            dataset, config.categories, include_background=config.include_background
+        )
     # allocation follows the project's split assignment (the Dataset page):
     # train trains, valid validates, test stays untouched for later evaluation
     split_counts = {
@@ -519,6 +543,17 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     }
     train_count, valid_count = split_counts["train"], split_counts["valid"]
     if train_count == 0 or valid_count == 0:
+        empty = [s for s in ("train", "valid") if split_counts[s] == 0]
+        if config.categories is not None and not config.include_background:
+            # the class selection emptied the split: say so, with the two
+            # ways out (a wider selection or keeping background images)
+            raise ProjectError(
+                f"The selected categories {config.categories} have no annotated "
+                f"images in the {' and '.join(empty)} split (found "
+                f"train={train_count}, valid={valid_count}). Select more classes, "
+                f"re-split on the Dataset page, or set include_background=True to "
+                f"keep images without those classes as background."
+            )
         raise ProjectError(
             f"Training needs a non-empty train and valid split (found "
             f"train={train_count}, valid={valid_count}). Re-split on the "
@@ -574,7 +609,11 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     # at the cost of copying images per run (dataset fingerprints in E7 will
     # let identical exports be shared).
     export_dataset(
-        project, run_dir / "dataset", format="coco", categories=config.categories
+        project,
+        run_dir / "dataset",
+        format="coco",
+        categories=config.categories,
+        include_background=config.include_background,
     )
 
     # mosaic composites are baked into the train snapshot here, before the
