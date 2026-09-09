@@ -59,6 +59,54 @@ def test_import_yolo_autodetected(tmp_path):
     assert summary.num_images == 3
 
 
+def test_import_without_split_info_gets_default_split(tmp_path):
+    # a flat export (no split dirs) must not land every image in "train":
+    # the import applies the default 80/10/10 split and says so in a warning
+    from helpers.data import make_image
+
+    from horos.core.dataset import Annotation, Category, Dataset, ImageRecord
+    from horos.core.formats.coco import write_coco
+
+    dataset = Dataset(
+        categories=[Category(id=1, name="forklift", color="#e6194b")],
+        images=[
+            ImageRecord(id=i, file_name=f"img{i}.png", width=64, height=48)
+            for i in range(1, 11)
+        ],
+        annotations=[
+            Annotation(id=i, image_id=i, category_id=1, bbox=(4.0, 4.0, 16.0, 12.0))
+            for i in range(1, 11)
+        ],
+    )
+    staging = tmp_path / "staging"
+    image_paths = {
+        r.id: make_image(staging / r.file_name, r.width, r.height)
+        for r in dataset.images
+    }
+    src = tmp_path / "coco"
+    write_coco(
+        dataset, src, image_paths=image_paths, split_layout=False, copy_images=True
+    )
+
+    project = create_project(tmp_path / "proj")
+    summary = import_dataset(project, src)
+    assert summary.split_counts == {"train": 8, "valid": 1, "test": 1}
+    assert any("80/10/10" in w for w in summary.warnings)
+    counts: dict[str, int] = {}
+    for record in project.list_images():
+        counts[record.split] = counts.get(record.split, 0) + 1
+    assert counts == {"train": 8, "valid": 1, "test": 1}
+
+
+def test_import_explicit_splits_are_preserved(tmp_path):
+    # sources that ship their own split layout keep it untouched
+    coco_dir = write_sample_coco_dir(tmp_path / "coco")
+    project = create_project(tmp_path / "proj")
+    summary = import_dataset(project, coco_dir)
+    assert summary.split_counts == {"train": 2, "valid": 1}
+    assert not any("80/10/10" in w for w in summary.warnings)
+
+
 def test_import_zip(tmp_path):
     coco_dir = write_sample_coco_dir(tmp_path / "coco")
     zip_path = tmp_path / "upload.zip"

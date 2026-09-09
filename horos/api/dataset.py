@@ -91,6 +91,29 @@ def _read_any(
     return detected, dataset, image_paths
 
 
+def _assign_splits(
+    ids: list[int], *, train: float, valid: float, test: float, seed: int
+) -> dict[int, str]:
+    """Shuffle-and-cut split assignment shared by resplit and import."""
+    import random
+
+    rng = random.Random(seed)
+    ids = list(ids)
+    rng.shuffle(ids)
+    n = len(ids)
+    n_train = round(n * train)
+    n_valid = round(n * valid)
+    assignment: dict[int, str] = {}
+    for pos, image_id in enumerate(ids):
+        if pos < n_train:
+            assignment[image_id] = "train"
+        elif pos < n_train + n_valid:
+            assignment[image_id] = "valid"
+        else:
+            assignment[image_id] = "test"
+    return assignment
+
+
 def _sha256(path: Path) -> str | None:
     try:
         digest = hashlib.sha256()
@@ -308,6 +331,23 @@ def import_dataset(
             project.save_annotations(
                 new_image_id, annotations, expected_version=current.version
             )
+
+    # a source with no split structure lands every image in "train" — give
+    # those imports the default 80/10/10 split instead of leaving valid and
+    # test at 0 (deterministic under seed 42; re-split to change it)
+    incoming_splits = {img.split for img in dataset.images if img.id in image_map}
+    if incoming_splits == {"train"} and len(image_map) >= 3:
+        assignment = _assign_splits(
+            sorted(image_map.values()), train=0.8, valid=0.1, test=0.1, seed=42
+        )
+        project.update_image_splits(assignment)
+        for img in dataset.images:
+            if img.id in image_map:
+                img.split = assignment[image_map[img.id]]
+        warnings.append(
+            "Source had no train/valid/test split — applied the default "
+            "80/10/10 split (seed 42); use re-split to change it"
+        )
 
     split_counts: dict[str, int] = {}
     for image in dataset.images:
@@ -602,28 +642,15 @@ def resplit(
 ) -> dict[str, int]:
     """Randomly reassign splits (deterministic under `seed`). No symlinks —
     the split is an attribute on the image record (R7)."""
-    import random
-
     total = train + valid + test
     if abs(total - 1.0) > 1e-6:
         raise ProjectError(f"Split ratios must sum to 1.0, got {total}")
     images = project.list_images()
     if not images:
         raise ProjectError("Project has no images to split")
-    rng = random.Random(seed)
-    ids = [i.id for i in images]
-    rng.shuffle(ids)
-    n = len(ids)
-    n_train = round(n * train)
-    n_valid = round(n * valid)
-    assignment: dict[int, str] = {}
-    for pos, image_id in enumerate(ids):
-        if pos < n_train:
-            assignment[image_id] = "train"
-        elif pos < n_train + n_valid:
-            assignment[image_id] = "valid"
-        else:
-            assignment[image_id] = "test"
+    assignment = _assign_splits(
+        [i.id for i in images], train=train, valid=valid, test=test, seed=seed
+    )
     project.update_image_splits(assignment)
     counts: dict[str, int] = {"train": 0, "valid": 0, "test": 0}
     for split in assignment.values():
