@@ -25,6 +25,15 @@ horos ui ./demo_project
 4. 匯入成功，「Instances per class」表格顯示的是輸入的名稱
 5. 重做步驟 1 但按 Cancel：狀態列顯示「Import cancelled — nothing was changed.」，摘要數字不變
 
+### B2. LabelMe 上傳
+
+1. 準備 LabelMe 標註的 zip（每張影像旁有同名 `.json`，含 `shapes` 與 `imagePath`；
+   可以是單一資料夾，也可以分 train/valid/test 子目錄），拖進虛線框
+2. 應直接匯入成功，摘要列顯示 `(LABELME)`，類別名取自 shape 的 `label`
+3. 若 zip 裡有沒有 `.json` 的影像，摘要的 warnings 會列出「N image(s) have no LabelMe JSON —
+   imported as unannotated images」，這些影像可直接到 Annotate 頁標註
+4. 若 shape 含 circle / line / point 等，warnings 會分別列出轉外接框與跳過的數量，匯入不中斷
+
 ### C. 檔名衝突確認
 
 1. 上傳任一資料集 zip，成功後**再上傳同一包**

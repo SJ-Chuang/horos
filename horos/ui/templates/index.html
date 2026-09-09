@@ -121,8 +121,12 @@
       <input type="file" id="file-input" accept=".zip">
       <p><strong>Drop a dataset .zip here</strong> or click to choose a file</p>
       <p>COCO (<code>_annotations.coco.json</code>), YOLO (<code>data.yaml</code>),
-         Pascal VOC, Darknet, or VIA (<code>via_region_data.json</code>) —
-         format is detected automatically</p>
+         Pascal VOC, Darknet, VIA (<code>via_region_data.json</code>), or LabelMe
+         (one <code>.json</code> per image) — format is detected automatically</p>
+    </div>
+    <div id="upload-progress-row" class="hidden">
+      <div class="bar"><div id="upload-bar"></div></div>
+      <span id="upload-phase"></span>
     </div>
     <p id="status"></p>
   </section>

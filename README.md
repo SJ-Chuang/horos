@@ -43,7 +43,7 @@ Run the whole pipeline from the terminal:
 
 ```bash
 horos init my-project                   # new project directory
-horos import my-project path/to/data    # COCO / YOLO / VOC / Darknet / VIA, dir or zip
+horos import my-project path/to/data    # COCO / YOLO / VOC / Darknet / VIA / LabelMe, dir or zip
 horos ui my-project                     # web UI: dataset, annotate, train, evaluate
 ```
 
@@ -68,8 +68,8 @@ report = api.get_eval_report(project, record.run_id, "test")
 
 ### Dataset
 
-Import by dropping a zip (COCO / YOLO / VOC / Darknet / VIA — format is
-auto-detected), get a validation report with actionable errors, per-class
+Import by dropping a zip (COCO / YOLO / VOC / Darknet / VIA / LabelMe — format
+is auto-detected), get a validation report with actionable errors, per-class
 statistics, and train/valid/test re-splitting.
 
 <img src="docs/assets/screens/dataset.png" alt="Dataset page" width="100%">

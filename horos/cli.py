@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("source")
     p.add_argument("--project", required=True)
-    p.add_argument("--format", choices=["coco", "yolo", "voc", "darknet", "via"])
+    p.add_argument("--format", choices=["coco", "yolo", "voc", "darknet", "via", "labelme"])
     p.add_argument(
         "--no-copy",
         action="store_true",
@@ -55,13 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export", help="Export the project dataset")
     p.add_argument("out_dir")
     p.add_argument("--project", required=True)
-    p.add_argument("--format", choices=["coco", "yolo"], default="coco")
+    p.add_argument("--format", choices=["coco", "yolo", "labelme"], default="coco")
 
     p = sub.add_parser("convert", help="Convert a dataset between formats")
     p.add_argument("source")
     p.add_argument("out_dir")
-    p.add_argument("--to", required=True, choices=["coco", "yolo"], dest="to_format")
-    p.add_argument("--from", choices=["coco", "yolo", "voc", "darknet", "via"],
+    p.add_argument("--to", required=True, choices=["coco", "yolo", "labelme"], dest="to_format")
+    p.add_argument("--from", choices=["coco", "yolo", "voc", "darknet", "via", "labelme"],
                    dest="from_format")
 
     p = sub.add_parser("validate", help="Validate the project dataset")

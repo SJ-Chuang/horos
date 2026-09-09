@@ -1,8 +1,9 @@
 """Dataset format codecs. Each format reads to / writes from `horos.core.dataset.Dataset`.
 
-COCO and YOLO support read and write; Pascal VOC, Darknet, and VIA (VGG Image
-Annotator) are import-only (design decision: users bring legacy data in,
-horos exports COCO/YOLO).
+COCO, YOLO and LabelMe support read and write; Pascal VOC, Darknet, and VIA
+(VGG Image Annotator) are import-only (design decision: users bring legacy
+data in, horos exports COCO/YOLO, plus LabelMe so a dataset can go back to the
+labelme tool for edits).
 """
 
 from __future__ import annotations
@@ -10,7 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-DatasetFormat = Literal["coco", "yolo", "voc", "darknet", "via"]
+DatasetFormat = Literal["coco", "yolo", "voc", "darknet", "via", "labelme"]
+
+#: formats horos can write (export / convert targets)
+WRITABLE_FORMATS: tuple[str, ...] = ("coco", "yolo", "labelme")
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
@@ -70,6 +74,12 @@ def detect_format(root: Path) -> DatasetFormat | None:
         return "voc"
     if _looks_like_darknet(root):
         return "darknet"
+    from . import labelme as labelme_format
+
+    # one JSON per image carrying "shapes" + "imagePath"; must precede the
+    # single-JSON COCO fallback below (a one-image LabelMe dir has one JSON too)
+    if labelme_format.looks_like_labelme(root):
+        return "labelme"
     # A bare COCO export: a single .json next to an images dir
     json_files = [p for p in root.glob("*.json")]
     if len(json_files) == 1:

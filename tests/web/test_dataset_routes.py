@@ -146,6 +146,16 @@ def test_export_route(client, tmp_path):
     assert body["path"].endswith("data.yaml")
 
 
+def test_export_route_labelme(client, tmp_path):
+    out = tmp_path / "out"
+    body = client.post(
+        "/api/v1/dataset/export",
+        json={"out_dir": str(out), "format": "labelme"},
+    ).get_json()
+    assert body["path"] == str(out)
+    assert any(out.rglob("*.json"))
+
+
 def test_create_project_route(tmp_path):
     app = create_app()
     app.testing = True

@@ -61,6 +61,14 @@ def test_convert(tmp_path, capsys):
     assert code == 0 and body["path"].endswith("data.yaml")
 
 
+def test_convert_to_labelme(tmp_path, capsys):
+    coco_dir = write_sample_coco_dir(tmp_path / "coco")
+    out = tmp_path / "labelme"
+    code, body = _run(capsys, "convert", str(coco_dir), str(out), "--to", "labelme")
+    assert code == 0 and body["path"] == str(out)
+    assert (out / "train" / "a.json").is_file() and (out / "valid" / "c.json").is_file()
+
+
 def test_models_lists_licenses(capsys):
     code, body = _run(capsys, "models")
     assert code == 0

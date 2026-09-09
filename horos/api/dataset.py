@@ -15,6 +15,7 @@ from horos.core import formats
 from horos.core.dataset import Category, Dataset, default_color
 from horos.core.formats import coco as coco_format
 from horos.core.formats import darknet as darknet_format
+from horos.core.formats import labelme as labelme_format
 from horos.core.formats import via as via_format
 from horos.core.formats import voc as voc_format
 from horos.core.formats import yolo as yolo_format
@@ -74,7 +75,7 @@ def _read_any(
             f"Could not detect a supported dataset format under {source}. Expected "
             f"a COCO '_annotations.coco.json', a YOLO 'data.yaml', Pascal VOC "
             f"<annotation> XML files, Darknet label .txt files next to images, "
-            f"or a VIA 'via_region_data.json'."
+            f"a VIA 'via_region_data.json', or LabelMe per-image JSON files."
         )
     if detected == "coco":
         dataset, image_paths = coco_format.read_coco(source)
@@ -86,6 +87,8 @@ def _read_any(
         dataset, image_paths = darknet_format.read_darknet(source, class_names=class_names)
     elif detected == "via":
         dataset, image_paths = via_format.read_via(source, class_names=class_names)
+    elif detected == "labelme":
+        dataset, image_paths = labelme_format.read_labelme(source)
     else:
         raise DatasetFormatError(f"Unsupported dataset format '{detected}'")
     return detected, dataset, image_paths
@@ -127,7 +130,7 @@ def _sha256(path: Path) -> str | None:
 
 @capability(
     "dataset.import",
-    summary="Import a COCO or YOLO dataset into a project (format auto-detected)",
+    summary="Import a COCO / YOLO / VOC / Darknet / VIA / LabelMe dataset (format auto-detected)",
     web_route="/api/v1/dataset/import",
     web_methods=("POST",),
     cli="import",
@@ -472,12 +475,16 @@ def export_dataset(
         return written[0].parent.parent if len(written) > 1 else written[0]
     if format == "yolo":
         return yolo_format.write_yolo(dataset, out_dir, image_paths=image_paths)
-    raise DatasetFormatError(f"Unsupported export format '{format}' (coco|yolo)")
+    if format == "labelme":
+        return labelme_format.write_labelme(dataset, out_dir, image_paths=image_paths)
+    raise DatasetFormatError(
+        f"Unsupported export format '{format}' ({'|'.join(formats.WRITABLE_FORMATS)})"
+    )
 
 
 @capability(
     "dataset.convert",
-    summary="Convert a dataset between COCO and YOLO without creating a project",
+    summary="Convert a dataset to COCO, YOLO or LabelMe without creating a project",
     not_web_because="Server-side path-to-path conversion is a CLI/scripting concern.",
     cli="convert",
 )
@@ -499,7 +506,11 @@ def convert_dataset(
         return written[0].parent.parent if len(written) > 1 else written[0]
     if to_format == "yolo":
         return yolo_format.write_yolo(dataset, Path(out_dir), image_paths=image_paths)
-    raise DatasetFormatError(f"Unsupported target format '{to_format}' (coco|yolo)")
+    if to_format == "labelme":
+        return labelme_format.write_labelme(dataset, Path(out_dir), image_paths=image_paths)
+    raise DatasetFormatError(
+        f"Unsupported target format '{to_format}' ({'|'.join(formats.WRITABLE_FORMATS)})"
+    )
 
 
 @capability(

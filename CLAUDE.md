@@ -23,7 +23,7 @@ The problem it solves is not "which model is more accurate". It is **the path th
 |---|---|
 | Models | RF-DETR Nano / Small / Medium / Large (Apache 2.0) |
 | Auto-labeling | OWLv2 open-vocabulary zero-shot (Apache 2.0) |
-| Data formats | COCO JSON, YOLO (read + write); Pascal VOC, Darknet (import only) |
+| Data formats | COCO JSON, YOLO, LabelMe (read + write); Pascal VOC, Darknet, VIA (import only) |
 | Export | ONNX, TensorRT, TFLite |
 | Interfaces | Python API, Web API (Flask), WebUI (Flask) |
 
