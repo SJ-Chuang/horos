@@ -11,14 +11,19 @@ venv/
 .pytest_cache/
 .ruff_cache/
 
-# horos runtime artifacts — never commit weights, datasets, or caches (§10)
+# horos runtime artifacts — never commit weights, datasets, or caches (§10, R8)
 *.pt
 *.pth
+*.ckpt
 *.onnx
 *.engine
 *.tflite
 .horos/
+# training run outputs: checkpoints, dataset snapshots, event logs, eval media
+runs/
+# local horos projects (images + annotations + runs) — data, never source
 demo_project/
+balloon-det/
 
 # OS / editor
 .DS_Store
