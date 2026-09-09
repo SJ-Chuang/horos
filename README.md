@@ -218,9 +218,21 @@ horos install       # rfdetr (--no-deps), training stack, albumentations, transf
 ## Development
 
 ```bash
+bash scripts/setup_local.sh --dev          # install.sh/.bat + [dev] extras + horos doctor
+bash scripts/setup_local.sh --light --dev  # torch-free core only (annotation/dataset work)
+bash scripts/local_test.sh --lint          # invariants first, then pytest and ruff
+```
+
+The setup script runs the same `install.sh` / `install.bat` users run, then
+`horos doctor` as the installation check — a missing or mis-built dependency
+fails the script instead of surfacing later as a training-time ImportError.
+Doing it by hand is equivalent:
+
+```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e .[dev]      # the core is torch-free by design
 horos install              # ML stack — needed for the backend/training tests
+horos doctor               # must print "Environment OK."
 pytest tests/test_invariants.py && pytest
 ```
 

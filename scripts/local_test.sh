@@ -135,6 +135,13 @@ echo ""
 # Full pytest (unless --quick): invariants first, then everything else
 # ------------------------------------------------------------------
 if [[ "$QUICK" != "true" ]]; then
+  if ! python -c "import pytest" >/dev/null 2>&1; then
+    echo "ERROR: pytest is not installed in $VENV_DIR."
+    echo "Run 'bash scripts/setup_local.sh --dev' (installs the [dev] extras),"
+    echo "or use 'bash scripts/local_test.sh --quick' for the import/CLI checks only."
+    exit 1
+  fi
+
   echo "==> Running architecture invariants (tests/test_invariants.py)..."
   if python -m pytest tests/test_invariants.py -q; then
     echo "    PASS"

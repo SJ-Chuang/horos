@@ -7,18 +7,27 @@ set -Eeuo pipefail
 # Set up a local development virtual environment, clean build artifacts,
 # and install horos in editable mode.
 #
-# NOTE: plain `pip install -e .` pulls torch from PyPI, which is wrong on
-# Jetson and on Windows-with-CUDA. For a platform-aware torch install use
-# ./install.sh at the repo root; this script is the developer-loop tool.
+# The default (full) mode delegates the install to the user-facing installer
+# — ./install.sh (Ubuntu / macOS / Jetson) or install.bat (Windows, when run
+# from Git Bash / MSYS) — so developers exercise exactly the path users take:
+# .venv, the horos core, then `horos install` picking the platform-correct ML
+# stack (torch source, rfdetr pin, albumentations, transformers). Afterwards
+# `horos doctor` runs as the installation check; a missing or mis-built
+# dependency fails this script. Plain `pip install -e .` is NOT used for the
+# full mode: it would pull a PyPI torch, which is wrong on Jetson and on
+# Windows-with-CUDA.
+#
+# --light keeps a torch-free environment for dataset/annotation development
+# and skips the installer and doctor entirely.
 #
 # Usage:
-#   bash scripts/setup_local.sh                       # Create .venv (if missing), install package
+#   bash scripts/setup_local.sh                       # install.sh/.bat + doctor check
 #   bash scripts/setup_local.sh --recreate            # Delete and recreate .venv
-#   bash scripts/setup_local.sh --dev                 # Install with [dev] extras (pytest, ruff)
+#   bash scripts/setup_local.sh --dev                 # Also install [dev] extras (pytest, ruff)
 #   bash scripts/setup_local.sh --light --dev         # No ML deps: annotation-only dev loop
 #   bash scripts/setup_local.sh --clean-only          # Only clean caches, no venv/install
 #   bash scripts/setup_local.sh --python python3.11   # Use specific Python version
-#   bash scripts/setup_local.sh --no-cache            # pip install with --no-cache-dir
+#   bash scripts/setup_local.sh --no-cache            # pip installs without the wheel cache
 # ----------------------------------------------------------------------
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,14 +48,19 @@ Usage:
 
 Options:
   --recreate          Delete existing .venv and recreate from scratch.
-  --dev               Install with [dev] extras (pip install -e ".[dev]").
-  --light             Install with --no-deps plus the light runtime deps only
-                      (no torch/rfdetr/transformers) — dataset + annotation
-                      development without the ~3 GB ML stack.
+  --dev               Also install the [dev] extras (pytest, ruff).
+  --light             Install the torch-free core only (no torch/rfdetr/
+                      transformers) — dataset + annotation development
+                      without the ~3 GB ML stack. Skips install.sh/.bat and
+                      the doctor check.
   --clean-only        Only clean __pycache__, .pytest_cache, dist, build, *.egg-info.
   --python <path>     Use specified Python executable (e.g., python3.11).
-  --no-cache          Pass --no-cache-dir to pip install.
+  --no-cache          Run pip without its wheel cache (PIP_NO_CACHE_DIR=1).
   -h, --help          Show this help message.
+
+Full mode runs ./install.sh (or install.bat under Git Bash / MSYS on Windows)
+and then `horos doctor`; the script fails if doctor reports a missing or
+mis-built dependency.
 
 Environment variables:
   PYTHON_BIN          Python executable fallback. Default: python3
@@ -130,61 +144,91 @@ echo "==> Light mode:   $LIGHT"
 echo "==> No cache:     $NO_CACHE"
 
 # ------------------------------------------------------------------
-# Create / recreate virtual environment
+# Recreate virtual environment on request
 # ------------------------------------------------------------------
 if [[ "$RECREATE" == "true" && -d "$VENV_DIR" ]]; then
   echo "==> Removing existing virtual environment..."
   rm -rf "$VENV_DIR"
 fi
 
-if [[ ! -d "$VENV_DIR" ]]; then
-  echo "==> Creating virtual environment..."
-  "$PYTHON_BIN" -m venv "$VENV_DIR"
-else
-  echo "==> Using existing virtual environment: $VENV_DIR"
+if [[ "$NO_CACHE" == "true" ]]; then
+  # honoured by every pip invocation below, including those inside install.sh/.bat
+  export PIP_NO_CACHE_DIR=1
 fi
 
-# ------------------------------------------------------------------
-# Activate
-# ------------------------------------------------------------------
-echo "==> Activating virtual environment..."
-# shellcheck disable=SC1090
-source "$VENV_DIR/bin/activate"
+# The installers must create ./.venv themselves; an activated foreign venv
+# would otherwise be reused, and this script is about the project venv.
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+  echo "==> Ignoring the activated virtualenv ($VIRTUAL_ENV); using ./$VENV_DIR"
+  unset VIRTUAL_ENV
+fi
 
-echo "==> Python in venv: $(which python) ($(python --version 2>&1))"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) ON_WINDOWS="true" ;;
+  *) ON_WINDOWS="false" ;;
+esac
 
-# ------------------------------------------------------------------
-# Upgrade base tools
-# ------------------------------------------------------------------
-echo "==> Upgrading pip / setuptools / wheel..."
-python -m pip install --upgrade pip setuptools wheel
-
-# ------------------------------------------------------------------
-# Install package
-# ------------------------------------------------------------------
-PIP_EXTRA_ARGS=""
-if [[ "$NO_CACHE" == "true" ]]; then
-  PIP_EXTRA_ARGS="--no-cache-dir"
+if [[ "$ON_WINDOWS" == "true" ]]; then
+  VENV_PY="$VENV_DIR/Scripts/python.exe"
+else
+  VENV_PY="$VENV_DIR/bin/python"
 fi
 
 if [[ "$LIGHT" == "true" ]]; then
-  echo "==> Installing horos in editable mode (--light: no ML dependencies)..."
-  # shellcheck disable=SC2086
-  python -m pip install -e . --no-deps $PIP_EXTRA_ARGS
-  # shellcheck disable=SC2086
-  python -m pip install "pydantic>=2.6,<3" "flask>=3.0,<4" "pyyaml>=6.0" "pillow>=10.0" $PIP_EXTRA_ARGS
-  if [[ "$DEV" == "true" ]]; then
-    # shellcheck disable=SC2086
-    python -m pip install "pytest>=8" "ruff>=0.4" $PIP_EXTRA_ARGS
+  # --------------------------------------------------------------
+  # Light mode: torch-free environment, no installer, no doctor
+  # --------------------------------------------------------------
+  if [[ ! -d "$VENV_DIR" ]]; then
+    echo "==> Creating virtual environment..."
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
+  else
+    echo "==> Using existing virtual environment: $VENV_DIR"
   fi
-elif [[ "$DEV" == "true" ]]; then
-  echo "==> Installing horos in editable mode with [dev] extras..."
-  # shellcheck disable=SC2086
-  python -m pip install -e ".[dev]" $PIP_EXTRA_ARGS
+  echo "==> Python in venv: $VENV_PY ($("$VENV_PY" --version 2>&1))"
+  echo "==> Upgrading pip / setuptools / wheel..."
+  "$VENV_PY" -m pip install --upgrade pip setuptools wheel
+  echo "==> Installing horos in editable mode (--light: core only, no ML stack)..."
+  # the core's declared dependencies are torch-free by design, so a plain
+  # editable install IS the light environment — no hand-maintained dep list
+  "$VENV_PY" -m pip install -e .
 else
-  echo "==> Installing horos in editable mode..."
-  # shellcheck disable=SC2086
-  python -m pip install -e . $PIP_EXTRA_ARGS
+  # --------------------------------------------------------------
+  # Full mode: the user-facing installer builds the environment
+  # --------------------------------------------------------------
+  if [[ "$ON_WINDOWS" == "true" ]]; then
+    echo "==> Running install.bat (Windows installer)..."
+    # install.bat finds `python` on PATH; put the requested interpreter first
+    PY_DIR="$(dirname "$(command -v "$PYTHON_BIN")")"
+    PATH="$PY_DIR:$PATH" cmd.exe //c install.bat
+  else
+    echo "==> Running install.sh (Ubuntu / macOS / Jetson installer)..."
+    PYTHON="$PYTHON_BIN" bash ./install.sh
+  fi
+  echo "==> Python in venv: $VENV_PY ($("$VENV_PY" --version 2>&1))"
+fi
+
+# ------------------------------------------------------------------
+# Dev extras (pytest, ruff) on top of whatever the installer built
+# ------------------------------------------------------------------
+if [[ "$DEV" == "true" ]]; then
+  echo "==> Installing [dev] extras (pytest, ruff)..."
+  # [dev] adds only pytest/ruff on top of the core deps; the ML stack is not in
+  # the base requirements, so this cannot disturb what horos install chose
+  "$VENV_PY" -m pip install -e ".[dev]"
+fi
+
+# ------------------------------------------------------------------
+# Installation check: horos doctor (full mode only)
+# ------------------------------------------------------------------
+if [[ "$LIGHT" != "true" ]]; then
+  echo ""
+  echo "==> Installation check: horos doctor"
+  if ! "$VENV_PY" -m horos.cli doctor; then
+    echo ""
+    echo "ERROR: horos doctor reports a missing or mis-built dependency (see above)."
+    echo "Follow the listed fix/manual steps, then re-run this script."
+    exit 1
+  fi
 fi
 
 # ------------------------------------------------------------------
@@ -192,9 +236,18 @@ fi
 # ------------------------------------------------------------------
 echo ""
 echo "==> Installed package info:"
-python -m pip show horos || true
+"$VENV_PY" -m pip show horos || true
 
 echo ""
 echo "Setup completed successfully."
-echo "  Activate with: source $VENV_DIR/bin/activate"
-echo "  Test with:     bash scripts/local_test.sh"
+if [[ "$ON_WINDOWS" == "true" ]]; then
+  echo "  Activate with: source $VENV_DIR/Scripts/activate"
+else
+  echo "  Activate with: source $VENV_DIR/bin/activate"
+fi
+if [[ "$DEV" == "true" ]]; then
+  echo "  Test with:     bash scripts/local_test.sh"
+else
+  echo "  Quick check:   bash scripts/local_test.sh --quick"
+  echo "  Full tests:    re-run with --dev first (installs pytest, ruff)"
+fi
