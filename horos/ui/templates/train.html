@@ -153,6 +153,8 @@
   .cat-chip.on { border-color: var(--accent); color: var(--text); }
   .cat-chip.locked { opacity: .55; cursor: default; }
   .cat-chip.locked input { cursor: default; }
+  .cat-chip.empty { opacity: .4; cursor: default; }
+  .cat-chip.empty input { cursor: default; }
   #runs-table tr.selectable { cursor: pointer; }
   #runs-table tr.selectable:hover td { background: rgba(77, 171, 247, .06); }
   #runs-table tr.active td { background: rgba(77, 171, 247, .12); }
@@ -334,6 +336,7 @@ const EDITABLE = ["epochs", "batch_size", "resolution", "lr"];
 const overrides = { epochs: null, batch_size: null, resolution: null, lr: null };
 let currentPlan = null;
 let allCategories = [];          // [{id, name, color}]
+let classInstances = null;       // name → annotation count; null until stats load
 const selectedClasses = new Set();
 let resumeState = null;          // {runId, checkpoint, model}
 
@@ -349,13 +352,22 @@ function renderClassPicks() {
   // resuming locks the picker: the checkpoint's class head fixes the set
   const locked = !!resumeState;
   $("class-picks").innerHTML = allCategories
-    .map((c) => `<label class="cat-chip ${selectedClasses.has(c.name) ? "on" : ""}
-        ${locked ? "locked" : ""}"
-        ${locked ? 'title="Classes are fixed by the resume checkpoint"' : ""}>
-      <input type="checkbox" data-class="${c.name}" ${locked ? "disabled" : ""}
+    .map((c) => {
+      // a class with zero annotations has nothing to train on: disable it
+      // (a resume checkpoint's class set takes precedence over this)
+      const empty = !locked && classInstances !== null
+        && !(classInstances[c.name] > 0);
+      const title = locked ? "Classes are fixed by the resume checkpoint"
+        : empty ? "No annotations for this class — nothing to train on" : "";
+      return `<label class="cat-chip ${selectedClasses.has(c.name) ? "on" : ""}
+        ${locked ? "locked" : ""} ${empty ? "empty" : ""}"
+        ${title ? `title="${title}"` : ""}>
+      <input type="checkbox" data-class="${c.name}"
+             ${locked || empty ? "disabled" : ""}
              ${selectedClasses.has(c.name) ? "checked" : ""}>
       <span class="swatch" style="display:inline-block;width:9px;height:9px;
-        border-radius:3px;background:${c.color || "var(--dim)"}"></span>${c.name}</label>`)
+        border-radius:3px;background:${c.color || "var(--dim)"}"></span>${c.name}</label>`;
+    })
     .join("");
   $("class-picks").querySelectorAll("input[data-class]").forEach((inp) => {
     inp.onchange = () => {
@@ -1068,6 +1080,22 @@ async function init() {
       (test === 0
         ? ' — <span class="note">no test split: keep one for unbiased final numbers</span>'
         : "");
+
+    // per-class counts: grey out classes with zero annotations (nothing to
+    // train on) and drop them from the default selection
+    classInstances = {};
+    (s.per_class || []).forEach((c) => { classInstances[c.name] = c.instances; });
+    const empties = allCategories
+      .filter((c) => !(classInstances[c.name] > 0)).map((c) => c.name);
+    if (!resumeState) {
+      const before = selectedClasses.size;
+      empties.forEach((n) => selectedClasses.delete(n));
+      renderClassPicks();
+      const none = selectedClasses.size === 0;
+      $("class-note").classList.toggle("hidden", !none);
+      if (none) $("start-btn").disabled = true;
+      else if (selectedClasses.size !== before) scheduleDerive();
+    }
   }).catch(() => {});
 
   const models = (await api("/models")).filter((m) => m.trainable);
