@@ -27,7 +27,10 @@ def create_project(path: Path | str, name: str | None = None) -> Project:
     summary="Open an existing horos project",
     not_web_because="The Web API is started against one project; opening is implicit.",
     cli=None,
-    not_cli_because="Every CLI command takes --project; opening is implicit.",
+    not_cli_because=(
+        "Opening is implicit: CLI commands find the project by walking up from "
+        "the current directory, or take --project."
+    ),
 )
 def open_project(path: Path | str) -> Project:
     """Open and structurally validate an existing project."""

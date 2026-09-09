@@ -76,24 +76,50 @@ def _resolve_run(project, run_id: str | None, *, need_checkpoint: bool = True) -
     return chosen.run_id
 
 
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="horos",
         description="horos: annotate, train, evaluate, deploy perception models.",
+        epilog=(
+            "Project commands find the project by walking up from the current "
+            "directory, so --project is optional once you are inside one:\n"
+            "  mkdir beds && cd beds\n"
+            "  horos init beds              # empty directory -> the project IS this directory\n"
+            "  horos import ~/data.zip      # no --project needed\n"
+            "  horos train --epochs 25\n"
+            "  horos models                 # trained models of this project\n"
+            "  horos infer photo.jpg        # --run defaults to the newest completed run\n"
+            "  horos ui                     # opens this project\n"
+            "  horos catalog                # architectures horos can train, with licenses"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=horos.__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("init", help="Create a new horos project")
-    p.add_argument("path")
-    p.add_argument("--name")
+    p = sub.add_parser(
+        "init",
+        help="Create a horos project (in the current directory when it is empty)",
+    )
+    p.add_argument(
+        "target",
+        nargs="?",
+        help="Project name, or a path. A bare name in an empty directory turns "
+        "THAT directory into the project; otherwise a subdirectory of this name "
+        "is created. Omit it to use the current directory.",
+    )
+    p.add_argument("--name", help="Project name (default: the directory's name)")
 
     p = sub.add_parser(
-        "import", help="Import a COCO/YOLO/VOC/Darknet/VIA dataset into a project"
+        "import",
+        help="Import a COCO / YOLO / VOC / Darknet / VIA / LabelMe dataset "
+        "(directory or .zip) into a project",
     )
     p.add_argument("source")
-    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
     p.add_argument("--format", choices=["coco", "yolo", "voc", "darknet", "via", "labelme"])
     p.add_argument(
         "--no-copy",
@@ -113,9 +139,14 @@ def build_parser() -> argparse.ArgumentParser:
         "_darknet.labels, or VIA datasets without class attributes",
     )
 
-    p = sub.add_parser("export", help="Export the project dataset")
+    p = sub.add_parser(
+        "export", help="Export the project's dataset as COCO, YOLO, or LabelMe"
+    )
     p.add_argument("out_dir")
-    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
     p.add_argument("--format", choices=["coco", "yolo", "labelme"], default="coco")
 
     p = sub.add_parser("convert", help="Convert a dataset between formats")
@@ -125,8 +156,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--from", choices=["coco", "yolo", "voc", "darknet", "via", "labelme"],
                    dest="from_format")
 
-    p = sub.add_parser("validate", help="Validate the project dataset")
-    p.add_argument("--project", required=True)
+    p = sub.add_parser(
+        "validate", help="Validate the project dataset; exit 1 when it has errors"
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
     p.add_argument(
         "--fix",
         action="store_true",
@@ -134,11 +170,19 @@ def build_parser() -> argparse.ArgumentParser:
         "overshoots) back into their images, then re-validate",
     )
 
-    p = sub.add_parser("stats", help="Show dataset statistics")
-    p.add_argument("--project", required=True)
+    p = sub.add_parser(
+        "stats", help="Show dataset statistics (classes, splits, object sizes)"
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
 
     p = sub.add_parser("split", help="Re-split images into train/valid/test")
-    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
     p.add_argument("--train", type=float, default=0.8)
     p.add_argument("--valid", type=float, default=0.1)
     p.add_argument("--test", type=float, default=0.1)
@@ -147,7 +191,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "autolabel", help="Zero-shot pre-labels from text prompts (runs in foreground)"
     )
-    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
     p.add_argument(
         "--prompt",
         action="append",
@@ -163,7 +210,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         choices=["bbox", "polygon"],
         default="bbox",
-        help="polygon runs each box through SAM and writes the mask outline",
+        help="polygon refines each kept box into a mask outline with SAM "
+        "(sam-base, downloaded on first use)",
     )
     p.add_argument("--split", choices=["train", "valid", "test"])
     p.add_argument(
@@ -175,7 +223,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "train", help="Train a model (runs in a worker subprocess, streams events)"
     )
-    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
     p.add_argument("--model", default="rfdetr-nano")
     p.add_argument("--epochs", type=int, help="Omit to derive from dataset stats")
     p.add_argument("--batch-size", type=int, help="Omit to derive from memory probe")
@@ -227,20 +278,51 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dynamic-batch", action="store_true", help="ONNX: dynamic batch axis")
     p.add_argument("--opset", type=int, default=17, help="ONNX opset version")
 
-    p = sub.add_parser("infer", help="Run a trained run's model on image(s)")
+    p = sub.add_parser(
+        "infer", help="Detect objects in image(s) with a trained run's model"
+    )
     p.add_argument("images", nargs="+")
-    p.add_argument("--project", required=True)
-    p.add_argument("--run", required=True, dest="run_id")
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument(
+        "--run",
+        dest="run_id",
+        help="Training run id (default: the newest completed run of this project)",
+    )
     p.add_argument("--threshold", type=float, default=0.5)
 
     p = sub.add_parser(
         "evaluate", help="COCO metrics for a run on its held-out split"
     )
-    p.add_argument("--project", required=True)
-    p.add_argument("--run", required=True, dest="run_id")
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument(
+        "--run",
+        dest="run_id",
+        help="Training run id (default: the newest completed run of this project)",
+    )
     p.add_argument("--split", choices=["train", "valid", "test"], default="test")
 
-    sub.add_parser("models", help="List available models (with licenses)")
+    p = sub.add_parser(
+        "models",
+        help="List this project's trained models (completed runs, newest first)",
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="Include runs that are still queued, running, stopped, or failed",
+    )
+    sub.add_parser(
+        "catalog", help="List the model architectures horos can train or run, with licenses"
+    )
     sub.add_parser("capabilities", help="Show what this platform supports")
 
     p = sub.add_parser(
@@ -280,7 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         metavar="project",
-        help="Path to the horos project directory",
+        help="Project directory (default: the project containing the current directory)",
     )
     # kept for compatibility with older docs/scripts: horos ui --project <dir>
     p.add_argument("--project", dest="project_flag", help=argparse.SUPPRESS)
@@ -340,7 +422,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             return exit_code
     try:
         if args.command == "init":
-            project = api.create_project(args.path, name=args.name)
+            cwd = Path.cwd()
+            target, name = args.target, args.name
+            looks_like_path = target is not None and (
+                "/" in target or "\\" in target or Path(target).is_absolute()
+                or target in (".", "..")
+            )
+            from horos.core.project import occupied_by
+
+            if target is None:
+                root = cwd  # no argument: this directory becomes the project
+            elif looks_like_path:
+                root = Path(target)
+            elif not occupied_by(cwd):
+                # a bare name in an empty directory: no pointless nesting
+                root, name = cwd, name or target
+            else:
+                root, name = cwd / target, name or target
+            existing = find_project_root(root) if root.is_dir() else None
+            if existing is not None and existing != root.resolve():
+                print(  # noqa: T201
+                    f"note: this is inside the existing project at {existing}",
+                    file=sys.stderr,
+                )
+            project = api.create_project(root, name=name or Path(root).resolve().name)
+            print(  # noqa: T201
+                f"created project '{project.manifest.name}' in {project.root.resolve()}",
+                file=sys.stderr,
+            )
             _emit({"root": str(project.root), "name": project.manifest.name})
         elif args.command == "import":
             last_phase = [""]
@@ -356,7 +465,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     note = f" ({event.message})" if event.message else ""
                     print(f"{event.phase}{count}{note}", file=sys.stderr)  # noqa: T201
 
-            project = api.open_project(args.project)
+            project = _project_arg(args)
             names = (
                 [n.strip() for n in args.class_names.split(",")] if args.class_names else None
             )
@@ -381,7 +490,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _emit(summary.model_dump())
         elif args.command == "export":
             written = api.export_dataset(
-                api.open_project(args.project), args.out_dir, format=args.format
+                _project_arg(args), args.out_dir, format=args.format
             )
             _emit({"path": str(written)})
         elif args.command == "convert":
@@ -391,7 +500,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             _emit({"path": str(written)})
         elif args.command == "validate":
-            project = api.open_project(args.project)
+            project = _project_arg(args)
             if args.fix:
                 result = api.fix_validation_issues(project)
                 _emit(result.model_dump() | {"ok": result.report.ok})
@@ -400,10 +509,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             _emit(report.model_dump() | {"ok": report.ok})
             return 0 if report.ok else 1
         elif args.command == "stats":
-            _emit(api.dataset_stats(api.open_project(args.project)).model_dump())
+            _emit(api.dataset_stats(_project_arg(args)).model_dump())
         elif args.command == "split":
             counts = api.resplit(
-                api.open_project(args.project),
+                _project_arg(args),
                 train=args.train, valid=args.valid, test=args.test, seed=args.seed,
             )
             _emit(counts)
@@ -419,7 +528,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             failed = False
             for event in autolabel_events(
-                api.open_project(args.project),
+                _project_arg(args),
                 api.PromptSpec(prompts=prompts),
                 model=args.model,
                 threshold=args.threshold,
@@ -438,7 +547,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             from horos.api.train import TrainRunConfig
 
-            project = api.open_project(args.project)
+            project = _project_arg(args)
             record = api.start_training(
                 project,
                 TrainRunConfig(
@@ -499,10 +608,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if failed:
                 return 2
         elif args.command == "infer":
-            project = api.open_project(args.project)
+            project = _project_arg(args)
+            run_id = _resolve_run(project, args.run_id)
             for image in args.images:
                 prediction = api.infer_image(
-                    project, args.run_id, image, threshold=args.threshold
+                    project, run_id, image, threshold=args.threshold
                 )
                 sys.stdout.write(prediction.model_dump_json() + "\n")
                 sys.stdout.flush()
@@ -510,9 +620,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             from horos.api.evaluate import evaluation_events
             from horos.backends.base import dump_event
 
+            project = _project_arg(args)
             failed = False
             for event in evaluation_events(
-                api.open_project(args.project), args.run_id, split=args.split
+                project, _resolve_run(project, args.run_id), split=args.split
             ):
                 sys.stdout.write(dump_event(event) + "\n")  # JSONL stream (R4)
                 sys.stdout.flush()
@@ -520,6 +631,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             if failed:
                 return 2
         elif args.command == "models":
+            from horos.api.report import _series_from_events, run_scores
+            from horos.api.train import _read_events, _run_dir
+
+            project = _project_arg(args)
+            runs = api.list_runs(project)
+            if not args.all:
+                runs = [r for r in runs if r.state == "completed" and r.checkpoint]
+            default_id = next(
+                (r.run_id for r in runs if r.state == "completed" and r.checkpoint), None
+            )
+            rows = []
+            for run in runs:
+                events, _ = _read_events(_run_dir(project, run.run_id))
+                best_epoch, scores = run_scores(_series_from_events(events))
+                rows.append({
+                    "run_id": run.run_id,
+                    "model": run.model,
+                    "state": run.state,
+                    "created_at": run.created_at,
+                    "epochs_completed": run.epochs_completed,
+                    "classes": run.dataset_classes,
+                    "dataset_images": run.dataset_images,
+                    "best_epoch": None if best_epoch is None else best_epoch + 1,
+                    "scores": scores,
+                    "checkpoint": run.checkpoint,
+                    # the run `horos infer` / `export-model` use when --run is omitted
+                    "default": run.run_id == default_id,
+                })
+            if not rows:
+                print(  # noqa: T201
+                    "no completed training runs yet — 'horos train' creates one"
+                    + ("" if args.all else "; --all also lists unfinished runs"),
+                    file=sys.stderr,
+                )
+            _emit(rows)
+        elif args.command == "catalog":
             _emit([m.model_dump() for m in api.list_models()])
         elif args.command == "capabilities":
             _emit(api.platform_capabilities().model_dump())
@@ -592,9 +739,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "ui":
             from horos.web.app import create_app
 
-            project_path = args.project_path or args.project_flag
+            project_path = args.project_path or args.project_flag or find_project_root()
             if not project_path:
-                print("usage: horos ui <project>", file=sys.stderr)  # noqa: T201
+                print(  # noqa: T201
+                    "usage: horos ui [project] — run it inside a project directory, "
+                    "or name one. 'horos init' creates a project.",
+                    file=sys.stderr,
+                )
                 return 2
             app = create_app(project_path)
             app.run(host=args.host, port=args.port)

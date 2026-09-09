@@ -115,10 +115,10 @@ def ensure_supported(feature: str) -> FeatureSupport:
 
 @capability(
     "models.list",
-    summary="List available models with size, latency hint, and license",
+    summary="List the model architectures horos can train or run, with license",
     web_route="/api/v1/models",
     web_methods=("GET",),
-    cli="models",
+    cli="catalog",
 )
 def list_models(task: str | None = None) -> list[ModelInfo]:
     """Registry passthrough (static metadata only — nothing is imported)."""

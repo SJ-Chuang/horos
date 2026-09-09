@@ -42,10 +42,19 @@ what to run if something is missing or mis-built.
 Run the whole pipeline from the terminal:
 
 ```bash
-horos init my-project                   # new project directory
-horos import my-project path/to/data    # COCO / YOLO / VOC / Darknet / VIA / LabelMe, dir or zip
-horos ui my-project                     # web UI: dataset, annotate, train, evaluate
+mkdir my-project && cd my-project
+horos init my-project        # an empty directory becomes the project itself
+horos import path/to/data    # COCO / YOLO / VOC / Darknet / VIA / LabelMe, dir or zip
+horos train                  # hyperparameters derived from the dataset
+horos models                 # the project's trained models (completed runs)
+horos infer photo.jpg        # newest completed run, unless you pass --run
+horos ui                     # web UI: dataset, annotate, train, evaluate
+horos catalog                # architectures horos can train, with their licenses
 ```
+
+Project commands find the project by walking up from the current directory, so
+`--project` is optional once you are inside one; `--run` defaults to the newest
+completed run. Both still accept an explicit value from anywhere.
 
 Or from Python — every UI action has a scriptable twin:
 

@@ -30,4 +30,4 @@ def test_non_ml_commands_never_probe(monkeypatch, capsys):
         raise AssertionError("the gate must not probe for non-ML commands")
 
     monkeypatch.setattr(install_mod, "probe_missing", _boom)
-    assert cli.main(["models"]) == 0
+    assert cli.main(["catalog"]) == 0  # registry listing: no project, no ML stack

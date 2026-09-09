@@ -816,8 +816,7 @@ def update_queued_run(
     summary="List this project's training runs, newest first",
     web_route="/api/v1/train/runs",
     web_methods=("GET",),
-    cli=None,
-    not_cli_because="Run listing and comparison ship with experiment management (E7).",
+    cli="models",
 )
 def list_runs(project: Project, *, advance: bool = False) -> list[RunRecord]:
     root = runs_root(project)

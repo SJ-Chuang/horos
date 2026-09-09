@@ -1,6 +1,7 @@
 """E9-T5: the CLI runs the whole E1 workflow without a browser (E9-S3)."""
 
 import json
+from pathlib import Path
 
 import pytest
 from helpers.data import write_sample_coco_dir
@@ -69,10 +70,50 @@ def test_convert_to_labelme(tmp_path, capsys):
     assert (out / "train" / "a.json").is_file() and (out / "valid" / "c.json").is_file()
 
 
-def test_models_lists_licenses(capsys):
-    code, body = _run(capsys, "models")
+def test_catalog_lists_architectures_with_licenses(capsys):
+    code, body = _run(capsys, "catalog")
     assert code == 0
     assert all(m["weights_license"] == "Apache-2.0" for m in body)
+
+
+def test_models_lists_the_projects_trained_models(tmp_path, monkeypatch, capsys):
+    from helpers.runs import completed_fake_run
+
+    project, record = completed_fake_run(tmp_path, epochs=2)
+    monkeypatch.chdir(project.root)
+    code, body = _run(capsys, "models")
+    assert code == 0 and [m["run_id"] for m in body] == [record.run_id]
+    entry = body[0]
+    assert entry["state"] == "completed" and entry["default"] is True
+    assert entry["classes"] == ["forklift", "pallet"] and entry["epochs_completed"] == 2
+    assert entry["scores"]["loss"] == pytest.approx(0.5)
+    assert entry["checkpoint"].endswith("best.fake")
+
+
+def test_models_without_all_hides_unfinished_runs(tmp_path, monkeypatch, capsys):
+    import time
+
+    from helpers.runs import FAKE, ensure_worker_can_import_helpers
+
+    from horos.api import create_project, import_dataset
+    from horos.api.train import TrainRunConfig, start_training, training_status
+
+    ensure_worker_can_import_helpers()
+    project = create_project(tmp_path / "proj")
+    import_dataset(project, write_sample_coco_dir(tmp_path / "coco"))
+    failed = start_training(
+        project, TrainRunConfig(entrypoint_override=FAKE, epochs=1, extra={"fail": True})
+    )
+    deadline = time.monotonic() + 60
+    while training_status(project, failed.run_id).run.state in ("pending", "running"):
+        assert time.monotonic() < deadline
+        time.sleep(0.2)
+    monkeypatch.chdir(project.root)
+    code, body = _run(capsys, "models")
+    assert code == 0 and body == []
+    code, body = _run(capsys, "models", "--all")
+    assert code == 0 and [m["state"] for m in body] == ["failed"]
+    assert body[0]["default"] is False
 
 
 def test_capabilities(capsys):
@@ -150,3 +191,90 @@ def test_train_streams_events_and_exits_by_state(tmp_path, capsys, monkeypatch):
     assert "started" in types and "completed" in types
     # the last JSON payload is the final run record
     assert payloads[-1]["state"] == "completed"
+
+
+# ------------------------------------------------------- project & run discovery
+
+
+def test_init_in_an_empty_directory_uses_it_directly(tmp_path, monkeypatch, capsys):
+    """`horos init <name>` in an empty directory makes THAT directory the
+    project — no pointless nesting (the common `mkdir x && cd x` flow)."""
+    empty = tmp_path / "beds"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+    code, body = _run(capsys, "init", "beds")
+    assert code == 0
+    assert Path(body["root"]) == empty.resolve() and body["name"] == "beds"
+    assert (empty / "horos.json").is_file()
+
+
+def test_init_ignores_dotfiles_when_deciding_emptiness(tmp_path, monkeypatch, capsys):
+    # a fresh `git init` must not push the project into a subdirectory
+    root = tmp_path / "repo"
+    (root / ".git").mkdir(parents=True)
+    monkeypatch.chdir(root)
+    code, body = _run(capsys, "init", "repo")
+    assert code == 0 and Path(body["root"]) == root.resolve()
+
+
+def test_init_with_files_present_creates_a_subdirectory(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "notes.txt").write_text("keep me", encoding="utf-8")
+    monkeypatch.chdir(root)
+    code, body = _run(capsys, "init", "proj")
+    assert code == 0 and Path(body["root"]) == (root / "proj").resolve()
+    assert (root / "notes.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_init_without_a_name_uses_the_current_directory(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "unnamed"
+    root.mkdir()
+    monkeypatch.chdir(root)
+    code, body = _run(capsys, "init")
+    assert code == 0 and body["name"] == "unnamed"
+
+
+def test_init_with_a_path_still_creates_that_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    code, body = _run(capsys, "init", "nested/deep/proj")
+    assert code == 0 and Path(body["root"]).resolve() == (tmp_path / "nested/deep/proj").resolve()
+
+
+def test_project_commands_find_the_project_from_a_subdirectory(tmp_path, monkeypatch, capsys):
+    from horos.api import create_project, import_dataset
+
+    project = create_project(tmp_path / "proj")
+    import_dataset(project, write_sample_coco_dir(tmp_path / "coco"))
+    monkeypatch.chdir(project.images_dir)  # a subdirectory of the project
+    code, body = _run(capsys, "stats")
+    assert code == 0 and body["num_images"] == 3
+
+
+def test_missing_project_names_the_two_ways_out(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    code = main(["stats"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "--project" in captured.err and "horos init" in captured.err
+
+
+def test_run_defaults_to_the_newest_completed_run(tmp_path, monkeypatch, capsys):
+    from helpers.runs import completed_fake_run
+
+    project, record = completed_fake_run(tmp_path, epochs=1)
+    monkeypatch.chdir(project.root)
+    code = main(["report", "--format", "xlsx"])
+    captured = capsys.readouterr()  # one read: it drains both streams
+    assert code == 0 and record.run_id in json.loads(captured.out)["path"]
+    # the choice is announced on stderr, so stdout stays machine-readable
+    assert f"using run {record.run_id}" in captured.err
+
+
+def test_run_default_without_any_run_explains_itself(tmp_path, monkeypatch, capsys):
+    from horos.api import create_project
+
+    project = create_project(tmp_path / "empty_proj")
+    monkeypatch.chdir(project.root)
+    code = main(["report"])
+    assert code == 2 and "no training runs yet" in capsys.readouterr().err

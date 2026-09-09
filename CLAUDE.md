@@ -610,7 +610,7 @@ When a completed task involves the WebUI, **tell the user in the following forma
 [Done] E2-T5 keyboard shortcuts
 
 [How to run]
-  horos ui --project ./demo_project
+  horos ui ./demo_project
   Open http://localhost:5000 in a browser
 
 [Test steps]
@@ -715,7 +715,7 @@ Two styles, depending on the kind of change:
 
 ```
 [Verification]
-1. horos ui --project ./demo_project, open http://localhost:5000
+1. horos ui ./demo_project, open http://localhost:5000
 2. On the annotate page, press number keys 1-9 to switch class and confirm
    the left-hand highlight follows
 3. Full steps in tests/ui_scenarios/E2-T5.md

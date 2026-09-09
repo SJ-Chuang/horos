@@ -28,6 +28,19 @@ from horos.core.dataset import Annotation, Category, ImageRecord, default_color
 from horos.errors import AnnotationConflictError, ProjectError
 
 MANIFEST_NAME = "horos.json"
+
+
+def occupied_by(root: Path | str) -> list[str]:
+    """Names that make `root` unusable as a new project directory.
+
+    Dotfiles do not count: `git init` (or an editor's dot-directory) must not
+    force the project into a pointless nested subdirectory. The guard exists to
+    protect a directory of real files from gaining images/, annotations/ and
+    runs/, and dot-entries are not that."""
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    return sorted(p.name for p in root.iterdir() if not p.name.startswith("."))
 IMAGE_INDEX_NAME = "images.json"
 STRUCTURE_VERSION = 1
 
@@ -89,9 +102,12 @@ class Project:
         root = Path(root)
         if (root / MANIFEST_NAME).exists():
             raise ProjectError(f"A horos project already exists at {root}")
-        if root.exists() and any(root.iterdir()):
+        occupants = occupied_by(root)
+        if occupants:
+            listed = ", ".join(occupants[:5]) + (" …" if len(occupants) > 5 else "")
             raise ProjectError(
-                f"Refusing to create a project in non-empty directory {root}"
+                f"Refusing to create a project in non-empty directory {root} "
+                f"(contains {listed})"
             )
         root.mkdir(parents=True, exist_ok=True)
         for sub in ("images", "annotations", "runs"):
