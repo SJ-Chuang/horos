@@ -118,6 +118,12 @@ def test_train_streams_events_and_exits_by_state(tmp_path, capsys, monkeypatch):
         return original(project, patched)
 
     monkeypatch.setattr(api, "start_training", with_fake)
+    # the CLI refuses ML commands when torch/rfdetr are absent; the fake backend
+    # needs no torch, so bypass the gate instead of tying this test to what is
+    # installed (the default setup_local.sh venv has no ML stack)
+    import horos.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_ml_preflight", lambda command: None)
 
     code = cli_main(["train", "--project", str(proj_dir), "--epochs", "2"])
     out = capsys.readouterr().out
