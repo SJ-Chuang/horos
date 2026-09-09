@@ -146,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "install",
-        help="Install the ML stack (torch, rfdetr, transformers) matched to "
+        help="Install the ML stack (torch, rfdetr, albumentations, transformers) matched to "
         "this machine's platform and GPU",
     )
     p.add_argument(

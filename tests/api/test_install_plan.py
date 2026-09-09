@@ -6,6 +6,7 @@ regardless of the machine the tests run on.
 """
 
 from horos.api.install import (
+    ALBUMENTATIONS_SPEC,
     RFDETR_NO_DEPS_SPEC,
     RFDETR_SPEC,
     TRAIN_STACK_SPECS,
@@ -15,7 +16,14 @@ from horos.api.install import (
 )
 from horos.core.platform_info import PlatformInfo
 
-ALL_ML = ["torch", "torchvision", "rfdetr", "pytorch_lightning", "transformers"]
+ALL_ML = [
+    "torch",
+    "torchvision",
+    "rfdetr",
+    "pytorch_lightning",
+    "albumentations",
+    "transformers",
+]
 
 
 def _plat(os_family="linux", arch="x86_64", is_jetson=False):
@@ -138,3 +146,27 @@ def test_forced_cpu_never_reinstalls_over_a_cpu_build():
         _plat(os_family="windows"), missing=[], cuda=(13, 1), cpu_build=True, cpu=True
     )
     assert plan.empty
+
+
+def test_albumentations_is_planned_pinned_on_every_platform():
+    # rfdetr[train] does not ship it, yet horos's derived aug_config presets
+    # need it — without this command training dies at the first step with
+    # "Custom Albumentations augmentations require the optional augmentation extra"
+    assert ALBUMENTATIONS_SPEC == "albumentations==2.0.8"  # R5 pin, matches pyproject
+    for platform in (_plat(), _plat("windows"), _plat("macos", "arm64")):
+        assert [ALBUMENTATIONS_SPEC] in _plan(platform).pip_commands
+    jetson = _plan(_plat(arch="aarch64", is_jetson=True), missing=["albumentations"])
+    # its dependency tree has no torch, so the with-deps install is safe on Jetson
+    assert jetson.pip_commands == [[ALBUMENTATIONS_SPEC]] and jetson.manual_actions == []
+
+
+def test_albumentations_is_never_installed_via_the_rfdetr_augment_extra():
+    # rfdetr[augment] would also pull kornia; horos's CPU augmentation
+    # backend never needs it
+    flat = [arg for command in _plan().pip_commands for arg in command]
+    assert not any("augment" in arg for arg in flat)
+
+
+def test_present_albumentations_is_left_alone():
+    plan = _plan(missing=["transformers"])
+    assert plan.pip_commands == [[TRANSFORMERS_SPEC]]

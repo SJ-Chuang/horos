@@ -7,7 +7,7 @@ state, so assertions are membership-based (extra mismatch-repair commands may
 legitimately appear on some machines).
 """
 
-from horos.api.system import _plan_fixes, doctor_report
+from horos.api.system import _RUNTIME_DEPS, _plan_fixes, doctor_report
 from horos.core.platform_info import PlatformInfo
 
 
@@ -40,6 +40,14 @@ def test_missing_training_stack_alone_reinstalls_the_extra():
     # rfdetr installed without [train] (e.g. an old horos env): fix via the extra
     commands, manual = _plan_fixes(["pytorch_lightning"], _plat())
     assert ["rfdetr[train]==1.9.4"] in commands and manual == []
+
+
+def test_missing_albumentations_plans_the_pin():
+    # `horos install` once skipped it, so training failed at the first step
+    # on a "healthy" doctor report — doctor must report and plan it too
+    assert "albumentations" in [name for name, _ in _RUNTIME_DEPS]
+    commands, manual = _plan_fixes(["albumentations"], _plat())
+    assert ["albumentations==2.0.8"] in commands and manual == []
 
 
 def test_missing_transformers_plans_the_owlv2_range():

@@ -18,7 +18,7 @@ import pytest
 
 _MISSING = [
     name
-    for name in ("torch", "rfdetr", "pytorch_lightning")
+    for name in ("torch", "rfdetr", "pytorch_lightning", "albumentations")
     if importlib.util.find_spec(name) is None
 ]
 pytestmark = pytest.mark.skipif(

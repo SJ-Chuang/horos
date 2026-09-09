@@ -28,7 +28,7 @@ Install ([details & Jetson notes below](#installation)):
 
 ```bash
 pip install horos   # lightweight core: datasets, annotation, web UI — no torch
-horos install       # ML stack (torch / rfdetr / transformers), matched to your machine
+horos install       # ML stack (torch / rfdetr / albumentations / transformers), matched to your machine
 horos doctor        # verifies the environment; --fix installs what's missing
 ```
 
@@ -201,7 +201,7 @@ visible (`./install.sh` does this automatically on Jetson):
 pip install horos
 # torch/torchvision: install the NVIDIA wheel matching your JetPack version —
 # https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/
-horos install       # rfdetr (--no-deps), training stack, transformers
+horos install       # rfdetr (--no-deps), training stack, albumentations, transformers
 ```
 
 ## Roadmap

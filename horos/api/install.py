@@ -43,6 +43,16 @@ RFDETR_NO_DEPS_SPEC = "rfdetr==1.9.4"
 # transformers hosts the OWLv2 backend; range matches rfdetr 1.9.4's own
 # constraint (>=5.1.0,<6).
 TRANSFORMERS_SPEC = "transformers>=5.1.0,<6"
+# Backs rfdetr's aug_config path (the derived augmentation presets, E5) — without
+# it rfdetr raises "Custom Albumentations augmentations require the optional
+# augmentation extra" at the first training step. MIT (verified in wheel
+# metadata 2026-09; the AGPL fork is the separate "albumentationsx" package).
+# Pinned exactly for the same reason as rfdetr (R5): augmentation changes
+# silently shift annotations and mAP. Installed on its own rather than via
+# rfdetr[augment], which would also pull kornia — horos passes
+# augmentation_backend="cpu" and never needs the GPU path. Must match the
+# pin in pyproject.toml's [ml] extra.
+ALBUMENTATIONS_SPEC = "albumentations==2.0.8"
 # rfdetr's [train] stack spelled out, for the Jetson --no-deps path where pip
 # must never get the chance to drag a PyPI torch in behind our back.
 TRAIN_STACK_SPECS = [
@@ -62,7 +72,14 @@ JETPACK_TORCH_ACTION = (
 )
 
 #: import names of the ML stack, as probed by the readiness check and doctor
-ML_IMPORT_NAMES = ("torch", "torchvision", "rfdetr", "pytorch_lightning", "transformers")
+ML_IMPORT_NAMES = (
+    "torch",
+    "torchvision",
+    "rfdetr",
+    "pytorch_lightning",
+    "albumentations",
+    "transformers",
+)
 
 _TORCH_INDEX_BASE = "https://download.pytorch.org/whl/"
 
@@ -254,6 +271,10 @@ def plan_install(
         if {"rfdetr", "pytorch_lightning"} & missing:
             commands.append([RFDETR_SPEC])
 
+    if "albumentations" in missing:
+        # safe with deps on every platform, Jetson included: albumentations
+        # depends on numpy/scipy/opencv-python-headless/albucore, never torch
+        commands.append([ALBUMENTATIONS_SPEC])
     if "transformers" in missing:
         commands.append([TRANSFORMERS_SPEC])
 

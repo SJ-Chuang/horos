@@ -11,7 +11,12 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from horos.api.install import ML_IMPORT_NAMES, plan_install, torch_is_cpu_build
+from horos.api.install import (
+    ALBUMENTATIONS_SPEC,
+    ML_IMPORT_NAMES,
+    plan_install,
+    torch_is_cpu_build,
+)
 from horos.api.manifest import capability
 from horos.core.platform_info import PlatformInfo, detect_cuda_version, detect_platform
 from horos.core.registry import ModelInfo
@@ -157,6 +162,9 @@ _RUNTIME_DEPS: list[tuple[str, str]] = [
     # the [train] extra's marker package — missing means rfdetr was installed
     # without its training stack and horos cannot train
     ("pytorch_lightning", "rfdetr[train]==1.9.4"),
+    # backs the derived aug_config presets; rfdetr fails at the first training
+    # step without it
+    ("albumentations", ALBUMENTATIONS_SPEC),
 ]
 
 _IMPORT_TO_DIST = {
