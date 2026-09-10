@@ -292,6 +292,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Training run id (default: the newest completed run of this project)",
     )
     p.add_argument("--threshold", type=float, default=0.5)
+    p.add_argument(
+        "--overlay-dir", metavar="DIR",
+        help="Also write each image with its predictions drawn on it into DIR",
+    )
 
     p = sub.add_parser(
         "evaluate", help="COCO metrics for a run on its held-out split"
@@ -333,6 +337,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--worst", type=int, default=20, metavar="N",
         help="How many worst images to list (default 20; 0 for none)",
+    )
+    p.add_argument(
+        "--overlays", metavar="DIR",
+        help="Also write a colour-coded overlay PNG of each listed worst image into DIR",
     )
 
     p = sub.add_parser(
@@ -642,6 +650,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 prediction = api.infer_image(
                     project, run_id, image, threshold=args.threshold
                 )
+                if args.overlay_dir:
+                    api.render_prediction_overlay(
+                        image, prediction,
+                        out=Path(args.overlay_dir) / f"{Path(image).stem}.overlay.png",
+                    )
                 sys.stdout.write(prediction.model_dump_json() + "\n")
                 sys.stdout.flush()
         elif args.command == "evaluate":
@@ -667,10 +680,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ).model_dump(mode="json"),
             }
             if args.worst > 0:
-                payload["worst"] = api.worst_cases(
+                worst = api.worst_cases(
                     project, run_id, args.split,
                     threshold=args.threshold, iou=args.iou, top_k=args.worst,
-                ).model_dump(mode="json")
+                )
+                payload["worst"] = worst.model_dump(mode="json")
+                if args.overlays:
+                    out_dir = Path(args.overlays)
+                    written = []
+                    for image in worst.images:
+                        target = out_dir / f"{Path(image.file_name).stem}.overlay.png"
+                        api.render_error_overlay(
+                            project, run_id, args.split, image.image_id,
+                            threshold=args.threshold, iou=args.iou, out=target,
+                        )
+                        written.append(str(target))
+                    payload["overlays"] = written
             sys.stdout.write(json.dumps(payload) + "\n")
         elif args.command == "models":
             from horos.api.report import _series_from_events, run_scores

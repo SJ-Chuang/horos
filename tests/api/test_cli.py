@@ -299,3 +299,33 @@ def test_analyze_prints_the_analysis_and_worst_images(tmp_path, monkeypatch, cap
 
     code, body = _run(capsys, "analyze", "--split", "train", "--worst", "0")
     assert code == 0 and "worst" not in body
+
+
+def test_analyze_overlays_writes_one_png_per_worst_image(tmp_path, monkeypatch, capsys):
+    from helpers.runs import completed_fake_run
+
+    from horos.api.evaluate import _write_detections
+
+    project, record = completed_fake_run(tmp_path, epochs=1)
+    monkeypatch.chdir(project.root)
+    _write_detections(project, record.run_id, "train", [])
+    out_dir = tmp_path / "overlays"
+    code, body = _run(
+        capsys, "analyze", "--split", "train", "--worst", "5", "--overlays", str(out_dir)
+    )
+    assert code == 0
+    assert sorted(Path(p).name for p in body["overlays"]) == ["a.overlay.png", "b.overlay.png"]
+    assert all(Path(p).is_file() for p in body["overlays"])
+
+
+def test_infer_overlay_dir_writes_the_drawn_image(tmp_path, monkeypatch, capsys):
+    from helpers.data import make_image
+    from helpers.runs import completed_fake_run
+
+    project, record = completed_fake_run(tmp_path, epochs=1)
+    monkeypatch.chdir(project.root)
+    probe = make_image(tmp_path / "probe.png", 64, 48)
+    code = main(["infer", str(probe), "--overlay-dir", str(tmp_path / "out")])
+    assert code == 0
+    assert (tmp_path / "out" / "probe.overlay.png").is_file()
+    assert json.loads(capsys.readouterr().out)["instances"][0]["score"] == 0.9

@@ -250,3 +250,23 @@ def test_worst_cases_endpoint_lists_errors_and_honours_top(trained_client):
 
     bad = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/worst?threshold=7")
     assert bad.status_code == 400
+
+
+def test_overlay_endpoint_streams_a_png_of_the_split_image(trained_client):
+    client, run_id, _ = trained_client
+    _evaluate(client, run_id)
+    worst = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/worst").get_json()
+    image_id = worst["images"][0]["image_id"]
+    response = client.get(
+        f"/api/v1/train/runs/{run_id}/eval/valid/images/{image_id}/overlay.png?threshold=0.3"
+    )
+    assert response.status_code == 200
+    assert response.mimetype == "image/png"
+    from PIL import Image
+
+    with Image.open(io.BytesIO(response.data)) as png:
+        assert png.size == (32, 32)  # c.png of the sample dataset
+
+    missing = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/images/999/overlay.png")
+    assert missing.status_code == 400
+    assert "not part of" in missing.get_json()["error"]["message"]

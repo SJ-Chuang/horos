@@ -106,6 +106,12 @@ from horos.api.uploads import (
     start_upload_import,
 )
 from horos.api.verdict import Finding, RunVerdict, run_verdict
+from horos.api.visualize import (
+    OverlayBox,
+    render_error_overlay,
+    render_overlay,
+    render_prediction_overlay,
+)
 
 __all__ = [
     "ExportArtifact",
@@ -132,6 +138,10 @@ __all__ = [
     "WorstCases",
     "analyze_errors",
     "worst_cases",
+    "OverlayBox",
+    "render_error_overlay",
+    "render_overlay",
+    "render_prediction_overlay",
     "DeleteImagesSummary",
     "DerivedValue",
     "DoctorReport",

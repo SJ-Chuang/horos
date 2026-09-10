@@ -115,3 +115,17 @@ def worst_cases(run_id: str, split: str):
         **_analysis_args(),
     )
     return jsonify(report.model_dump())
+
+
+@bp.get("/train/runs/<run_id>/eval/<split>/images/<int:image_id>/overlay.png")
+def error_overlay(run_id: str, split: str, image_id: int):
+    import io
+
+    from flask import send_file
+
+    from horos.api.visualize import to_png_bytes
+
+    image = api.render_error_overlay(
+        _project(), run_id, split, image_id, **_analysis_args()
+    )
+    return send_file(io.BytesIO(to_png_bytes(image)), mimetype="image/png", max_age=0)
