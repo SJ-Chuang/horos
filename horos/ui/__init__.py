@@ -36,3 +36,8 @@ def train():
 @bp.get("/evaluate")
 def evaluate():
     return render_template("evaluate.html")
+
+
+@bp.get("/lab")
+def lab():
+    return render_template("lab.html")
