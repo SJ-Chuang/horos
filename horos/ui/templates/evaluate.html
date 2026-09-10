@@ -130,6 +130,36 @@
   th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
   .apbar { background: var(--line); border-radius: 4px; height: 8px; overflow: hidden; }
   .apbar > div { background: var(--ok); height: 100%; }
+  /* error analysis (E6-T8) */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; font-size: 12px;
+            color: var(--dim); margin: 0 0 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
+                         border-radius: 2px; margin-right: 5px; vertical-align: -1px;
+                         background: var(--c); }
+  .legend .dashed::before { background: transparent; border: 2px dashed var(--c);
+                            width: 8px; height: 8px; }
+  .err-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+              gap: 18px; align-items: start; }
+  @media (max-width: 1400px) { .err-grid { grid-template-columns: 1fr; } }
+  .matrix-wrap { overflow-x: auto; }
+  table.matrix { width: auto; font-size: 12px; }
+  table.matrix th, table.matrix td { padding: 4px 8px; text-align: center;
+                                     border-bottom: none; white-space: nowrap; }
+  table.matrix th.gt { text-align: right; color: var(--text); font-weight: 500;
+                       text-transform: none; }
+  table.matrix th.pred { writing-mode: vertical-rl; transform: rotate(180deg);
+                         text-transform: none; color: var(--text); font-weight: 500;
+                         max-height: 120px; }
+  table.matrix td { border-radius: 4px; min-width: 38px; }
+  table.matrix td.diag { outline: 1px solid rgba(81, 207, 102, .35); }
+  table.matrix td.bg { color: var(--dim); }
+  .pairs li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0;
+              border-bottom: 1px solid var(--line); }
+  .pairs .n { color: var(--text); font-weight: 600; min-width: 28px; text-align: right; }
+  .pairs .arrow { color: var(--dim); }
+  .worst-thumb .badges { display: flex; gap: 4px; }
+  .badge { font-size: 10px; padding: 0 5px; border-radius: 4px; color: #101418;
+           font-weight: 600; }
   .hidden { display: none; }
 </style>
 </head>
@@ -234,6 +264,71 @@
     <p id="gallery-empty" style="color:var(--dim);margin:0">
       Nothing predicted yet — drop a photo, GIF, or video on the left.</p>
     <div class="image-grid" id="gallery"></div>
+  </section>
+
+  <section class="panel" id="errors-panel">
+    <h2>Error analysis</h2>
+    <p id="errors-empty" style="color:var(--dim);margin:0">
+      Run an evaluation on a split first — the analysis is computed from its
+      saved detections.</p>
+    <div id="errors" class="hidden">
+      <div class="row" style="margin-bottom:12px">
+        <label for="err-thr">Confidence ≥</label>
+        <input type="range" id="err-thr" min="0.05" max="0.95" step="0.05" value="0.5"
+               style="max-width:220px">
+        <span id="err-thr-value" class="mono" style="min-width:34px">0.50</span>
+        <label for="err-iou" style="margin-left:10px">IoU ≥</label>
+        <select id="err-iou">
+          <option value="0.5">0.50</option>
+          <option value="0.75">0.75</option>
+        </select>
+        <span id="errors-status" style="color:var(--dim);font-size:13px"></span>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="num" id="e-tp" style="color:#4dabf7">—</div>
+          <div class="label">correct</div></div>
+        <div class="card"><div class="num" id="e-fn" style="color:#ffa94d">—</div>
+          <div class="label">missed</div></div>
+        <div class="card"><div class="num" id="e-fp" style="color:#ff6b6b">—</div>
+          <div class="label">false positives</div></div>
+        <div class="card"><div class="num" id="e-conf" style="color:#cc5de8">—</div>
+          <div class="label">wrong class</div></div>
+      </div>
+      <div class="err-grid">
+        <div>
+          <h3 style="font-size:13px;color:var(--dim);margin:0 0 8px">
+            Confusion matrix <span style="font-weight:400">— rows: ground truth,
+            columns: predicted</span></h3>
+          <div class="matrix-wrap"><table class="matrix" id="confusion"></table></div>
+        </div>
+        <div>
+          <h3 style="font-size:13px;color:var(--dim);margin:0 0 8px">Per class</h3>
+          <table>
+            <thead><tr><th>class</th><th>recall</th><th>precision</th>
+              <th title="ground truth left undetected">missed</th>
+              <th title="predictions matching nothing">false</th>
+              <th title="ground truth detected as another class">confused</th></tr></thead>
+            <tbody id="err-classes"></tbody>
+          </table>
+          <h3 style="font-size:13px;color:var(--dim);margin:14px 0 6px">
+            Most confused pairs</h3>
+          <ul class="pairs" id="confused-pairs" style="list-style:none;margin:0;padding:0"></ul>
+        </div>
+      </div>
+      <h3 style="font-size:13px;color:var(--dim);margin:18px 0 8px">
+        Worst images <span id="worst-count" style="font-weight:400"></span></h3>
+      <div class="legend">
+        <span style="--c:#51cf66">ground truth (matched)</span>
+        <span style="--c:#4dabf7">correct</span>
+        <span style="--c:#ff6b6b">false positive</span>
+        <span class="dashed" style="--c:#ffa94d">missed</span>
+        <span style="--c:#cc5de8">wrong class</span>
+      </div>
+      <p id="worst-empty" class="hidden" style="color:var(--ok);margin:0">
+        No errors at this threshold — every ground-truth box is found and nothing
+        is hallucinated.</p>
+      <div class="image-grid" id="worst-grid"></div>
+    </div>
   </section>
   </div>
 </main>
@@ -406,10 +501,13 @@ async function buildFlat() {
   }
 }
 
+let viewerMode = "media";     // "media" (gallery frames) | "overlay" (worst images)
+
 async function openViewer(mediaId, frameIdx) {
   await buildFlat();
   viewerPos = flat.findIndex((e) => e.mediaId === mediaId && e.i === frameIdx);
   if (viewerPos < 0) return;
+  viewerMode = "media";
   $("viewer").classList.remove("hidden");
   drawViewer();
 }
@@ -417,12 +515,20 @@ async function openViewer(mediaId, frameIdx) {
 function closeViewer() { $("viewer").classList.add("hidden"); viewerPos = -1; }
 
 function stepViewer(delta) {
-  if (viewerPos < 0 || !flat.length) return;
-  viewerPos = (viewerPos + delta + flat.length) % flat.length;
+  const length = viewerMode === "overlay" ? worstItems.length : flat.length;
+  if (viewerPos < 0 || !length) return;
+  viewerPos = (viewerPos + delta + length) % length;
   drawViewer();
 }
 
 function drawViewer() {
+  // the confidence slider filters gallery predictions client-side; overlays
+  // are rendered server-side at the error-analysis threshold, so it hides
+  for (const id of ["conf", "conf-value"]) {
+    $(id).classList.toggle("hidden", viewerMode === "overlay");
+  }
+  document.querySelector("label[for=conf]").classList.toggle("hidden", viewerMode === "overlay");
+  if (viewerMode === "overlay") { drawOverlayViewer(); return; }
   const entry = flat[viewerPos];
   if (!entry) return;
   $("viewer-title").textContent = entry.name;
@@ -533,7 +639,12 @@ function pollJob(jobId, onEvent) {
 async function showReport(run, split) {
   let report;
   try { report = await api(`/train/runs/${run}/eval/${split}`); }
-  catch (e) { $("report").classList.add("hidden"); return; }
+  catch (e) {
+    $("report").classList.add("hidden");
+    showErrorsPanel(false);
+    return;
+  }
+  loadErrors(run, split);
   const pct = (v) => (100 * v).toFixed(1) + "%";
   $("m-map").textContent = pct(report.map_5095);
   $("m-map50").textContent = pct(report.map_50);
@@ -549,6 +660,150 @@ async function showReport(run, split) {
     `evaluated ${new Date(report.created_at).toLocaleString()}`;
   $("report").classList.remove("hidden");
 }
+
+// -------------------------------------------------------- error analysis (E6-T8)
+let worstItems = [];          // WorstCases.images of the current view
+let errorsTimer = null;
+let errorsSeq = 0;            // ignore responses of superseded requests
+
+const ERR_COLORS = { tp: "#4dabf7", fp: "#ff6b6b", fn: "#ffa94d", confused: "#cc5de8" };
+
+function errorParams() {
+  return `threshold=${$("err-thr").value}&iou=${$("err-iou").value}`;
+}
+function overlayURL(run, split, imageId) {
+  return `/api/v1/train/runs/${run}/eval/${split}/images/${imageId}/overlay.png?${errorParams()}`;
+}
+function showErrorsPanel(show) {
+  $("errors").classList.toggle("hidden", !show);
+  $("errors-empty").classList.toggle("hidden", show);
+}
+
+async function loadErrors(run, split) {
+  const seq = ++errorsSeq;
+  $("errors-status").textContent = "computing…";
+  let analysis, worst;
+  try {
+    [analysis, worst] = await Promise.all([
+      api(`/train/runs/${run}/eval/${split}/errors?${errorParams()}`),
+      api(`/train/runs/${run}/eval/${split}/worst?${errorParams()}&top=24`),
+    ]);
+  } catch (e) {
+    if (seq !== errorsSeq) return;
+    // evaluations made before detections were persisted have a report but
+    // no detections: the empty-state text explains what to do
+    $("errors-empty").textContent = e.message;
+    showErrorsPanel(false);
+    return;
+  }
+  if (seq !== errorsSeq) return;
+  showErrorsPanel(true);
+  renderErrors(analysis);
+  renderWorst(run, split, worst);
+  $("errors-status").textContent = "";
+}
+
+function renderErrors(a) {
+  $("e-tp").textContent = a.tp;
+  $("e-fn").textContent = a.fn;
+  $("e-fp").textContent = a.fp;
+  $("e-conf").textContent = a.confused;
+
+  const n = a.classes.length;                 // includes background (last)
+  const bg = n - 1;
+  const short = (name) => name === "background" ? "—" : name;
+  const rowMax = a.matrix.map((row) => Math.max(1, ...row));
+  let html = `<tr><th></th>${a.classes.map((c) =>
+    `<th class="pred" title="predicted ${c}">${short(c)}</th>`).join("")}</tr>`;
+  a.matrix.forEach((row, i) => {
+    html += `<tr><th class="gt" title="ground truth ${a.classes[i]}">${short(a.classes[i])}</th>`;
+    row.forEach((v, j) => {
+      const isBg = i === bg || j === bg;
+      const isDiag = i === j && !isBg;
+      const tint = isDiag ? "81,207,102" : (i === bg ? "255,107,107" : (j === bg ? "255,169,77" : "204,93,232"));
+      const alpha = v ? 0.15 + 0.6 * v / rowMax[i] : 0;
+      const cls = (isDiag ? "diag " : "") + (i === bg && j === bg ? "bg" : "");
+      const title = i === bg ? `${v} false ${a.classes[j]}`
+        : j === bg ? `${v} ${a.classes[i]} missed`
+        : isDiag ? `${v} ${a.classes[i]} correct`
+        : `${v} ${a.classes[i]} predicted as ${a.classes[j]}`;
+      html += `<td class="${cls}" title="${title}"
+        style="background:rgba(${tint},${alpha.toFixed(2)})">${(i === bg && j === bg) ? "" : v}</td>`;
+    });
+    html += "</tr>";
+  });
+  $("confusion").innerHTML = html;
+
+  const pct = (v) => (100 * v).toFixed(0) + "%";
+  $("err-classes").innerHTML = a.per_class.map((c) => `<tr>
+    <td>${c.name}</td><td>${pct(c.recall)}</td><td>${pct(c.precision)}</td>
+    <td style="color:${c.fn ? ERR_COLORS.fn : "inherit"}">${c.fn}</td>
+    <td style="color:${c.fp ? ERR_COLORS.fp : "inherit"}">${c.fp}</td>
+    <td style="color:${c.confused_as ? ERR_COLORS.confused : "inherit"}">${c.confused_as}</td>
+  </tr>`).join("");
+
+  $("confused-pairs").innerHTML = a.confused_pairs.length
+    ? a.confused_pairs.slice(0, 8).map((p) => `<li><span class="n">${p.count}</span>
+        <span>${p.gt_name}</span><span class="arrow">→ predicted as</span>
+        <span style="color:${ERR_COLORS.confused}">${p.pred_name}</span></li>`).join("")
+    : `<li style="color:var(--dim)">none — every matched box has the right class</li>`;
+}
+
+function renderWorst(run, split, report) {
+  worstItems = report.images;
+  $("worst-count").textContent =
+    `— ${report.images_with_errors} of ${report.total_images} images have errors`;
+  $("worst-empty").classList.toggle("hidden", worstItems.length > 0);
+  const badge = (n, kind, label) => n
+    ? `<span class="badge" style="background:${ERR_COLORS[kind]}" title="${label}">${n}</span>` : "";
+  $("worst-grid").innerHTML = worstItems.map((img, idx) => `
+    <div class="thumb worst-thumb" data-idx="${idx}"
+         title="${img.file_name}: ${img.fn} missed, ${img.fp} false, ${img.confused} wrong class">
+      <img loading="lazy" src="${overlayURL(run, split, img.image_id)}" alt="">
+      <div class="meta">
+        <span class="badges">${badge(img.fn, "fn", "missed")}${badge(img.fp, "fp", "false positives")}${badge(img.confused, "confused", "wrong class")}</span>
+        <span class="fname">${img.file_name}</span>
+      </div>
+    </div>`).join("");
+  $("worst-grid").querySelectorAll(".thumb").forEach((el) => {
+    el.onclick = () => openOverlayViewer(Number(el.dataset.idx));
+  });
+}
+
+function openOverlayViewer(idx) {
+  if (!worstItems[idx]) return;
+  viewerMode = "overlay";
+  viewerPos = idx;
+  $("viewer").classList.remove("hidden");
+  drawViewer();
+}
+
+function drawOverlayViewer() {
+  const item = worstItems[viewerPos];
+  if (!item) return;
+  $("viewer-title").textContent = item.file_name;
+  $("viewer-frame").textContent = `${viewerPos + 1}/${worstItems.length}`;
+  $("det-count").textContent =
+    `${item.fn} missed · ${item.fp} false · ${item.confused} wrong class · ${item.tp} correct`;
+  const img = new Image();
+  const pos = viewerPos;
+  img.onload = () => {
+    if (pos !== viewerPos || viewerMode !== "overlay") return;
+    const canvas = $("viewer-canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+  };
+  img.src = overlayURL($("run-select").value, $("split-select").value, item.image_id);
+}
+
+$("err-thr").oninput = () => {
+  $("err-thr-value").textContent = Number($("err-thr").value).toFixed(2);
+  clearTimeout(errorsTimer);   // E6-S3: recomputed server-side from saved detections
+  errorsTimer = setTimeout(
+    () => loadErrors($("run-select").value, $("split-select").value), 250);
+};
+$("err-iou").onchange = () => loadErrors($("run-select").value, $("split-select").value);
 
 // -------------------------------------------------------------------- boot
 async function init() {

@@ -220,7 +220,7 @@ horos install       # rfdetr (--no-deps), training stack, albumentations, transf
 - [x] Auto-labeling — OWLv2 open-vocabulary, review workflow
 - [x] Training — derived hyperparameters, queue, resume, live monitoring
 - [x] Evaluation — media gallery, COCO metrics, per-class analysis
-- [ ] Error analysis — confusion pairs, worst-case mining
+- [x] Error analysis — confusion matrix, worst-case mining, colour-coded overlays
 - [ ] Experiment management — run comparison, dataset fingerprints
 - [ ] Export & deploy — ONNX / TensorRT / TFLite, model cards, parity checks
 

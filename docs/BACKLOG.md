@@ -7,18 +7,13 @@
 
 ## Epic 進度
 
-E1、E2、E3、E4、E5、E9 全部任務卡已完成。其餘尚未完成的任務卡:
+E1、E2、E3、E4、E5、E6、E9 全部任務卡已完成。其餘尚未完成的任務卡:
 
-### E6 — 評估與測試(P3,進行中)
+### E6 — 評估與測試(P3)
 
-| 任務 | 狀態 | 備註 |
-|---|---|---|
-| E6-T4 混淆矩陣與逐類別分析 | 未做 | 目前只有逐類別 AP / PR 曲線(`EvalReport.per_class`),沒有混淆矩陣;缺 `tests/api/test_error_analysis.py` |
-| E6-T5 最差案例挖掘 | 未做 | 缺 `tests/api/test_worst_cases.py` |
-| E6-T6 結果視覺化(overlay 產生) | 未做 | 疊圖目前只在前端 canvas 畫,API 層沒有輸出圖檔的能力;缺 `tests/api/test_visualize.py` |
-| E6-T8 錯誤分析 UI | 未做 | 依 §8 格式回報 interface scenario |
-
-已完成:E6-T1、T2、T3、T7、T9。
+全部任務卡已完成(2026-09-10 補齊 E6-T4/T5/T6/T8)。設計決定記錄在
+`horos/api/error_analysis.py` 與 `horos/api/visualize.py` 的模組 docstring:
+評估時保存原始偵測、類別無關的貪婪 IoU 配對、錯誤數排序、伺服器端 Pillow 疊圖。
 
 ### E7 — 實驗管理(P4,幾乎未做)
 
