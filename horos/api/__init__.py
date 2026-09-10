@@ -40,6 +40,16 @@ from horos.api.dataset import (
     resplit,
     validate_project,
 )
+from horos.api.error_analysis import (
+    ClassErrors,
+    ConfusionPair,
+    ErrorAnalysis,
+    ImageErrorItem,
+    ImageErrors,
+    WorstCases,
+    analyze_errors,
+    worst_cases,
+)
 from horos.api.evaluate import (
     ClassEval,
     EvalReport,
@@ -113,7 +123,15 @@ __all__ = [
     "AssistResult",
     "Capability",
     "ClaimResult",
+    "ClassErrors",
     "ClassEval",
+    "ConfusionPair",
+    "ErrorAnalysis",
+    "ImageErrorItem",
+    "ImageErrors",
+    "WorstCases",
+    "analyze_errors",
+    "worst_cases",
     "DeleteImagesSummary",
     "DerivedValue",
     "DoctorReport",

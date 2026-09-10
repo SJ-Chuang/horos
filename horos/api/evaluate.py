@@ -52,6 +52,7 @@ __all__ = [
     "evaluate_run",
     "start_evaluation",
     "get_eval_report",
+    "load_detections",
 ]
 
 #: evaluation needs low-confidence detections; COCO AP integrates over them
@@ -183,7 +184,12 @@ def evaluation_events(
 ) -> Any:
     """R4 event stream: inference over the run's split snapshot, then COCO
     metrics. RunCompleted carries the report; it is also persisted under
-    `runs/<id>/eval/<split>.json`."""
+    `runs/<id>/eval/<split>.json`.
+
+    The raw low-threshold detections are persisted next to it as
+    `<split>.detections.json` (confirmed design, E6-T4): error analysis and
+    worst-case mining re-match them against the ground truth at whatever
+    operating threshold the user asks for, without re-running inference."""
     backend, record = _load_run_backend(project, run_id, device)
     gt_path, gt = _split_gt(project, run_id, split)
 
@@ -229,6 +235,9 @@ def evaluation_events(
                     total=len(images),
                     phase="inference",
                 )
+            # persisted before the metrics: a missing pycocotools must not
+            # cost the user the inference pass they just waited for
+            _write_detections(project, run_id, split, detections)
             report = _compute_metrics(gt_path, gt, detections, run_id, split)
         except Exception as exc:  # noqa: BLE001 — R4: the stream reports itself
             logger.exception("evaluation of run %s failed", run_id)
@@ -238,8 +247,7 @@ def evaluation_events(
                 message=str(exc),
             )
             return
-        eval_dir = _run_dir(project, run_id) / "eval"
-        eval_dir.mkdir(exist_ok=True)
+        eval_dir = _eval_dir(project, run_id)
         (eval_dir / f"{split}.json").write_text(
             report.model_dump_json(indent=2), "utf-8"
         )
@@ -319,6 +327,49 @@ def get_eval_report(project: Project, run_id: str, split: str) -> EvalReport:
             f"run an evaluation first."
         )
     return EvalReport.model_validate_json(path.read_text("utf-8"))
+
+
+# ------------------------------------------------------- raw detections
+
+
+def _eval_dir(project: Project, run_id: str) -> Path:
+    eval_dir = _run_dir(project, run_id) / "eval"
+    eval_dir.mkdir(exist_ok=True)
+    return eval_dir
+
+
+def _detections_path(project: Project, run_id: str, split: str) -> Path:
+    return _run_dir(project, run_id) / "eval" / f"{split}.detections.json"
+
+
+def _write_detections(
+    project: Project, run_id: str, split: str, detections: list[dict]
+) -> Path:
+    """COCO-results-style list (image_id, category_id, bbox xywh, score),
+    category ids already mapped onto the split's ground-truth ids."""
+    path = _eval_dir(project, run_id) / f"{split}.detections.json"
+    payload = {
+        "run_id": run_id,
+        "split": split,
+        "threshold": _EVAL_THRESHOLD,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "detections": detections,
+    }
+    path.write_text(json.dumps(payload), "utf-8")
+    return path
+
+
+def load_detections(project: Project, run_id: str, split: str) -> list[dict]:
+    """The raw detections persisted by the last evaluation of this split."""
+    path = _detections_path(project, run_id, split)
+    if not path.is_file():
+        raise ProjectError(
+            f"Run {run_id} has no persisted detections for split '{split}' — "
+            f"run an evaluation first (evaluations made before detections were "
+            f"persisted need to be re-run once)."
+        )
+    payload = json.loads(path.read_text("utf-8"))
+    return list(payload.get("detections", []))
 
 
 # ------------------------------------------------------------- COCO metrics

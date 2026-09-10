@@ -1,4 +1,4 @@
-"""Evaluation routes (E6-T9, first slice). Thin by rule (R2)."""
+"""Evaluation routes (E6-T9). Thin by rule (R2)."""
 
 from __future__ import annotations
 
@@ -92,3 +92,26 @@ def start_evaluation(run_id: str):
 @bp.get("/train/runs/<run_id>/eval/<split>")
 def get_eval_report(run_id: str, split: str):
     return jsonify(api.get_eval_report(_project(), run_id, split).model_dump())
+
+
+def _analysis_args() -> dict:
+    return {
+        "threshold": request.args.get("threshold", 0.5, type=float),
+        "iou": request.args.get("iou", 0.5, type=float),
+    }
+
+
+@bp.get("/train/runs/<run_id>/eval/<split>/errors")
+def analyze_errors(run_id: str, split: str):
+    analysis = api.analyze_errors(_project(), run_id, split, **_analysis_args())
+    return jsonify(analysis.model_dump())
+
+
+@bp.get("/train/runs/<run_id>/eval/<split>/worst")
+def worst_cases(run_id: str, split: str):
+    report = api.worst_cases(
+        _project(), run_id, split,
+        top_k=request.args.get("top", 50, type=int),
+        **_analysis_args(),
+    )
+    return jsonify(report.model_dump())

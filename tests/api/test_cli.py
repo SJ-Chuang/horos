@@ -278,3 +278,24 @@ def test_run_default_without_any_run_explains_itself(tmp_path, monkeypatch, caps
     monkeypatch.chdir(project.root)
     code = main(["report"])
     assert code == 2 and "no training runs yet" in capsys.readouterr().err
+
+
+def test_analyze_prints_the_analysis_and_worst_images(tmp_path, monkeypatch, capsys):
+    from helpers.runs import completed_fake_run
+
+    from horos.api.evaluate import _write_detections
+
+    project, record = completed_fake_run(tmp_path, epochs=1)
+    monkeypatch.chdir(project.root)
+    code = main(["analyze", "--split", "train"])
+    assert code == 2  # no evaluation yet -> horos error, explained on stderr
+    assert "run an evaluation first" in capsys.readouterr().err
+
+    _write_detections(project, record.run_id, "train", [])  # every gt box missed
+    code, body = _run(capsys, "analyze", "--split", "train", "--worst", "1", "--threshold", "0.3")
+    assert code == 0
+    assert body["analysis"]["threshold"] == 0.3 and body["analysis"]["fn"] == 3
+    assert body["worst"]["total_images"] == 2 and len(body["worst"]["images"]) == 1
+
+    code, body = _run(capsys, "analyze", "--split", "train", "--worst", "0")
+    assert code == 0 and "worst" not in body

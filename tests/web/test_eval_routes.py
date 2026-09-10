@@ -201,3 +201,52 @@ def test_relative_project_root_still_serves_frame_files(tmp_path, monkeypatch):
         f"/api/v1/train/runs/{run_id}/media/{body['media_id']}/frames/00000.jpg"
     )
     assert frame.status_code == 200
+
+
+# ------------------------------------------------------ error analysis (E6-T4/T5)
+
+
+def _evaluate(client, run_id, split="valid"):
+    response = client.post(f"/api/v1/train/runs/{run_id}/evaluate", json={"split": split})
+    assert response.status_code == 202
+    assert _wait_job(client, response.get_json()["job_id"])["state"] == "completed"
+
+
+def test_error_analysis_follows_the_query_threshold(trained_client):
+    client, run_id, _ = trained_client
+    # the fake backend predicts one box of an unknown class at 0.9 on every image
+    before = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/errors")
+    assert before.status_code == 400
+    assert "run an evaluation first" in before.get_json()["error"]["message"]
+
+    _evaluate(client, run_id)
+    response = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/errors")
+    assert response.status_code == 200
+    analysis = response.get_json()
+    assert analysis["threshold"] == 0.5 and analysis["iou"] == 0.5
+    assert analysis["classes"][-1] == "background"
+    assert analysis["fn"] == 1 and analysis["fp"] == 1 and analysis["tp"] == 0
+    assert len(analysis["matrix"]) == len(analysis["classes"])
+
+    strict = client.get(
+        f"/api/v1/train/runs/{run_id}/eval/valid/errors?threshold=0.95&iou=0.75"
+    ).get_json()
+    assert strict["threshold"] == 0.95 and strict["iou"] == 0.75
+    assert strict["fp"] == 0  # the 0.9 prediction is gone above 0.95
+
+
+def test_worst_cases_endpoint_lists_errors_and_honours_top(trained_client):
+    client, run_id, _ = trained_client
+    _evaluate(client, run_id)
+    response = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/worst?top=1")
+    assert response.status_code == 200
+    report = response.get_json()
+    assert report["top_k"] == 1 and report["total_images"] == 1
+    assert report["images_with_errors"] == 1 and len(report["images"]) == 1
+    worst = report["images"][0]
+    assert worst["file_name"] == "c.png" and worst["errors"] == 2
+    kinds = sorted(item["kind"] for item in worst["items"])
+    assert kinds == ["fn", "fp"]
+
+    bad = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/worst?threshold=7")
+    assert bad.status_code == 400

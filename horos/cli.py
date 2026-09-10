@@ -308,6 +308,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--split", choices=["train", "valid", "test"], default="test")
 
     p = sub.add_parser(
+        "analyze",
+        help="Error analysis of an evaluated run: confusion matrix, per-class "
+        "misses and false positives, worst images (needs a prior 'evaluate')",
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument(
+        "--run",
+        dest="run_id",
+        help="Training run id (default: the newest completed run of this project)",
+    )
+    p.add_argument("--split", choices=["train", "valid", "test"], default="test")
+    p.add_argument(
+        "--threshold", type=float, default=0.5,
+        help="Operating confidence threshold (default 0.5)",
+    )
+    p.add_argument(
+        "--iou", type=float, default=0.5,
+        help="IoU needed for a prediction to match a ground-truth box (default 0.5)",
+    )
+    p.add_argument(
+        "--worst", type=int, default=20, metavar="N",
+        help="How many worst images to list (default 20; 0 for none)",
+    )
+
+    p = sub.add_parser(
         "models",
         help="List this project's trained models (completed runs, newest first)",
     )
@@ -630,6 +658,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failed = failed or event.type == "failed"
             if failed:
                 return 2
+        elif args.command == "analyze":
+            project = _project_arg(args)
+            run_id = _resolve_run(project, args.run_id)
+            payload = {
+                "analysis": api.analyze_errors(
+                    project, run_id, args.split, threshold=args.threshold, iou=args.iou
+                ).model_dump(mode="json"),
+            }
+            if args.worst > 0:
+                payload["worst"] = api.worst_cases(
+                    project, run_id, args.split,
+                    threshold=args.threshold, iou=args.iou, top_k=args.worst,
+                ).model_dump(mode="json")
+            sys.stdout.write(json.dumps(payload) + "\n")
         elif args.command == "models":
             from horos.api.report import _series_from_events, run_scores
             from horos.api.train import _read_events, _run_dir
