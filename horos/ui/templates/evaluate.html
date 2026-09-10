@@ -576,6 +576,11 @@ $("conf").oninput = () => {
   drawViewer();  // E6-S3: instant, no server round-trip
 };
 $("viewer-close").onclick = closeViewer;
+// clicking the dimmed backdrop (anywhere that is not the photo or the
+// controls) closes the viewer too — same for gallery frames and overlays
+$("viewer").onclick = (e) => {
+  if (e.target === $("viewer") || e.target === $("viewer-canvas-wrap")) closeViewer();
+};
 $("viewer-prev").onclick = () => stepViewer(-1);
 $("viewer-next").onclick = () => stepViewer(1);
 document.addEventListener("keydown", (e) => {
