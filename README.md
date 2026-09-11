@@ -187,6 +187,12 @@ and run `horos install` for you:
 install.bat         # Windows
 ```
 
+On a fresh Windows machine `python` on PATH is only the Microsoft Store
+placeholder, not an interpreter. `install.bat` detects this and asks whether to
+install Python 3.12 for you (per-user, via winget or the python.org installer)
+and whether to add it to your user PATH, then continues with the horos install.
+Set `HOROS_AUTO_INSTALL_PYTHON=1` to answer yes to both without prompting (CI).
+
 **Use a dedicated environment.** horos pins `rfdetr` exactly (upstream has had
 silent annotation-corruption bugs; reproducibility wins) and requires
 `transformers >= 5.1` — installing into a shared ML environment will upgrade
