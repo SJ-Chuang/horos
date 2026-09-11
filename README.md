@@ -172,10 +172,26 @@ catches the classic trap of a CPU-only torch sitting on a GPU machine.
 | macOS | PyPI universal build (MPS) |
 | Windows + NVIDIA GPU | PyTorch index matching your driver's CUDA (cu118 … cu132) — the PyPI Windows wheel is CPU-only |
 | Windows without GPU | PyPI (CPU) |
+| AMD GPU (Linux or Windows) | AMD's ROCm index, per GPU architecture — `horos install --rocm gfx1201`; PyPI has no AMD build |
 | Jetson | **never pip-installed** — see below |
 
 For Linux/x86_64 CI and containers where the default PyPI torch is already
 right, `pip install horos[ml]` installs the same stack in one shot.
+
+**AMD GPUs (ROCm).** PyPI ships no AMD torch, so `horos install` alone
+leaves you on CPU. It says so rather than staying quiet, and names the GPU
+it found. Install AMD's build with the architecture of your card:
+
+```bash
+horos install --rocm gfx1201      # Radeon RX 9070 XT; see AMD's ROCm matrix
+```
+
+The architecture is explicit because it cannot be probed before ROCm is
+installed, and the wrong one installs kernels the GPU cannot run. The wheels
+carry the ROCm runtime (~1.4 GB), so only a current driver is needed, no HIP
+SDK. torch exposes a ROCm GPU through `torch.cuda`, so horos selects it as
+device `cuda` and records the real GPU name in the run metadata. TensorRT
+export stays NVIDIA-only.
 
 </details>
 

@@ -106,6 +106,18 @@ from horos.web.app import create_app
 app = create_app()
 from horos.core.registry import list_models
 assert len(list_models()) >= 4
+# the environment probes run inside `horos install` / `horos doctor`, whose
+# whole job is to diagnose a torch that does not work yet — so they must
+# reach an answer without importing one
+from horos.core.platform_info import (
+    detect_amd_gpu, detect_cuda_version, detect_platform,
+)
+detect_platform()
+detect_cuda_version()
+detect_amd_gpu()
+from horos.api.install import plan_install, torch_is_cpu_build
+torch_is_cpu_build()
+plan_install()
 leaked = sorted({'torch', 'torchvision', 'rfdetr', 'transformers'} & set(sys.modules))
 assert not leaked, f"ML deps leaked into sys.modules: {leaked}"
 print("clean")

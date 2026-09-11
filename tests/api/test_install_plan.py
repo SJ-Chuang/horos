@@ -5,16 +5,23 @@ build) — the planner must be a pure function of them, so plans are assertable
 regardless of the machine the tests run on.
 """
 
+import pytest
+
 from horos.api.install import (
     ALBUMENTATIONS_SPEC,
     RFDETR_NO_DEPS_SPEC,
     RFDETR_SPEC,
+    ROCM_INDEX_URL,
+    ROCM_TORCH_VERSION,
+    ROCM_TORCHVISION_VERSION,
     TRAIN_STACK_SPECS,
     TRANSFORMERS_SPEC,
     cuda_index_url,
     plan_install,
+    version_py_is_cpu_build,
 )
 from horos.core.platform_info import PlatformInfo
+from horos.errors import UnsupportedPlatformError
 
 ALL_ML = [
     "torch",
@@ -32,13 +39,24 @@ def _plat(os_family="linux", arch="x86_64", is_jetson=False):
     )
 
 
-def _plan(platform=None, *, missing=ALL_ML, cuda=None, cpu_build=None, cpu=False):
+def _plan(
+    platform=None,
+    *,
+    missing=ALL_ML,
+    cuda=None,
+    cpu_build=None,
+    cpu=False,
+    rocm=None,
+    amd=None,
+):
     return plan_install(
         platform or _plat(),
         cpu=cpu,
         missing=missing,
         cuda_version=cuda,
         torch_cpu_build=cpu_build,
+        rocm=rocm,
+        amd_gpu=amd,
     )
 
 
@@ -197,3 +215,100 @@ def test_tensorrt_is_never_pip_installed_where_it_cannot_run():
     assert nogpu.pip_commands == [] and any("No NVIDIA GPU" in n for n in nogpu.notes)
     jetson = _trt_plan(_plat(arch="aarch64", is_jetson=True), cuda=(12, 6))
     assert jetson.pip_commands == [] and any("JetPack" in m for m in jetson.manual_actions)
+
+
+# --------------------------------------------------------------- ROCm (AMD)
+# The three wheel flavours as torch actually writes version.py. The ROCm case
+# is the regression: it reports cuda = None next to a real hip version, so
+# reading `cuda` alone calls a working GPU build "CPU-only" and makes doctor
+# tell the user to fix an install that is already correct.
+_VERSION_PY_ROCM = (
+    "__version__ = '2.13.0+rocm10.0.0'\n"
+    "cuda: Optional[str] = None\n"
+    "hip: Optional[str] = '7.15.26333'\n"
+    "rocm: Optional[str] = '10.0.0'\n"
+    "xpu: Optional[str] = None\n"
+)
+_VERSION_PY_CUDA = (
+    "__version__ = '2.14.0+cu130'\n"
+    "cuda: Optional[str] = '13.0'\n"
+    "hip: Optional[str] = None\n"
+    "xpu: Optional[str] = None\n"
+)
+_VERSION_PY_CPU = (
+    "__version__ = '2.14.0+cpu'\n"
+    "cuda: Optional[str] = None\n"
+    "hip: Optional[str] = None\n"
+    "xpu: Optional[str] = None\n"
+)
+_VERSION_PY_OLD_CPU = "__version__ = '1.13.1+cpu'\ncuda = None\n"
+_VERSION_PY_OLD_CUDA = "__version__ = '1.13.1+cu117'\ncuda = '11.7'\n"
+
+
+def test_rocm_build_is_not_mistaken_for_a_cpu_build():
+    assert version_py_is_cpu_build(_VERSION_PY_ROCM) is False
+    assert version_py_is_cpu_build(_VERSION_PY_CUDA) is False
+    assert version_py_is_cpu_build(_VERSION_PY_CPU) is True
+    # torch old enough to have no hip/xpu fields at all
+    assert version_py_is_cpu_build(_VERSION_PY_OLD_CPU) is True
+    assert version_py_is_cpu_build(_VERSION_PY_OLD_CUDA) is False
+
+
+def test_rocm_plans_amd_wheels_for_the_given_architecture():
+    plan = _plan(_plat(os_family="windows"), rocm="gfx1201")
+    assert plan.pip_commands[0] == [
+        f"torch[device-gfx1201]=={ROCM_TORCH_VERSION}",
+        f"torchvision[device-gfx1201]=={ROCM_TORCHVISION_VERSION}",
+        "--index-url",
+        ROCM_INDEX_URL,
+    ]
+    # the rest of the stack still comes from PyPI, after torch
+    assert [RFDETR_SPEC] in plan.pip_commands
+    assert any("gfx1201" in note for note in plan.notes)
+    # never both accelerators
+    assert plan.cuda_version is None
+    assert not any("download.pytorch.org" in arg
+                   for command in plan.pip_commands for arg in command)
+
+
+def test_rocm_replaces_an_installed_cpu_torch():
+    plan = _plan(
+        _plat(os_family="windows"), missing=[], cpu_build=True, rocm="gfx1100"
+    )
+    assert plan.pip_commands[0][-1] == "--force-reinstall"
+    assert "torch[device-gfx1100]" in plan.pip_commands[0][0]
+
+
+def test_rocm_rejects_anything_that_is_not_a_gfx_target():
+    for bad in ("", "1201", "gfx", "cuda", "gfx1201; rm -rf /", "--index-url"):
+        with pytest.raises(ValueError, match="Invalid ROCm architecture"):
+            _plan(_plat(os_family="windows"), rocm=bad)
+    # case and surrounding blanks are tolerated
+    assert "gfx1201" in _plan(_plat("windows"), rocm="  GFX1201 ").pip_commands[0][0]
+
+
+def test_rocm_is_refused_where_it_cannot_run():
+    with pytest.raises(UnsupportedPlatformError, match="no macOS build"):
+        _plan(_plat(os_family="macos", arch="arm64"), rocm="gfx1201")
+    with pytest.raises(UnsupportedPlatformError, match="JetPack"):
+        _plan(_plat(arch="aarch64", is_jetson=True), rocm="gfx1201")
+
+
+def test_amd_gpu_without_rocm_gets_a_pointer_not_a_silent_cpu_install():
+    plan = _plan(_plat(os_family="windows"), amd="AMD Radeon RX 9070 XT")
+    assert plan.pip_commands[0] == ["torch", "torchvision"]  # CPU, as before
+    note = next(n for n in plan.notes if "RX 9070 XT" in n)
+    assert "--rocm" in note
+    # an installed-but-CPU torch on an AMD box says the same thing
+    installed = _plan(
+        _plat(os_family="windows"), missing=[], cpu_build=True,
+        amd="AMD Radeon RX 9070 XT",
+    )
+    assert installed.pip_commands == []
+    assert any("--rocm" in n for n in installed.notes)
+
+
+def test_explicit_cpu_choice_is_not_second_guessed_on_an_amd_box():
+    plan = _plan(_plat(os_family="windows"), cpu=True, amd="AMD Radeon RX 9070 XT")
+    assert plan.pip_commands[0] == ["torch", "torchvision"]
+    assert not any("--rocm" in note for note in plan.notes)

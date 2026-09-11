@@ -382,6 +382,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also install NVIDIA's TensorRT wheels for this GPU (NVIDIA license; "
         "needed for TensorRT engine export)",
     )
+    p.add_argument(
+        "--rocm",
+        metavar="GFX_ARCH",
+        help="Install AMD's ROCm torch build for this GPU architecture "
+        "(e.g. gfx1201 for a Radeon RX 9070 XT) instead of the PyPI build. "
+        "The architecture is explicit because it cannot be detected before "
+        "ROCm is installed; see AMD's ROCm compatibility matrix",
+    )
 
     p = sub.add_parser(
         "doctor", help="Check dependencies for this platform; --fix installs what's missing"
@@ -742,7 +750,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             from horos.api.install import plan_install
 
-            plan = plan_install(cpu=args.cpu, tensorrt=args.tensorrt)
+            plan = plan_install(
+                cpu=args.cpu, tensorrt=args.tensorrt, rocm=args.rocm
+            )
             plat = plan.platform
             print(f"platform : {plat.os_family}/{plat.arch}"  # noqa: T201
                   f"{' (Jetson)' if plat.is_jetson else ''}  python {plat.python_version}")
