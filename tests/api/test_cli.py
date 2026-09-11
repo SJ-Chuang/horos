@@ -329,3 +329,32 @@ def test_infer_overlay_dir_writes_the_drawn_image(tmp_path, monkeypatch, capsys)
     assert code == 0
     assert (tmp_path / "out" / "probe.overlay.png").is_file()
     assert json.loads(capsys.readouterr().out)["instances"][0]["score"] == 0.9
+
+
+def test_install_needs_no_gpu_flag_on_an_amd_machine(capsys, monkeypatch):
+    """`horos install` alone must reach the ROCm wheels (E4/§4).
+
+    There is deliberately no --rocm flag: an AMD GPU is handled like an
+    NVIDIA one. Driven through --dry-run, so it also proves the CLI leaves
+    the decision to the planner.
+    """
+    from horos.api import install as install_mod
+
+    monkeypatch.setattr(install_mod, "detect_amd_gpu", lambda: "AMD Radeon RX 9070 XT")
+    monkeypatch.setattr(install_mod, "detect_rocm_arch", lambda: "gfx1201")
+    monkeypatch.setattr(install_mod, "detect_cuda_version", lambda: None)
+    monkeypatch.setattr(install_mod, "probe_missing", lambda *a, **k: ["torch"])
+
+    assert main(["install", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "torch[device-gfx1201]" in out
+    assert "stable.repo.amd.com" in out
+
+    # --cpu is the opt-out
+    assert main(["install", "--cpu", "--dry-run"]) == 0
+    cpu_out = capsys.readouterr().out
+    assert "stable.repo.amd.com" not in cpu_out
+
+    # and the flag really is gone
+    with pytest.raises(SystemExit):
+        main(["install", "--rocm", "gfx1201", "--dry-run"])

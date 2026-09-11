@@ -7,6 +7,8 @@ point of the Jetson warning is to catch a broken torch install.
 
 from __future__ import annotations
 
+import logging
+import os
 import platform
 import re
 import subprocess
@@ -15,6 +17,8 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 OsFamily = Literal["linux", "macos", "windows"]
 
@@ -68,9 +72,10 @@ def detect_cuda_version(timeout: float = 10.0) -> tuple[int, int] | None:
     return None
 
 
-# PCI-SIG vendor id for AMD/ATI. Detecting the *vendor* is reliable and cheap;
-# deriving the gfx architecture from the device id is not (the table changes
-# every GPU generation), so `horos install --rocm <arch>` takes it explicitly.
+# PCI-SIG vendor id for AMD/ATI. This answers "is there an AMD GPU", which is
+# all the install/doctor notices need. The gfx architecture is a separate
+# question with a proper answer (detect_rocm_arch below) — it is never derived
+# from the device id here, because that table changes every GPU generation.
 _AMD_PCI_VENDOR = "1002"
 # the Windows "Display adapters" setup class
 _WINDOWS_DISPLAY_CLASS = (
@@ -133,8 +138,8 @@ def detect_amd_gpu() -> str | None:
 
     Used to tell a user on an AMD machine that the CPU torch they are about to
     get is not their only option (§4 forbids a silent CPU fallback). The gfx
-    architecture is deliberately not derived from the device id — see
-    `_AMD_PCI_VENDOR`. macOS returns None: ROCm has no macOS build.
+    architecture that comes with it is answered by detect_rocm_arch, not here.
+    macOS returns None: ROCm has no macOS build.
     """
     system = platform.system()
     if system == "Windows":
@@ -142,6 +147,84 @@ def detect_amd_gpu() -> str | None:
     if system == "Darwin":
         return None
     return _detect_amd_gpu_linux()
+
+
+# gfx target names as every AMD tool spells them: gfx1201, gfx90a, gfx942.
+# Unambiguous enough to grep out of a tool's whole stdout, which is far more
+# robust than depending on any one tool's line layout.
+_GFX_RE = re.compile(r"\bgfx[0-9a-f]{3,}\b", re.IGNORECASE)
+#: escape hatch for machines where no probe works (containers, CI, a GPU
+#: newer than the installed driver's tooling)
+ROCM_ARCH_ENV = "HOROS_ROCM_ARCH"
+
+
+def _arch_from_rocm_bootstrap() -> list[str]:
+    """AMD's own detector (the rocm-bootstrap package, MIT).
+
+    Authoritative where it works: it reads the KFD topology and ip_discovery
+    sysfs nodes. Linux only in practice — its Windows helper exists but is not
+    wired into its detection chain — and it is only installed once ROCm is,
+    so this is the confirmation path rather than the bootstrap one.
+    """
+    try:
+        from rocm_bootstrap.detect import detect_gfx_targets  # noqa: PLC0415
+    except ImportError:
+        return []
+    try:
+        return [str(target) for target in detect_gfx_targets()]
+    except Exception:  # noqa: BLE001 — a probe must never break `horos doctor`
+        logger.debug("rocm_bootstrap detection failed", exc_info=True)
+        return []
+
+
+def _arch_from_command(command: list[str], timeout: float) -> list[str]:
+    try:
+        proc = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [match.group(0).lower() for match in _GFX_RE.finditer(proc.stdout)]
+
+
+def detect_rocm_arch(timeout: float = 20.0) -> str | None:
+    """The gfx architecture of the installed AMD GPU, e.g. "gfx1201".
+
+    This is what AMD's ROCm wheels are selected by, and it is needed *before*
+    ROCm exists, so the chain is ordered by what is present on a bare machine:
+
+      1. HOROS_ROCM_ARCH, for machines where no probe can work
+      2. rocm-bootstrap, AMD's own detector, when already installed
+      3. clinfo — the one that carries a fresh Windows box: the AMD display
+         driver installs it into System32 and it prints the gfx name directly
+      4. rocminfo / hipInfo, present once ROCm itself is
+
+    None means "could not tell" — never a guess. Callers must then ask for the
+    architecture explicitly rather than install kernels the GPU cannot run.
+    """
+    forced = os.environ.get(ROCM_ARCH_ENV, "").strip().lower()
+    if forced:
+        return forced
+    found = _arch_from_rocm_bootstrap()
+    for command in (["clinfo"], ["rocminfo"], ["hipInfo"]):
+        if found:
+            break
+        found = _arch_from_command(command, timeout)
+    if not found:
+        return None
+    distinct = sorted(set(found))
+    if len(distinct) > 1:
+        # mixed-GPU box: one wheel set cannot serve both, so say which one won
+        logger.warning(
+            "Several AMD GPU architectures detected (%s); using %s. "
+            "Set %s to choose a different one.",
+            ", ".join(distinct),
+            distinct[0],
+            ROCM_ARCH_ENV,
+        )
+    return distinct[0]
 
 
 def detect_platform() -> PlatformInfo:

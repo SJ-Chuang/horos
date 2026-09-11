@@ -11,7 +11,8 @@ ways pip's static metadata cannot express:
   * Jetson: torch must be NVIDIA's JetPack-matched wheel; a PyPI torch
     silently replaces it with a CPU build (§4).
   * AMD GPUs: there is no AMD build on PyPI at all. torch comes from AMD's
-    own ROCm index, and the wheel is per-GPU-architecture (`--rocm gfx1201`).
+    own ROCm index, and the wheel is per-GPU-architecture, so the gfx
+    target is detected before the install.
 
 `plan_install()` inspects the live environment (what is installed, whether an
 NVIDIA driver is present and which CUDA version it supports, whether an AMD
@@ -35,10 +36,12 @@ from pydantic import BaseModel, Field
 
 from horos.api.manifest import capability
 from horos.core.platform_info import (
+    ROCM_ARCH_ENV,
     PlatformInfo,
     detect_amd_gpu,
     detect_cuda_version,
     detect_platform,
+    detect_rocm_arch,
 )
 from horos.errors import UnsupportedPlatformError
 
@@ -134,11 +137,12 @@ TORCH_ACCELERATOR_FIELDS = ("cuda", "hip", "xpu")
 # whole ROCm runtime (~1.4 GB), so no separate HIP SDK install is needed — only
 # a current amdgpu driver.
 #
-# The architecture is explicit rather than detected: the [device-gfxNNNN] extra
-# selects the compiled kernels, and the PCI-device-id-to-gfx table changes with
-# every GPU generation. Guessing it wrong installs kernels the GPU cannot run,
-# so `horos install --rocm <arch>` asks for it instead. AMD's compatibility
-# matrix lists the arch per card.
+# The [device-gfxNNNN] extra selects the compiled kernels, so the GPU's gfx
+# architecture has to be known before the install. It is detected
+# (core.platform_info.detect_rocm_arch), overridable through
+# HOROS_ROCM_ARCH, and never guessed: the wrong architecture installs
+# kernels the GPU cannot run, so an undetectable one falls back to the CPU
+# wheel with an explanation instead.
 ROCM_INDEX_URL = "https://stable.repo.amd.com/rocm/whl-next/"
 ROCM_TORCH_VERSION = "2.13.0+rocm10.0.0"
 ROCM_TORCHVISION_VERSION = "0.28.0+rocm10.0.0"
@@ -162,6 +166,32 @@ _CUDA_WHEEL_INDEXES: tuple[tuple[tuple[int, int], str], ...] = (
     ((12, 4), "cu124"),
     ((11, 8), "cu118"),
 )
+
+
+def rocm_suggestion(amd_gpu: str, arch: str | None = None) -> str:
+    """The "your AMD GPU is idle" line, with whatever can be done about it.
+
+    Shared by the install planner, doctor and the training pre-flight so the
+    three never drift into telling the user different things. With a detected
+    `arch`, `horos install` fixes this by itself and the advice is just to run
+    it; without one there is nothing horos can safely install, so the advice
+    is to name the architecture.
+    """
+    head = (
+        f"{amd_gpu} is present but torch is a CPU-only build (PyPI has no AMD "
+        "build): training and inference will not use the GPU. "
+    )
+    if arch:
+        return head + (
+            f"Run 'horos install' to replace it with AMD's ROCm build for {arch}."
+        )
+    return head + (
+        "Its gfx architecture could not be detected, and horos will not guess "
+        "one, so no ROCm wheel can be chosen: set "
+        f"{ROCM_ARCH_ENV} (for example {ROCM_ARCH_ENV}=gfx1201) and re-run "
+        "'horos install'. AMD's ROCm compatibility matrix lists the target "
+        "for each card."
+    )
 
 
 def cuda_index_url(cuda_version: tuple[int, int]) -> str | None:
@@ -301,14 +331,11 @@ def _plan_torch(
             # the CPU index saves ~2 GB of CUDA libraries the machine can't use
             command += ["--index-url", _TORCH_INDEX_BASE + "cpu"]
         notes.append("Installing the CPU-only torch build.")
-        if amd_gpu and not cpu:
-            # §4: never let a GPU machine end up on CPU torch without saying so
-            notes.append(
-                f"{amd_gpu} detected, but torch has no AMD build on PyPI. "
-                f"Run 'horos install --rocm <arch>' (e.g. --rocm gfx1201) to "
-                "install AMD's ROCm wheels instead; see AMD's ROCm "
-                "compatibility matrix for your card's gfx architecture."
-            )
+        if amd_gpu and not cpu and not rocm:
+            # §4: never let a GPU machine end up on CPU torch without saying
+            # so. Reachable only when the architecture is unknown: with one,
+            # the ROCm branch above took the decision.
+            notes.append(rocm_suggestion(amd_gpu, None))
     elif platform.os_family == "windows":
         # the default PyPI Windows wheel is CPU-only — a CUDA machine must
         # install from the matching PyTorch index
@@ -344,8 +371,8 @@ def plan_install(
     torch_cpu_build: bool | None | Literal["auto"] = "auto",
     tensorrt: bool = False,
     tensorrt_installed: bool | Literal["auto"] = "auto",
-    rocm: str | None = None,
     amd_gpu: str | None | Literal["auto"] = "auto",
+    rocm_arch: str | None | Literal["auto"] = "auto",
 ) -> InstallPlan:
     """Plan the pip commands that complete this environment's ML stack.
 
@@ -353,20 +380,42 @@ def plan_install(
     doctor, which has already probed) inject explicit values instead.
     `tensorrt=True` additionally plans NVIDIA's TensorRT wheels for the
     driver's CUDA major (E8-T2) — opt-in because of their license.
-    `rocm="gfx1201"` plans AMD's ROCm torch wheels for that architecture
-    instead of the PyPI build — opt-in because the architecture cannot be
-    detected reliably (see ROCM_INDEX_URL).
+
+    An AMD GPU needs no flag, exactly like an NVIDIA one: it is detected,
+    its gfx architecture is detected, and torch is planned from AMD's ROCm
+    index. `cpu=True` opts out; HOROS_ROCM_ARCH overrides the detected
+    architecture. When the architecture cannot be determined the plan falls
+    back to the CPU wheel and says so — never a guessed architecture, which
+    would install kernels the GPU cannot run.
     """
     plat = platform or detect_platform()
     if missing is None:
         missing = probe_missing()
     missing = set(missing)
-    if rocm is not None:
-        rocm = rocm.strip().lower()
-        if not _ROCM_ARCH_RE.match(rocm):
+    commands: list[list[str]] = []
+    manual: list[str] = []
+    notes: list[str] = []
+    if cuda_version == "auto":
+        cuda_version = None if cpu else detect_cuda_version()
+    if torch_cpu_build == "auto":
+        torch_cpu_build = torch_is_cpu_build()
+    if amd_gpu == "auto":
+        # an NVIDIA driver has already decided; Jetson and macOS are never AMD
+        amd_gpu = (
+            None
+            if (cuda_version or plat.is_jetson or plat.os_family == "macos")
+            else detect_amd_gpu()
+        )
+    if rocm_arch == "auto":
+        # the architecture only matters once an AMD GPU is driving the choice
+        rocm_arch = detect_rocm_arch() if amd_gpu else None
+    if rocm_arch is not None:
+        rocm_arch = rocm_arch.strip().lower()
+        if not _ROCM_ARCH_RE.match(rocm_arch):
             raise ValueError(
-                f"Invalid ROCm architecture {rocm!r}; expected a gfx target "
-                "such as 'gfx1201' (see AMD's ROCm compatibility matrix)."
+                f"Invalid ROCm architecture {rocm_arch!r}; expected a gfx "
+                "target such as 'gfx1201' (see AMD's ROCm compatibility "
+                f"matrix). Check {ROCM_ARCH_ENV} if you set it."
             )
         if plat.os_family == "macos":
             raise UnsupportedPlatformError(
@@ -378,19 +427,9 @@ def plan_install(
                 "Jetson is an NVIDIA platform: torch must come from NVIDIA's "
                 "JetPack-matched wheel, never from AMD's ROCm index."
             )
-        # ROCm replaces CUDA entirely; never plan both
-        cuda_version, cpu = None, False
-    if cuda_version == "auto":
-        cuda_version = None if cpu else detect_cuda_version()
-    if torch_cpu_build == "auto":
-        torch_cpu_build = torch_is_cpu_build()
-    if amd_gpu == "auto":
-        # only worth probing when no NVIDIA GPU took the decision already
-        amd_gpu = None if (cuda_version or plat.is_jetson) else detect_amd_gpu()
+        if cpu:  # an explicit CPU choice is never second-guessed
+            rocm_arch = None
 
-    commands: list[list[str]] = []
-    manual: list[str] = []
-    notes: list[str] = []
     torch_missing = bool({"torch", "torchvision"} & missing)
 
     if plat.is_jetson:
@@ -417,13 +456,7 @@ def plan_install(
         if torch_missing:
             _plan_torch(
                 commands, notes, plat, cuda_version,
-                cpu=cpu, reinstall=False, rocm=rocm, amd_gpu=amd_gpu,
-            )
-        elif rocm:
-            # explicit request: replace whatever is installed with the ROCm build
-            notes.append("Reinstalling torch from AMD's ROCm index as requested.")
-            _plan_torch(
-                commands, notes, plat, None, cpu=False, reinstall=True, rocm=rocm
+                cpu=cpu, reinstall=False, rocm=rocm_arch, amd_gpu=amd_gpu,
             )
         elif torch_cpu_build and cuda_version is not None and not cpu:
             # torch is installed but it is the CPU build on a machine with a
@@ -433,13 +466,21 @@ def plan_install(
                 "GPU is present — reinstalling the matching CUDA build."
             )
             _plan_torch(commands, notes, plat, cuda_version, cpu=False, reinstall=True)
-        elif torch_cpu_build and amd_gpu and not cpu:
-            # same trap, AMD flavour: torch works, it just ignores the GPU
+        elif torch_cpu_build and rocm_arch and not cpu:
+            # the same trap, AMD flavour, and the common one: PyPI's only
+            # Windows/Linux wheel for an AMD box is the CPU one
             notes.append(
-                f"torch is installed but it is a CPU-only build while {amd_gpu} "
-                "is present — run 'horos install --rocm <arch>' (e.g. "
-                "--rocm gfx1201) to replace it with AMD's ROCm build."
+                f"torch is installed but it is a CPU-only build while "
+                f"{amd_gpu} is present: reinstalling AMD's ROCm build."
             )
+            _plan_torch(
+                commands, notes, plat, None,
+                cpu=False, reinstall=True, rocm=rocm_arch,
+            )
+        elif torch_cpu_build and amd_gpu and not cpu:
+            # AMD GPU, but nothing could tell us its architecture, so there is
+            # no ROCm wheel to plan — say why rather than sit on CPU quietly
+            notes.append(rocm_suggestion(amd_gpu, None))
         if {"rfdetr", "pytorch_lightning", "onnx", "onnxruntime"} & missing:
             # one spec carries the training and the ONNX export stack
             commands.append([RFDETR_SPEC])
@@ -498,10 +539,5 @@ def check_ml_ready() -> MLReadiness:
                 "Run 'horos install' to replace it with the matching CUDA build."
             )
         elif (amd := detect_amd_gpu()) is not None:
-            warnings.append(
-                f"{amd} is present but the installed torch is a CPU-only build: "
-                "training and inference will not use the GPU. Run "
-                "'horos install --rocm <arch>' (e.g. --rocm gfx1201) to "
-                "replace it with AMD's ROCm build."
-            )
+            warnings.append(rocm_suggestion(amd, detect_rocm_arch()))
     return MLReadiness(missing=missing, warnings=warnings)

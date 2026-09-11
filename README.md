@@ -172,26 +172,29 @@ catches the classic trap of a CPU-only torch sitting on a GPU machine.
 | macOS | PyPI universal build (MPS) |
 | Windows + NVIDIA GPU | PyTorch index matching your driver's CUDA (cu118 … cu132) — the PyPI Windows wheel is CPU-only |
 | Windows without GPU | PyPI (CPU) |
-| AMD GPU (Linux or Windows) | AMD's ROCm index, per GPU architecture — `horos install --rocm gfx1201`; PyPI has no AMD build |
+| AMD GPU (Linux or Windows) | AMD's ROCm index, for the detected gfx architecture; PyPI has no AMD build |
 | Jetson | **never pip-installed** — see below |
 
 For Linux/x86_64 CI and containers where the default PyPI torch is already
 right, `pip install horos[ml]` installs the same stack in one shot.
 
-**AMD GPUs (ROCm).** PyPI ships no AMD torch, so `horos install` alone
-leaves you on CPU. It says so rather than staying quiet, and names the GPU
-it found. Install AMD's build with the architecture of your card:
+**AMD GPUs (ROCm).** No flag needed: an AMD GPU is handled like an NVIDIA
+one. `horos install` finds the card, works out its gfx architecture and
+installs AMD's ROCm wheels, because PyPI has no AMD torch at all. `--cpu`
+opts out.
 
-```bash
-horos install --rocm gfx1201      # Radeon RX 9070 XT; see AMD's ROCm matrix
-```
+The architecture comes from `clinfo` (the AMD display driver installs it, so
+this works before ROCm exists), from AMD's own `rocm-bootstrap` when present,
+or from `rocminfo`. If none of them can tell, horos installs the CPU wheel
+and says why rather than guessing, because the wrong architecture installs
+kernels the GPU cannot run; set `HOROS_ROCM_ARCH=gfx1201` to name it
+yourself. `horos doctor` reports a CPU-only torch on an AMD machine and
+`doctor --fix` repairs it.
 
-The architecture is explicit because it cannot be probed before ROCm is
-installed, and the wrong one installs kernels the GPU cannot run. The wheels
-carry the ROCm runtime (~1.4 GB), so only a current driver is needed, no HIP
-SDK. torch exposes a ROCm GPU through `torch.cuda`, so horos selects it as
-device `cuda` and records the real GPU name in the run metadata. TensorRT
-export stays NVIDIA-only.
+The wheels carry the ROCm runtime (~1.4 GB), so only a current driver is
+needed, no HIP SDK. torch exposes a ROCm GPU through `torch.cuda`, so horos
+selects it as device `cuda` and records the real GPU name in the run
+metadata. TensorRT export stays NVIDIA-only.
 
 </details>
 
@@ -209,10 +212,10 @@ install Python 3.12 for you (per-user, via winget or the python.org installer)
 and whether to add it to your user PATH, then continues with the horos install.
 Set `HOROS_AUTO_INSTALL_PYTHON=1` to answer yes to both without prompting (CI).
 
-Both scripts forward their arguments to `horos install`, so a rebuilt
-`.venv` gets its GPU torch back in one step: `install.bat --rocm gfx1201`.
-Recreating the venv always reinstalls the default PyPI torch, which on an
-AMD machine is the CPU build.
+Recreating `.venv` reinstalls the ML stack from scratch, and `horos
+install` detects the GPU again, so GPU support comes back on its own.
+Both scripts forward their arguments to `horos install` if you need to
+steer it (`install.bat --cpu`).
 
 **Use a dedicated environment.** horos pins `rfdetr` exactly (upstream has had
 silent annotation-corruption bugs; reproducibility wins) and requires

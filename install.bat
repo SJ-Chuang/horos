@@ -11,7 +11,7 @@ REM Linux / macOS / Jetson: use install.sh instead.
 REM
 REM Non-interactive use (CI): set HOROS_AUTO_INSTALL_PYTHON=1 to answer "yes"
 REM to both questions without prompting.
-REM Arguments are passed through to `horos install` (e.g. --rocm gfx1201).
+REM Arguments are passed through to `horos install` (e.g. --cpu).
 setlocal
 
 REM ============================================================
@@ -134,10 +134,11 @@ echo Installing the horos core ...
 %VPY% -m pip install -e .
 if errorlevel 1 goto error
 
-REM Any arguments to this script are forwarded to `horos install`, so a
-REM rebuilt .venv can be given back its GPU torch in one step:
-REM   install.bat --rocm gfx1201      (AMD)
+REM `horos install` detects the GPU (NVIDIA or AMD) and installs the
+REM matching torch by itself, so a rebuilt .venv comes back with GPU
+REM support. Arguments to this script are forwarded to it:
 REM   install.bat --cpu               (force the CPU build)
+REM   install.bat --tensorrt          (add NVIDIA's TensorRT wheels)
 echo Installing the ML stack (horos install %*) ...
 %VPY% -m horos.cli install %*
 if errorlevel 1 goto error

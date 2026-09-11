@@ -15,6 +15,7 @@ import pytest
 from horos.core.platform_info import (
     _detect_amd_gpu_linux,
     detect_amd_gpu,
+    detect_rocm_arch,
 )
 
 AMD_VENDOR = "0x1002"
@@ -78,3 +79,103 @@ def test_macos_reports_no_amd_gpu_because_rocm_has_no_macos_build():
     assert detect_amd_gpu() is None
 
 
+
+
+# ------------------------------------------------- gfx architecture detection
+# Real clinfo output on Windows (AMD's display driver ships clinfo in
+# System32), trimmed to the lines that matter. This is the path that carries a
+# bare machine: it needs no ROCm and no sysfs.
+CLINFO_WINDOWS = """\
+Number of platforms:				 1
+  Platform Name:				 AMD Accelerated Parallel Processing
+  Number of devices:				 1
+    Board name:					 AMD Radeon RX 9070 XT
+    Name:						 gfx1201
+    Max compute units:				 32
+"""
+ROCMINFO_LINUX = """\
+Agent 1
+  Name:                    AMD Ryzen 9 7950X
+  Device Type:             CPU
+Agent 2
+  Name:                    gfx90a
+  Marketing Name:          AMD Instinct MI210
+  Device Type:             GPU
+"""
+
+
+def _fake_tools(monkeypatch, outputs):
+    """Stand in for the probe subprocesses. `outputs` maps argv[0] -> stdout;
+    anything absent behaves like a tool that is not installed."""
+    import subprocess
+
+    from horos.core import platform_info as pi
+
+    monkeypatch.setattr(pi, "_arch_from_rocm_bootstrap", lambda: [])
+    monkeypatch.delenv(pi.ROCM_ARCH_ENV, raising=False)
+
+    def fake_run(command, **kwargs):
+        if command[0] not in outputs:
+            raise FileNotFoundError(command[0])
+        return subprocess.CompletedProcess(command, 0, outputs[command[0]], "")
+
+    monkeypatch.setattr(pi.subprocess, "run", fake_run)
+
+
+def test_arch_comes_from_clinfo_on_a_machine_without_rocm(monkeypatch):
+    _fake_tools(monkeypatch, {"clinfo": CLINFO_WINDOWS})
+    assert detect_rocm_arch() == "gfx1201"
+
+
+def test_arch_falls_through_to_rocminfo(monkeypatch):
+    _fake_tools(monkeypatch, {"rocminfo": ROCMINFO_LINUX})
+    # the CPU agent's name must not be mistaken for a gfx target
+    assert detect_rocm_arch() == "gfx90a"
+
+
+def test_no_probe_available_returns_none_rather_than_a_guess(monkeypatch):
+    _fake_tools(monkeypatch, {})
+    assert detect_rocm_arch() is None
+
+
+def test_amds_own_detector_wins_when_installed(monkeypatch):
+    from horos.core import platform_info as pi
+
+    _fake_tools(monkeypatch, {"clinfo": CLINFO_WINDOWS})
+    monkeypatch.setattr(pi, "_arch_from_rocm_bootstrap", lambda: ["gfx942"])
+    assert detect_rocm_arch() == "gfx942"
+
+
+def test_env_override_beats_every_probe(monkeypatch):
+    from horos.core import platform_info as pi
+
+    _fake_tools(monkeypatch, {"clinfo": CLINFO_WINDOWS})
+    monkeypatch.setenv(pi.ROCM_ARCH_ENV, "  GFX1100 ")
+    assert detect_rocm_arch() == "gfx1100"
+
+
+def test_mixed_gpu_machine_picks_one_and_says_so(monkeypatch, caplog):
+    from horos.core import platform_info as pi
+
+    _fake_tools(monkeypatch, {})
+    monkeypatch.setattr(pi, "_arch_from_rocm_bootstrap", lambda: ["gfx1201", "gfx90a"])
+    with caplog.at_level("WARNING"):
+        arch = detect_rocm_arch()
+    assert arch in ("gfx1201", "gfx90a")
+    assert "gfx1201" in caplog.text and "gfx90a" in caplog.text
+
+
+def test_a_failing_probe_is_treated_as_absent(monkeypatch):
+    import subprocess
+
+    from horos.core import platform_info as pi
+
+    monkeypatch.setattr(pi, "_arch_from_rocm_bootstrap", lambda: [])
+    monkeypatch.delenv(pi.ROCM_ARCH_ENV, raising=False)
+    monkeypatch.setattr(
+        pi.subprocess,
+        "run",
+        lambda command, **kw: subprocess.CompletedProcess(command, 1, "gfx9999", ""),
+    )
+    # a non-zero exit means the output is not trustworthy
+    assert detect_rocm_arch() is None

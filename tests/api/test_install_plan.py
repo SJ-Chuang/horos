@@ -46,7 +46,7 @@ def _plan(
     cuda=None,
     cpu_build=None,
     cpu=False,
-    rocm=None,
+    rocm_arch=None,
     amd=None,
 ):
     return plan_install(
@@ -55,7 +55,7 @@ def _plan(
         missing=missing,
         cuda_version=cuda,
         torch_cpu_build=cpu_build,
-        rocm=rocm,
+        rocm_arch=rocm_arch,
         amd_gpu=amd,
     )
 
@@ -254,8 +254,14 @@ def test_rocm_build_is_not_mistaken_for_a_cpu_build():
     assert version_py_is_cpu_build(_VERSION_PY_OLD_CUDA) is False
 
 
-def test_rocm_plans_amd_wheels_for_the_given_architecture():
-    plan = _plan(_plat(os_family="windows"), rocm="gfx1201")
+def test_an_amd_gpu_is_planned_for_rocm_without_being_asked():
+    # Symmetry with NVIDIA: `horos install` detects the GPU and picks the
+    # matching wheels. There is no flag to remember.
+    plan = _plan(
+        _plat(os_family="windows"),
+        amd="AMD Radeon RX 9070 XT",
+        rocm_arch="gfx1201",
+    )
     assert plan.pip_commands[0] == [
         f"torch[device-gfx1201]=={ROCM_TORCH_VERSION}",
         f"torchvision[device-gfx1201]=={ROCM_TORCHVISION_VERSION}",
@@ -271,44 +277,85 @@ def test_rocm_plans_amd_wheels_for_the_given_architecture():
                    for command in plan.pip_commands for arg in command)
 
 
-def test_rocm_replaces_an_installed_cpu_torch():
+def test_a_cpu_torch_on_an_amd_box_is_replaced_like_the_cuda_one():
     plan = _plan(
-        _plat(os_family="windows"), missing=[], cpu_build=True, rocm="gfx1100"
+        _plat(os_family="windows"),
+        missing=[],
+        cpu_build=True,
+        amd="AMD Radeon RX 9070 XT",
+        rocm_arch="gfx1100",
     )
     assert plan.pip_commands[0][-1] == "--force-reinstall"
     assert "torch[device-gfx1100]" in plan.pip_commands[0][0]
+    assert any("reinstalling AMD's ROCm build" in n for n in plan.notes)
 
 
-def test_rocm_rejects_anything_that_is_not_a_gfx_target():
+def test_an_undetectable_architecture_falls_back_to_cpu_and_says_why():
+    # The one case horos cannot fix by itself. It must not guess an
+    # architecture (wrong kernels won't run) and must not go quiet either.
+    plan = _plan(
+        _plat(os_family="windows"), amd="AMD Radeon RX 9070 XT", rocm_arch=None
+    )
+    assert plan.pip_commands[0] == ["torch", "torchvision"]
+    note = next(n for n in plan.notes if "RX 9070 XT" in n)
+    assert "HOROS_ROCM_ARCH" in note
+    assert "will not guess" in note
+    # ... and the same when torch is already installed as the CPU build
+    installed = _plan(
+        _plat(os_family="windows"), missing=[], cpu_build=True,
+        amd="AMD Radeon RX 9070 XT", rocm_arch=None,
+    )
+    assert installed.pip_commands == []
+    assert any("HOROS_ROCM_ARCH" in n for n in installed.notes)
+
+
+def test_an_architecture_that_is_not_a_gfx_target_is_refused():
+    # the value reaches a pip requirement string, so it is validated even
+    # though it now arrives from a probe or HOROS_ROCM_ARCH
     for bad in ("", "1201", "gfx", "cuda", "gfx1201; rm -rf /", "--index-url"):
         with pytest.raises(ValueError, match="Invalid ROCm architecture"):
-            _plan(_plat(os_family="windows"), rocm=bad)
+            _plan(_plat(os_family="windows"), rocm_arch=bad)
     # case and surrounding blanks are tolerated
-    assert "gfx1201" in _plan(_plat("windows"), rocm="  GFX1201 ").pip_commands[0][0]
+    assert "gfx1201" in _plan(
+        _plat("windows"), rocm_arch="  GFX1201 "
+    ).pip_commands[0][0]
 
 
 def test_rocm_is_refused_where_it_cannot_run():
     with pytest.raises(UnsupportedPlatformError, match="no macOS build"):
-        _plan(_plat(os_family="macos", arch="arm64"), rocm="gfx1201")
+        _plan(_plat(os_family="macos", arch="arm64"), rocm_arch="gfx1201")
     with pytest.raises(UnsupportedPlatformError, match="JetPack"):
-        _plan(_plat(arch="aarch64", is_jetson=True), rocm="gfx1201")
-
-
-def test_amd_gpu_without_rocm_gets_a_pointer_not_a_silent_cpu_install():
-    plan = _plan(_plat(os_family="windows"), amd="AMD Radeon RX 9070 XT")
-    assert plan.pip_commands[0] == ["torch", "torchvision"]  # CPU, as before
-    note = next(n for n in plan.notes if "RX 9070 XT" in n)
-    assert "--rocm" in note
-    # an installed-but-CPU torch on an AMD box says the same thing
-    installed = _plan(
-        _plat(os_family="windows"), missing=[], cpu_build=True,
-        amd="AMD Radeon RX 9070 XT",
-    )
-    assert installed.pip_commands == []
-    assert any("--rocm" in n for n in installed.notes)
+        _plan(_plat(arch="aarch64", is_jetson=True), rocm_arch="gfx1201")
 
 
 def test_explicit_cpu_choice_is_not_second_guessed_on_an_amd_box():
-    plan = _plan(_plat(os_family="windows"), cpu=True, amd="AMD Radeon RX 9070 XT")
+    plan = _plan(
+        _plat(os_family="windows"), cpu=True,
+        amd="AMD Radeon RX 9070 XT", rocm_arch="gfx1201",
+    )
     assert plan.pip_commands[0] == ["torch", "torchvision"]
-    assert not any("--rocm" in note for note in plan.notes)
+    assert not any("ROCm" in note for note in plan.notes)
+
+
+def test_an_nvidia_driver_keeps_priority_over_the_amd_path():
+    plan = _plan(_plat(os_family="windows"), cuda=(13, 0), missing=ALL_ML)
+    assert plan.pip_commands[0] == [
+        "torch", "torchvision",
+        "--index-url", "https://download.pytorch.org/whl/cu130",
+    ]
+    assert not any("amd.com" in arg
+                   for command in plan.pip_commands for arg in command)
+
+
+def test_the_architecture_is_probed_only_when_an_amd_gpu_is_present(monkeypatch):
+    from horos.api import install as install_mod
+
+    calls = []
+    monkeypatch.setattr(
+        install_mod, "detect_rocm_arch", lambda: calls.append(1) or "gfx1201"
+    )
+    # no AMD GPU: asking for the architecture would be wasted work
+    _plan(_plat(os_family="windows"), amd=None, rocm_arch="auto")
+    assert calls == []
+    _plan(_plat(os_family="windows"), amd="AMD Radeon RX 9070 XT", rocm_arch="auto")
+    assert calls == [1]

@@ -16,6 +16,7 @@ from horos.api.install import (
     ALL_IMPORT_NAMES,
     RFDETR_SPEC,
     plan_install,
+    rocm_suggestion,
     torch_is_cpu_build,
 )
 from horos.api.manifest import capability
@@ -24,6 +25,7 @@ from horos.core.platform_info import (
     detect_amd_gpu,
     detect_cuda_version,
     detect_platform,
+    detect_rocm_arch,
 )
 from horos.core.registry import ModelInfo
 from horos.core.registry import list_models as _registry_list_models
@@ -274,19 +276,19 @@ def doctor_report() -> DoctorReport:
             # AMD torch at all, so a CPU build is simply what an AMD machine
             # gets by default. Without this arm doctor reports "Environment OK"
             # while the GPU sits idle, which is the silent CPU fallback §4
-            # forbids. The fix is not planned into fix_commands because the
-            # ROCm wheel is per-GPU-architecture and the architecture cannot
-            # be probed before ROCm is installed (see install.ROCM_INDEX_URL).
+            # forbids.
+            arch = detect_rocm_arch()
             for dep in deps:
                 if dep.name == "torch":
                     dep.ok = False
-                    dep.note = f"CPU-only build, but {amd} is present"
-            extra_manual.append(
-                f"{amd} is present but torch is a CPU-only build. Run "
-                "'horos install --rocm <arch>' (e.g. --rocm gfx1201) to "
-                "install AMD's ROCm wheels; AMD's ROCm compatibility matrix "
-                "lists the gfx architecture for your card."
-            )
+                    dep.note = f"CPU-only build, but {amd} is present" + (
+                        f" ({arch})" if arch else "; gfx architecture unknown"
+                    )
+            # With an architecture the planner emits the ROCm reinstall, so
+            # `doctor --fix` repairs this like any other mismatch. Without one
+            # there is nothing safe to install, and the user has to name it.
+            if arch is None:
+                extra_manual.append(rocm_suggestion(amd, None))
 
     commands, manual = _plan_fixes(missing, platform)
     manual += extra_manual
