@@ -67,3 +67,63 @@ def test_jetson_never_automates_torch():
 def test_light_deps_use_their_spec():
     commands, _ = _plan_fixes(["flask"], _plat())
     assert ["flask>=3.0,<4"] in commands
+
+
+# --------------------------------------------------------------- ROCm (AMD)
+def _fake_cpu_torch_on(monkeypatch, *, nvidia=None, amd=None):
+    """Pretend the live machine has a complete stack built for no accelerator.
+
+    doctor_report probes the real environment, so the GPU-mismatch arms can
+    only be reached by standing in for those probes.
+    """
+    import horos.backends.env as env_mod
+    from horos.api import system as sys_mod
+
+    monkeypatch.setattr(sys_mod, "_installed_version", lambda name: "1.0")
+    monkeypatch.setattr(sys_mod, "torch_is_cpu_build", lambda: True)
+    monkeypatch.setattr(sys_mod, "detect_cuda_version", lambda: nvidia)
+    monkeypatch.setattr(sys_mod, "detect_amd_gpu", lambda: amd)
+    monkeypatch.setattr(
+        env_mod,
+        "check_environment",
+        lambda emit_warnings=True: env_mod.EnvReport(
+            platform=_plat(os_family="windows", arch="AMD64"),
+            torch_version="2.14.0+cpu",
+            cuda_available=False,
+            mps_available=False,
+            warnings=[],
+        ),
+    )
+
+
+def test_an_idle_amd_gpu_is_reported_instead_of_environment_ok(monkeypatch):
+    # PyPI has no AMD torch, so a CPU build is what an AMD box gets by
+    # default. Saying "Environment OK" here is the silent CPU fallback §4
+    # forbids: the user trains on CPU and never finds out why it is slow.
+    _fake_cpu_torch_on(monkeypatch, amd="AMD Radeon RX 9070 XT")
+    report = doctor_report()
+    assert not report.ok
+    torch_dep = next(d for d in report.dependencies if d.name == "torch")
+    assert not torch_dep.ok
+    assert "RX 9070 XT" in torch_dep.note
+    action = next(a for a in report.manual_actions if "RX 9070 XT" in a)
+    assert "--rocm" in action
+    # the arch cannot be probed, so this is never auto-installed
+    assert not any("rocm" in arg.lower()
+                   for command in report.fix_commands for arg in command)
+
+
+def test_a_cpu_box_with_no_gpu_at_all_stays_ok(monkeypatch):
+    _fake_cpu_torch_on(monkeypatch, nvidia=None, amd=None)
+    report = doctor_report()
+    assert report.ok
+    assert report.manual_actions == []
+
+
+def test_an_nvidia_gpu_still_takes_priority_over_the_amd_arm(monkeypatch):
+    # a machine with both: the CUDA path is automatable, so it wins
+    _fake_cpu_torch_on(monkeypatch, nvidia=(13, 0), amd="AMD Radeon RX 9070 XT")
+    report = doctor_report()
+    torch_dep = next(d for d in report.dependencies if d.name == "torch")
+    assert "NVIDIA" in torch_dep.note
+    assert not any("--rocm" in a for a in report.manual_actions)

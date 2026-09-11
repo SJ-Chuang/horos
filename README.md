@@ -209,6 +209,11 @@ install Python 3.12 for you (per-user, via winget or the python.org installer)
 and whether to add it to your user PATH, then continues with the horos install.
 Set `HOROS_AUTO_INSTALL_PYTHON=1` to answer yes to both without prompting (CI).
 
+Both scripts forward their arguments to `horos install`, so a rebuilt
+`.venv` gets its GPU torch back in one step: `install.bat --rocm gfx1201`.
+Recreating the venv always reinstalls the default PyPI torch, which on an
+AMD machine is the CPU build.
+
 **Use a dedicated environment.** horos pins `rfdetr` exactly (upstream has had
 silent annotation-corruption bugs; reproducibility wins) and requires
 `transformers >= 5.1` — installing into a shared ML environment will upgrade

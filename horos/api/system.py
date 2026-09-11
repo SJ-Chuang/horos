@@ -19,7 +19,12 @@ from horos.api.install import (
     torch_is_cpu_build,
 )
 from horos.api.manifest import capability
-from horos.core.platform_info import PlatformInfo, detect_cuda_version, detect_platform
+from horos.core.platform_info import (
+    PlatformInfo,
+    detect_amd_gpu,
+    detect_cuda_version,
+    detect_platform,
+)
 from horos.core.registry import ModelInfo
 from horos.core.registry import list_models as _registry_list_models
 from horos.errors import UnsupportedPlatformError
@@ -240,6 +245,7 @@ def doctor_report() -> DoctorReport:
         )
 
     cuda = mps = None
+    extra_manual: list[str] = []
     if _installed_version("torch") is not None:
         from horos.backends.env import check_environment
 
@@ -263,8 +269,27 @@ def doctor_report() -> DoctorReport:
                         "CPU-only build, but an NVIDIA GPU is present — "
                         "run 'horos install' to switch to the CUDA build"
                     )
+        elif not cuda and torch_is_cpu_build() and (amd := detect_amd_gpu()):
+            # The same trap, AMD flavour, and the more likely one: PyPI has no
+            # AMD torch at all, so a CPU build is simply what an AMD machine
+            # gets by default. Without this arm doctor reports "Environment OK"
+            # while the GPU sits idle, which is the silent CPU fallback §4
+            # forbids. The fix is not planned into fix_commands because the
+            # ROCm wheel is per-GPU-architecture and the architecture cannot
+            # be probed before ROCm is installed (see install.ROCM_INDEX_URL).
+            for dep in deps:
+                if dep.name == "torch":
+                    dep.ok = False
+                    dep.note = f"CPU-only build, but {amd} is present"
+            extra_manual.append(
+                f"{amd} is present but torch is a CPU-only build. Run "
+                "'horos install --rocm <arch>' (e.g. --rocm gfx1201) to "
+                "install AMD's ROCm wheels; AMD's ROCm compatibility matrix "
+                "lists the gfx architecture for your card."
+            )
 
     commands, manual = _plan_fixes(missing, platform)
+    manual += extra_manual
     return DoctorReport(
         platform=platform,
         dependencies=deps,
