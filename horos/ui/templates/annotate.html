@@ -306,13 +306,14 @@
           <button class="tool-btn ai" data-tool="ai-text"
             title="AI text prompt — type object names (e.g. helmet, vest), then Apply. OWLv2 pre-labels them on this image. (shortcut 4)">T</button>
           <button class="tool-btn ai" data-tool="sam"
-            title="SAM — left-click an object, right-click (or Shift+click) what is NOT it, or drag a rough box; a mask preview appears, Enter accepts it. Right-drag still pans. (shortcut 5)">✦</button>
+            title="SAM — left-click an object, right-click (or Shift+click) what is NOT it, or drag a rough box; a mask preview appears. Space keeps it and starts the next object, Enter accepts them all. Right-drag still pans. (shortcut 5)">✦</button>
         </div>
         <div id="sam-panel" style="display:none;margin-top:10px">
           <div style="font-size:11px;color:var(--dim);line-height:1.5">
             Left-click the object; <b>right-click</b> (or Shift+click) what is <i>not</i> it;
             or drag a rough box. Right-drag still pans. The preview updates after every
-            click. <b>Enter</b> accepts it as
+            click. <b>Space</b> keeps this object and starts the next one (a new box does
+            too); <b>Enter</b> accepts them all as
             <span id="sam-class-echo" style="color:var(--text)">object</span>,
             <b>Backspace</b> removes the last point, <b>Esc</b> clears.</div>
           <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
@@ -329,6 +330,8 @@
           </div>
           <div style="display:flex;gap:6px;margin-top:8px">
             <button class="btn primary" id="sam-accept" style="flex:1" disabled>Accept (Enter)</button>
+            <button class="btn" id="sam-next" disabled
+                    title="Keep this mask (with the current class) and start prompting the next object; Enter writes them all at once">Next object (Space)</button>
             <button class="btn" id="sam-clear" disabled>Clear (Esc)</button>
           </div>
           <div id="sam-status" style="font-size:11px;color:var(--dim);margin-top:4px;min-height:14px"></div>
@@ -589,7 +592,8 @@ const Page = {
     $("autolabel-cancel").onclick = () => this.cancelAutolabel();
     $("assist-run").onclick = () => this.runAssist();
     $("sam-accept").onclick = () => this._samAccept();
-    $("sam-clear").onclick = () => this._samReset(true);
+    $("sam-next").onclick = () => this._samQueue();
+    $("sam-clear").onclick = () => this._samClear();
     document.querySelectorAll('input[name="sam-output"]').forEach((r) => {
       r.onchange = () => { if (this.sam.points.length || this.sam.box) this._samQuery(); };
     });
@@ -1055,8 +1059,14 @@ const Page = {
           this.setTool("ai-text", true);
           break;
         case "Digit5": case "Numpad5": this.setTool("sam"); break;
-        case "Enter": case "NumpadEnter": case "Space":
-          if (this.activeTool === "sam" && this.sam.candidate) { e.preventDefault(); this._samAccept(); }
+        case "Enter": case "NumpadEnter":
+          if (this.activeTool === "sam" && (this.sam.candidate || this.sam.queued.length)) {
+            e.preventDefault(); this._samAccept();
+          }
+          break;
+        case "Space":
+          // multi-object flow (SAM-T5): park this mask, prompt the next one
+          if (this.activeTool === "sam" && this.sam.candidate) { e.preventDefault(); this._samQueue(); }
           break;
         case "Delete": case "Backspace":
           if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box)) {
@@ -1064,8 +1074,9 @@ const Page = {
           } else if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
           break;
         case "Escape":
-          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box)) this._samReset(true);
-          else if (this.isDrawing) { this.isDrawing = false; this.currentPoints = []; }
+          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box || this.sam.queued.length)) {
+            this._samClear();
+          } else if (this.isDrawing) { this.isDrawing = false; this.currentPoints = []; }
           else this.selectShape(-1);
           this._drawCanvas();
           break;
@@ -1086,7 +1097,7 @@ const Page = {
     if (tool === "ai-text" && focusAssist) $("assist-input").focus();
     this.isDrawing = false;
     this.currentPoints = [];
-    this._samReset(false);
+    this._samReset(false, true);
     if (tool === "sam") this._samPrefetch();
     if (tool !== "select") this.selectedShapeIdx = -1;
     this._updateCursor();
@@ -1561,7 +1572,11 @@ const Page = {
           const [[x1, y1], [x2, y2]] = this.sam.dragBox;
           this.sam.dragBox = null;
           const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
-          if (w > 2 && h > 2) this.sam.box = [Math.min(x1, x2), Math.min(y1, y2), w, h];
+          if (w > 2 && h > 2) {
+            // a fresh box always means another object: park the current mask
+            if (this.sam.candidate && (this.sam.points.length || this.sam.box)) this._samQueue(false);
+            this.sam.box = [Math.min(x1, x2), Math.min(y1, y2), w, h];
+          }
         } else {
           this.sam.points.push(down);
           this.sam.labels.push(this._samShift ? 0 : 1);
@@ -1611,7 +1626,8 @@ const Page = {
   // ------------------------------------------------------------- SAM tool
   // Prompt state lives here; the server answers with a CANDIDATE shape that
   // is only written when the user accepts it (through the ordinary save).
-  sam: { points: [], labels: [], box: null, candidate: null, down: null, dragBox: null, seq: 0 },
+  sam: { points: [], labels: [], box: null, candidate: null, down: null, dragBox: null, seq: 0,
+         queued: [] },  // queued: masks kept with Space, written together on Enter (SAM-T5)
 
   _samModel() { return $("sam-model").value || "sam2.1-tiny"; },
   _samOutput() {
@@ -1624,16 +1640,44 @@ const Page = {
   },
   _samSyncButtons() {
     const has = this.sam.points.length || this.sam.box;
-    $("sam-accept").disabled = !(this.sam.candidate && this.sam.candidate.points.length);
-    $("sam-clear").disabled = !has;
+    const live = !!(this.sam.candidate && this.sam.candidate.points.length);
+    const total = this.sam.queued.length + (live ? 1 : 0);
+    $("sam-accept").disabled = !total;
+    $("sam-accept").textContent = total > 1 ? `Accept ${total} (Enter)` : "Accept (Enter)";
+    $("sam-next").disabled = !live;
+    $("sam-clear").disabled = !(has || this.sam.queued.length);
     $("sam-class-echo").textContent = $("class-input").value.trim() || "object";
   },
-  _samReset(redraw) {
+  _samReset(redraw, dropQueue = false) {
     this.sam.points = []; this.sam.labels = []; this.sam.box = null;
     this.sam.candidate = null; this.sam.down = null; this.sam.dragBox = null;
+    if (dropQueue) this.sam.queued = [];
     this.sam.seq++;
     if ($("sam-panel")) { this._samSyncButtons(); if (this.activeTool !== "sam") this._samSetStatus(""); }
     if (redraw) this._drawCanvas();
+  },
+  // Esc: first the prompts of the object being worked on, then the queue
+  _samClear() {
+    if (this.sam.points.length || this.sam.box) { this._samReset(true); this._samQueueStatus(); return; }
+    if (this.sam.queued.length) {
+      const n = this.sam.queued.length;
+      this._samReset(true, true);
+      toast(`Dropped ${n} queued object${n > 1 ? "s" : ""}`, "", 900);
+    }
+  },
+  _samQueueStatus() {
+    const n = this.sam.queued.length;
+    if (n) this._samSetStatus(`${n} object${n > 1 ? "s" : ""} queued — prompt the next one, Enter accepts all`);
+  },
+  // Space / a new box: keep the current mask with its class, prompt the next object
+  _samQueue(redraw = true) {
+    const cand = this.sam.candidate;
+    if (!cand || !cand.points.length) return;
+    const cls = $("class-input").value.trim() || "object";
+    this.sam.queued.push({ label: cls, shape_type: cand.shape_type,
+                           points: cand.points.map((p) => [p[0], p[1]]) });
+    this._samReset(redraw);
+    this._samQueueStatus();
   },
   async _samPrefetch() {
     if (this.currentIdx < 0 || !this.queue[this.currentIdx]) return;
@@ -1677,20 +1721,41 @@ const Page = {
   },
   _samAccept() {
     const cand = this.sam.candidate;
-    if (!cand || !cand.points.length) return;
-    const cls = $("class-input").value.trim() || "object";
-    this._pushHistory();
-    const shape = { label: cls, shape_type: cand.shape_type,
-                    points: cand.points.map((p) => this._clampPoint([p[0], p[1]])) };
-    this._clampShapePoints(shape);
-    this.editorShapes.push(shape);
+    const items = [...this.sam.queued];
+    if (cand && cand.points.length) {
+      items.push({ label: $("class-input").value.trim() || "object",
+                   shape_type: cand.shape_type, points: cand.points });
+    }
+    if (!items.length) return;
+    this._pushHistory();  // one undo step for the whole batch
+    for (const item of items) {
+      const shape = { label: item.label, shape_type: item.shape_type,
+                      points: item.points.map((p) => this._clampPoint([p[0], p[1]])) };
+      this._clampShapePoints(shape);
+      this.editorShapes.push(shape);
+      this.sessionNames.add(item.label);
+    }
     this._triggerChange();
-    this.sessionNames.add(cls);
     this.renderChips();
-    toast(`Added ${cls} (${cand.shape_type})`, "ok", 900);
-    this._samReset(true);  // stay in the tool: the next object is one click away
+    toast(items.length === 1
+      ? `Added ${items[0].label} (${items[0].shape_type})`
+      : `Added ${items.length} objects`, "ok", 900);
+    this._samReset(true, true);  // stay in the tool: the next object is one click away
   },
   _samDraw(ctx, inv) {
+    // parked objects: their own class colour, solid thin edge (not yet written)
+    for (const q of this.sam.queued) {
+      ctx.beginPath();
+      if (q.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = q.points;
+        ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      } else {
+        q.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+      }
+      ctx.fillStyle = this._getColor(q.label); ctx.globalAlpha = 0.22; ctx.fill();
+      ctx.globalAlpha = 1; ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    }
     const cls = $("class-input").value.trim() || "object";
     const color = this._getColor(cls);
     const cand = this.sam.candidate;

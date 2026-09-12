@@ -35,7 +35,19 @@ horos ui <project>
 9. Output 切成 Box:預覽變成 mask 的外接矩形,Enter 加入的是 rectangle
 10. 右上 model 下拉可切 SAM 2.1 Tiny / Small / SAM ViT-B;切換後重新 prefetch,選擇會記住
 
-### D. 邊界
+### D. 多物體批次接受(SAM-T5)
+
+14. 點第一個物體得到 mask 後按 <b>Space</b>(或「Next object」):mask 變成該類別色的實線薄邊
+    (已保留、尚未寫入),prompt 清空,狀態列「1 object queued — prompt the next one, Enter accepts all」
+15. 換類別(直接改 Object Class 或數字鍵)再點第二個物體、第三個物體,每次 Space;
+    「Accept」按鈕顯示「Accept 3 (Enter)」
+16. 不按 Space 直接拖一個新框:目前的 mask 自動入列,新框成為新物體的 prompt
+17. Enter:所有入列的物體加上目前的候選一次寫入,各自保留當時的類別;toast「Added 3 objects」;
+    Ctrl+Z 一次還原整批
+18. Esc 第一下清掉目前物體的點與框(入列的保留);再按 Esc 丟掉整個隊列(toast 提示數量)
+19. 切工具或切圖:隊列一併清空(未寫入的不會偷跟到下一張)
+
+### E. 邊界
 
 11. 只放負點:狀態列黃字「no mask for this prompt — add a point inside the object」,Accept 停用
 12. 切到別張圖再切回:prompt 清空;若工具仍是 SAM,新圖自動 prefetch
@@ -47,6 +59,7 @@ horos ui <project>
 
 ## 已知限制
 
-- 一次一張圖、一個物體;沒有跨影格追蹤(SAM 2 的 video 功能未使用)
+- 一次一張圖;沒有跨影格追蹤(SAM 2 的 video 功能未使用)
+- 入列的物體不能再修 prompt;要改就 Esc 丟掉隊列重來,或接受後用 select 工具編輯
 - 候選 polygon 由 mask 邊界簡化而來,細碎孔洞不保留
 - 觸控裝置沒有右鍵與 Shift,負點需以滑鼠操作

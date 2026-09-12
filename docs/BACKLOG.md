@@ -104,3 +104,9 @@ FastSAM(AGPL)、EdgeSAM(S-Lab 僅研究用)、ultralytics 的 SAM 封裝(AGPL)�
 設計決定:每次 push 的矩陣刻意不裝 torch —— 那正是 `pip install horos` 使用者(只標註)的環境,
 需要 ML stack 的測試自行 skip、假 backend 覆蓋訓練 / 匯出 / 服務流程;全棧測試太慢太大,留給排程。
 
+## SAM-T5 — SAM 工具多物體批次接受(2026-09-12 完成)
+
+Space(或「Next object」)把目前候選連同當時的類別入列,prompt 清空繼續點下一個;拖新框自動入列;
+Enter 一次寫入全部(單一 undo 步);Esc 兩段式清除;切工具/切圖清空隊列。介面情境
+`tests/ui_scenarios/SAM-T4.md` D 節。
+

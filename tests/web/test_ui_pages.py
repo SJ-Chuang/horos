@@ -119,6 +119,9 @@ def test_lab_serve_offers_every_artifact_format_from_the_capability_list(client)
 def test_annotator_has_the_sam_tool(client):
     html = client.get("/annotate").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html
+    # SAM-T5: several objects per Enter — a "Next object" control and the
+    # queue in the tool's state
+    assert 'id="sam-next"' in html and "queued: []" in html
     for element in ("sam-accept", "sam-clear", "sam-model", "sam-status"):
         assert f'id="{element}"' in html, element
     assert "/segment/prefetch" in html and "/segment`" in html
