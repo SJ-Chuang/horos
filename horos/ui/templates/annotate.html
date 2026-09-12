@@ -334,6 +334,9 @@
                     title="Keep this mask (with the current class) and start prompting the next object; Enter writes them all at once">Next object (Space)</button>
             <button class="btn" id="sam-clear" disabled>Clear (Esc)</button>
           </div>
+          <button class="btn" id="sam-convert-all" style="width:100%;margin-top:6px" disabled
+                  title="Every box on this image becomes the prompt for its own SAM mask and is rewritten as a polygon (keeps class, status and score); a box SAM cannot segment stays a box. One box: the ⬠ button in the Shapes list, or P with it selected.">
+            Boxes → polygons (this image)</button>
           <div id="sam-status" style="font-size:11px;color:var(--dim);margin-top:4px;min-height:14px"></div>
         </div>
         <div id="assist-panel" style="display:none;margin-top:10px">
@@ -458,6 +461,20 @@
         <input type="checkbox" id="autolabel-unannotated" checked> only unannotated images
       </label>
       <button class="btn primary" id="autolabel-start" style="width:100%">Start</button>
+      <div style="border-top:1px solid var(--line);margin:14px 0 10px"></div>
+      <h4 style="margin:0 0 6px;font-size:13px">Boxes → polygons (SAM)</h4>
+      <p style="color:var(--dim);font-size:12px;margin:0 0 8px">
+        Every box annotation of the chosen class becomes the prompt for a SAM mask and is
+        rewritten as a polygon — class, status and score stay. A box SAM cannot segment stays a box.</p>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin-bottom:6px">
+        <span>Class</span>
+        <select id="b2p-class" style="flex:1;min-width:0"><option value="">all classes</option></select>
+        <select id="b2p-model" style="max-width:150px;min-width:0" title="Which segmenter runs (all Apache 2.0)"></select>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--dim);margin-bottom:10px">
+        <input type="checkbox" id="b2p-pending" checked> include pending pre-labels
+      </label>
+      <button class="btn" id="b2p-start" style="width:100%">Convert boxes to polygons</button>
     </div>
     <div id="autolabel-progress" style="display:none">
       <div id="job-bar" style="background:var(--line);height:8px;border-radius:4px;overflow:hidden;margin:10px 0">
@@ -476,7 +493,9 @@
   <div class="card">
     <h4>Keyboard shortcuts</h4>
     <table>
-      <tr><td>1 / 2 / 3 / 4</td><td>Select ✎ / Rectangle ▭ / Polygon ⬠ / AI prompt T tool</td></tr>
+      <tr><td>1 / 2 / 3 / 4 / 5</td><td>Select ✎ / Rectangle ▭ / Polygon ⬠ / AI prompt T / SAM ✦ tool</td></tr>
+      <tr><td>Space / Enter</td><td>SAM: keep this mask and start the next object / accept all</td></tr>
+      <tr><td>P</td><td>selected box → polygon (SAM uses the box as its prompt)</td></tr>
       <tr><td>A / D</td><td>previous / next image</td></tr>
       <tr><td>Ctrl+S</td><td>save annotations</td></tr>
       <tr><td>Ctrl+Z</td><td>undo</td></tr>
@@ -594,6 +613,9 @@ const Page = {
     $("sam-accept").onclick = () => this._samAccept();
     $("sam-next").onclick = () => this._samQueue();
     $("sam-clear").onclick = () => this._samClear();
+    $("sam-convert-all").onclick = () => this.boxToPolygon(
+      this.editorShapes.map((s, i) => (s.shape_type === "rectangle" ? i : -1)).filter((i) => i >= 0));
+    $("b2p-start").onclick = () => this.startBoxesToPolygons();
     document.querySelectorAll('input[name="sam-output"]').forEach((r) => {
       r.onchange = () => { if (this.sam.points.length || this.sam.box) this._samQuery(); };
     });
@@ -1068,6 +1090,12 @@ const Page = {
           // multi-object flow (SAM-T5): park this mask, prompt the next one
           if (this.activeTool === "sam" && this.sam.candidate) { e.preventDefault(); this._samQueue(); }
           break;
+        case "KeyP": {
+          // SAM-T6: the selected box becomes the prompt for its own polygon
+          const sel = this.editorShapes[this.selectedShapeIdx];
+          if (sel && sel.shape_type === "rectangle") { e.preventDefault(); this.boxToPolygon(this.selectedShapeIdx); }
+          break;
+        }
         case "Delete": case "Backspace":
           if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box)) {
             e.preventDefault(); this._samUndoPoint();
@@ -1386,6 +1414,7 @@ const Page = {
     const el = $("shapes-list");
     if (!this.editorShapes.length) {
       el.innerHTML = '<p style="color:var(--dim);font-size:12px">No shapes</p>';
+      if ($("sam-convert-all")) $("sam-convert-all").disabled = true;
       return;
     }
     el.innerHTML = this.editorShapes.map((s, i) => `
@@ -1395,16 +1424,26 @@ const Page = {
             ? `pending ${s.score != null ? Number(s.score).toFixed(2) : ""}`
             : `(${s.shape_type})`}</small></span>
         <span style="display:flex;gap:2px">
+          ${s.shape_type === "rectangle"
+            ? `<button class="del" data-poly="${i}" title="Box → polygon: SAM uses this box as its prompt (P)">⬠</button>`
+            : ""}
           ${s.status === "pending" && s.id
             ? `<button class="del" style="color:var(--ok)" data-accept="${s.id}" title="Accept">✓</button>`
             : ""}
           <button class="del" data-i="${i}" title="Delete">×</button>
         </span>
       </div>`).join("");
+    if ($("sam-convert-all")) {
+      $("sam-convert-all").disabled = !this.editorShapes.some((s) => s.shape_type === "rectangle");
+    }
     [...el.children].forEach((row) => {
       row.onclick = () => this.selectShape(Number(row.dataset.i));
       row.querySelector("[data-i]").onclick = (e) => {
         e.stopPropagation(); this.deleteShape(Number(e.currentTarget.dataset.i));
+      };
+      const poly = row.querySelector("[data-poly]");
+      if (poly) poly.onclick = (e) => {
+        e.stopPropagation(); this.boxToPolygon(Number(poly.dataset.poly));
       };
       const accept = row.querySelector("[data-accept]");
       if (accept) accept.onclick = (e) => {
@@ -1742,6 +1781,44 @@ const Page = {
       : `Added ${items.length} objects`, "ok", 900);
     this._samReset(true, true);  // stay in the tool: the next object is one click away
   },
+  // SAM-T6: existing boxes are prompts. Each rectangle shape is sent as a box
+  // prompt (embedding cached server-side, so this is one decoder pass per
+  // box) and rewritten in place as a polygon — label, status, score and id
+  // stay; a box without a mask stays a box. Works on unsaved shapes too:
+  // the result goes through the ordinary save, like any edit.
+  async boxToPolygon(indices) {
+    const list = (Array.isArray(indices) ? indices : [indices])
+      .filter((i) => this.editorShapes[i] && this.editorShapes[i].shape_type === "rectangle");
+    if (!list.length || !this.editorImage || this.currentIdx < 0) return;
+    const image = this.queue[this.currentIdx].image;
+    const shapes = this.editorShapes;  // stop if the user switches image meanwhile
+    const model = this._samModel();
+    this._pushHistory();
+    let done = 0, kept = 0;
+    if (list.length > 1) toast(`SAM: converting ${list.length} boxes…`, "", 1500);
+    for (const i of list) {
+      if (this.editorShapes !== shapes) return;
+      const s = shapes[i];
+      const [[x1, y1], [x2, y2]] = s.points;
+      const box = [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
+      try {
+        const cand = await api(`/images/${image.id}/segment`,
+          json("POST", { box, output: "polygon", model }));
+        if (this.editorShapes !== shapes) return;
+        if (!cand.points.length) { kept++; continue; }
+        s.shape_type = "polygon";
+        s.points = cand.points.map((p) => this._clampPoint([p[0], p[1]]));
+        this._clampShapePoints(s);
+        done++;
+        this._drawCanvas();
+      } catch (e) { toast(e.message, "err", 4000); break; }
+    }
+    if (done) this._triggerChange();
+    this._drawCanvas();
+    this.renderShapesList();
+    toast(`${done} box${done === 1 ? "" : "es"} → polygon`
+      + (kept ? ` · ${kept} kept as box (no mask)` : ""), done ? "ok" : "warn", 2500);
+  },
   _samDraw(ctx, inv) {
     // parked objects: their own class colour, solid thin edge (not yet written)
     for (const q of this.sam.queued) {
@@ -1799,11 +1876,13 @@ const Page = {
       const models = (await api("/models")).filter((m) => m.task === "instance_segmentation");
       let saved = null;
       try { saved = localStorage.getItem("horos_sam_model"); } catch (e) {}
-      $("sam-model").innerHTML = models.map((m) =>
+      const options = models.map((m) =>
         `<option value="${m.key}" title="${m.latency_hint} · ${m.license}">${m.display_name.replace(/ \(.*\)$/, "")}</option>`).join("");
+      $("sam-model").innerHTML = options;
+      $("b2p-model").innerHTML = options;
       const wanted = saved && models.some((m) => m.key === saved) ? saved
         : models.some((m) => m.key === "sam2.1-tiny") ? "sam2.1-tiny" : (models[0] || {}).key;
-      if (wanted) $("sam-model").value = wanted;
+      if (wanted) { $("sam-model").value = wanted; $("b2p-model").value = wanted; }
     } catch (e) { /* the default key still works server-side */ }
   },
 
@@ -1912,6 +1991,8 @@ const Page = {
 
   // -------------------------------------------------------- autolabel job
   openAutolabelModal() {
+    $("b2p-class").innerHTML = '<option value="">all classes</option>'
+      + (this.categories || []).map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
     $("autolabel-modal").style.display = "flex";
     $("autolabel-form").style.display = "block";
     $("autolabel-progress").style.display = "none";
@@ -1948,14 +2029,30 @@ const Page = {
         only_unannotated: $("autolabel-unannotated").checked,
         output: document.querySelector('input[name="autolabel-output"]:checked').value,
       }));
-      this._jobId = job_id;
-      this._jobEvents = 0;
-      $("autolabel-form").style.display = "none";
-      $("autolabel-progress").style.display = "block";
-      $("job-text").textContent = "starting… (the first run may download weights)";
-      $("job-bar").firstElementChild.style.width = "0";
-      this.pollJob();
+      this._startJob(job_id, "autolabel");
     } catch (e) { toast(e.message, "err", 4000); }
+  },
+  // SAM-T6: the project's boxes (one class or all) become SAM polygons
+  async startBoxesToPolygons() {
+    const cls = $("b2p-class").value;
+    try {
+      const { job_id } = await api("/segment/boxes", json("POST", {
+        categories: cls ? [Number(cls)] : null,
+        include_pending: $("b2p-pending").checked,
+        model: $("b2p-model").value || "sam2.1-tiny",
+      }));
+      this._startJob(job_id, "boxes");
+    } catch (e) { toast(e.message, "err", 4000); }
+  },
+  _startJob(jobId, kind) {
+    this._jobId = jobId;
+    this._jobKind = kind;
+    this._jobEvents = 0;
+    $("autolabel-form").style.display = "none";
+    $("autolabel-progress").style.display = "block";
+    $("job-text").textContent = "starting… (the first run may download weights)";
+    $("job-bar").firstElementChild.style.width = "0";
+    this.pollJob();
   },
   async pollJob() {
     try {
@@ -1980,6 +2077,18 @@ const Page = {
         const all = (await api(`/jobs/${this._jobId}`)).events;
         const done = all.find((e) => e.type === "completed");
         const result = (done && done.result) || {};
+        if (this._jobKind === "boxes") {
+          toast(result.images
+            ? `Converted ${result.converted || 0} box(es) into polygons on ${result.images} image(s)`
+              + (result.skipped ? ` · ${result.skipped} kept as box (no mask)` : "")
+            : "No box annotations matched — nothing to convert.",
+            result.images ? "ok" : "warn", 6000);
+          this.closeAutolabelModal();
+          // the stored geometry changed under the editor: reload the page
+          // of images (and the open one) instead of showing stale boxes
+          await this.loadImages(this.page || 1);
+          return;
+        }
         if (!result.images) {
           // nothing was even attempted — surface the reason, don't pretend success
           const why = all.find((e) => e.type === "warning");
@@ -1995,7 +2104,9 @@ const Page = {
         $("queue-mode").value = "pending";
         await this.loadImages(1);
       } else if (body.state === "cancelled") {
-        toast("Auto-label cancelled — finished images keep their pre-labels.", "warn");
+        toast(this._jobKind === "boxes"
+          ? "Conversion cancelled — images already processed keep their polygons."
+          : "Auto-label cancelled — finished images keep their pre-labels.", "warn");
         this.closeAutolabelModal();
         await this.loadImages(1);
       }

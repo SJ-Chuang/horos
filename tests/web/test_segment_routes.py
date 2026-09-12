@@ -69,3 +69,40 @@ def test_bad_requests_are_400_with_the_unified_shape(client):
     assert client.post(
         "/api/v1/images/999/segment", json={"points": [[1, 1]], "labels": [1]}
     ).status_code == 400
+
+
+def test_boxes_to_polygons_routes(client):
+    """SAM-T6: one image synchronously, the project as a job."""
+    client, fake = client
+    before = client.get("/api/v1/images/1/annotations").get_json()
+    boxes = [a for a in before["annotations"] if not a["segmentation"]]
+
+    response = client.post("/api/v1/images/1/segment/boxes", json={"annotation_ids": "x"})
+    assert response.status_code == 400
+    response = client.post("/api/v1/images/1/segment/boxes", json={"categories": ["ghost"]})
+    assert response.status_code == 400
+    response = client.post("/api/v1/images/1/segment/boxes", json={})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["converted"] == len(boxes) and body["skipped"] == 0
+    assert body["version"] == before["version"] + 1
+    after = client.get("/api/v1/images/1/annotations").get_json()
+    assert all(a["segmentation"] for a in after["annotations"])
+    assert len(fake.embed_calls) == 1
+
+    assert client.post("/api/v1/segment/boxes", json={"categories": ["ghost"]}).status_code == 400
+    response = client.post("/api/v1/segment/boxes", json={"include_pending": False})
+    assert response.status_code == 202
+    job_id = response.get_json()["job_id"]
+    import time
+
+    deadline = time.time() + 10
+    while True:
+        status = client.get(f"/api/v1/jobs/{job_id}").get_json()
+        if status["state"] != "running":
+            break
+        assert time.time() < deadline
+        time.sleep(0.05)
+    assert status["state"] == "completed"
+    result = status["events"][-1]["result"]
+    assert result["skipped"] == 0 and result["images"] >= 0

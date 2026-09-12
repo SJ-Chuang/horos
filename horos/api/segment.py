@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from horos.api.manifest import capability
+from horos.core.dataset import Annotation, clamp_to_image
 from horos.core.project import Project
 from horos.errors import ProjectError
 
@@ -41,6 +42,10 @@ __all__ = [
     "DEFAULT_SEGMENTER",
     "EMBEDDING_CACHE_SIZE",
     "segment_image",
+    "ConvertResult",
+    "boxes_to_polygons",
+    "boxes_to_polygons_events",
+    "start_boxes_to_polygons",
     "prefetch_embedding",
 ]
 
@@ -269,4 +274,241 @@ def segment_image(
         image_id=image_id, model=request.model, shape_type=shape_type, points=points,
         polygon=result.polygon, bbox=result.bbox, score=result.score, area=result.area,
         embedding_cached=cached, elapsed_ms=elapsed,
+    )
+
+
+# ------------------------------------------------ boxes as prompts (SAM-T6)
+#
+# A box annotation is already a good SAM prompt: the user (or OWLv2) said
+# "the object is in here". Rewriting boxes as polygons therefore needs no
+# clicks — one embedding per image, one decoder pass per box. The annotation
+# keeps its id, class, status and score; only the geometry changes, and a
+# box SAM cannot segment stays a box (counted as skipped, never dropped).
+
+
+class ConvertResult(BaseModel):
+    image_id: int
+    version: int
+    converted: int
+    skipped: int
+    annotations: list[Annotation] = Field(default_factory=list)
+
+
+def _resolve_categories(project: Project, categories) -> set[int] | None:
+    """Category ids from a mixed list of ids and names; None means all."""
+    if categories is None:
+        return None
+    by_name = {c.name: c.id for c in project.categories}
+    known = {c.id for c in project.categories}
+    ids: set[int] = set()
+    for item in categories:
+        if isinstance(item, bool):
+            raise ProjectError(f"Invalid category {item!r}")
+        if isinstance(item, int):
+            if item not in known:
+                raise ProjectError(f"Unknown category id {item} — available: {sorted(known)}")
+            ids.add(item)
+        elif isinstance(item, str) and item in by_name:
+            ids.add(by_name[item])
+        else:
+            raise ProjectError(
+                f"Unknown category {item!r} — available: {sorted(by_name)}"
+            )
+    return ids
+
+
+def _select_boxes(
+    annotations: list[Annotation],
+    *,
+    annotation_ids: set[int] | None,
+    category_ids: set[int] | None,
+    include_pending: bool,
+) -> list[Annotation]:
+    picked = []
+    for a in annotations:
+        if a.segmentation:
+            continue  # already a polygon
+        if annotation_ids is not None and a.id not in annotation_ids:
+            continue
+        if category_ids is not None and a.category_id not in category_ids:
+            continue
+        if not include_pending and a.status == "pending":
+            continue
+        picked.append(a)
+    return picked
+
+
+@capability(
+    "segment.boxes_to_polygons",
+    summary="Rewrite one image's box annotations as SAM polygons (each box is the prompt)",
+    web_route="/api/v1/images/<int:image_id>/segment/boxes",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="'horos boxes-to-polygons' runs the project-wide batch; one image is an "
+                    "editor action.",
+)
+def boxes_to_polygons(
+    project: Project,
+    image_id: int,
+    *,
+    annotation_ids: list[int] | None = None,
+    categories: list[int | str] | None = None,
+    include_pending: bool = True,
+    model: str = DEFAULT_SEGMENTER,
+    device: str | None = None,
+    backend: PromptableSegmenter | None = None,
+    expected_version: int | None = None,
+) -> ConvertResult:
+    """Turn the image's box-only annotations (optionally just `annotation_ids`
+    or `categories`, ids or names) into polygons: each box prompts the
+    segmenter against the image's cached embedding. Written through the
+    ordinary versioned save; `expected_version` guards against a concurrent
+    editor (E2-T8)."""
+    from horos.backends.base import SegmentPrompt
+
+    record = project.get_image(image_id)
+    stored = project.load_annotations(image_id)
+    category_ids = _resolve_categories(project, categories)
+    wanted = set(annotation_ids) if annotation_ids is not None else None
+    targets = {
+        a.id for a in _select_boxes(
+            stored.annotations, annotation_ids=wanted, category_ids=category_ids,
+            include_pending=include_pending,
+        )
+    }
+    if not targets:
+        return ConvertResult(image_id=image_id, version=stored.version, converted=0,
+                             skipped=0, annotations=list(stored.annotations))
+    backend = backend or _segmenter(model, device)
+    embedding, _, _ = _embedding_for(project, image_id, model, device, backend)
+    converted = skipped = 0
+    out: list[Annotation] = []
+    for a in stored.annotations:
+        if a.id not in targets:
+            out.append(a)
+            continue
+        result = backend.segment(embedding, SegmentPrompt(box=a.bbox).validated())
+        if not result.polygon or result.bbox is None:
+            skipped += 1
+            out.append(a)
+            continue
+        polygon = [float(v) for v in result.polygon]
+        new = clamp_to_image(
+            a.model_copy(update={"segmentation": [polygon], "bbox": tuple(result.bbox)}),
+            record.width, record.height,
+        )
+        out.append(new)
+        converted += 1
+    version = stored.version
+    if converted:
+        saved = project.save_annotations(
+            image_id, out,
+            expected_version=stored.version if expected_version is None else expected_version,
+        )
+        version = saved.version
+    return ConvertResult(image_id=image_id, version=version, converted=converted,
+                         skipped=skipped, annotations=out)
+
+
+def boxes_to_polygons_events(
+    project: Project,
+    *,
+    categories: list[int | str] | None = None,
+    split: str | None = None,
+    include_pending: bool = True,
+    model: str = DEFAULT_SEGMENTER,
+    device: str | None = None,
+    backend: PromptableSegmenter | None = None,
+    cancel: threading.Event | None = None,
+):
+    """R4 stream over every image with matching boxes: started → progress per
+    image → completed(result={images, converted, skipped})."""
+    from horos.backends.base import (
+        ProgressUpdated,
+        RunCompleted,
+        RunFailed,
+        RunStarted,
+        WarningRaised,
+    )
+
+    try:
+        category_ids = _resolve_categories(project, categories)
+        targets = []
+        for record in project.list_images():
+            if split and record.split != split:
+                continue
+            stored = project.load_annotations(record.id)
+            boxes = _select_boxes(
+                stored.annotations, annotation_ids=None, category_ids=category_ids,
+                include_pending=include_pending,
+            )
+            if boxes:
+                targets.append((record, len(boxes)))
+        yield RunStarted(
+            total=len(targets),
+            config={"model": model, "categories": sorted(category_ids) if category_ids else None,
+                    "split": split, "include_pending": include_pending,
+                    "boxes": sum(n for _, n in targets)},
+        )
+        if not targets:
+            yield WarningRaised(message="No box annotations match — nothing to convert.")
+            yield RunCompleted(result={"images": 0, "converted": 0, "skipped": 0})
+            return
+        backend = backend or _segmenter(model, device)
+        converted = skipped = 0
+        for index, (record, _) in enumerate(targets):
+            if cancel is not None and cancel.is_set():
+                yield RunCompleted(result={"cancelled": True, "images": index,
+                                           "converted": converted, "skipped": skipped})
+                return
+            result = boxes_to_polygons(
+                project, record.id,
+                categories=sorted(category_ids) if category_ids is not None else None,
+                include_pending=include_pending, model=model, device=device, backend=backend,
+            )
+            converted += result.converted
+            skipped += result.skipped
+            yield ProgressUpdated(
+                current=index + 1, total=len(targets), phase="boxes-to-polygons",
+                message=f"{record.file_name}: {result.converted} converted"
+                        + (f", {result.skipped} kept as box" if result.skipped else ""),
+            )
+        yield RunCompleted(result={"images": len(targets), "converted": converted,
+                                   "skipped": skipped})
+    except Exception as exc:  # noqa: BLE001 — the stream must terminate with an event (R4)
+        logger.exception("boxes-to-polygons run failed")
+        yield RunFailed(error_code=getattr(exc, "code", "backend_error"), message=str(exc))
+
+
+@capability(
+    "segment.boxes_to_polygons_batch",
+    summary="Background job: rewrite the project's box annotations (a class, a split) as "
+            "SAM polygons",
+    web_route="/api/v1/segment/boxes",
+    web_methods=("POST",),
+    cli="boxes-to-polygons",
+)
+def start_boxes_to_polygons(
+    project: Project,
+    *,
+    categories: list[int | str] | None = None,
+    split: str | None = None,
+    include_pending: bool = True,
+    model: str = DEFAULT_SEGMENTER,
+    device: str | None = None,
+    backend: PromptableSegmenter | None = None,
+) -> str:
+    """Kick off the batch as a job (poll via jobs.status); returns the job id."""
+    from horos.api import jobs
+
+    _resolve_categories(project, categories)  # unknown names fail synchronously
+    if split is not None and split not in ("train", "valid", "test"):
+        raise ProjectError(f"split must be train, valid or test, got {split!r}")
+    return jobs.start_job(
+        project,
+        "boxes-to-polygons",
+        lambda cancel: boxes_to_polygons_events(
+            project, categories=categories, split=split, include_pending=include_pending,
+            model=model, device=device, backend=backend, cancel=cancel,
+        ),
     )

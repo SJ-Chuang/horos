@@ -102,8 +102,10 @@ from horos.api.segment import (
     PrefetchResult,
     SegmentCandidate,
     SegmentRequest,
+    boxes_to_polygons,
     prefetch_embedding,
     segment_image,
+    start_boxes_to_polygons,
 )
 from horos.api.serve import (
     InferenceServer,
@@ -157,6 +159,8 @@ __all__ = [
     "SegmentRequest",
     "prefetch_embedding",
     "segment_image",
+    "boxes_to_polygons",
+    "start_boxes_to_polygons",
     "InferenceServer",
     "ServeSource",
     "ServeStatus",

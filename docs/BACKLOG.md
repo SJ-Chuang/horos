@@ -131,3 +131,16 @@ Space(或「Next object」)把目前候選連同當時的類別入列,prompt 清
 Enter 一次寫入全部(單一 undo 步);Esc 兩段式清除;切工具/切圖清空隊列。介面情境
 `tests/ui_scenarios/SAM-T4.md` D 節。
 
+## SAM-T6 — box 當作 hint：box → polygon（2026-09-12 完成）
+
+既有的 box 標註本身就是好的 SAM prompt。三個入口共用同一個 API 家族（`horos/api/segment.py`）：
+- 單一 box：Shapes 列表的「⬠」或選取後按 P（前端直接呼叫既有 `POST /images/<id>/segment` 的 box prompt，
+  對未儲存的 box 也有效，結果走一般儲存）
+- 整張圖：SAM 面板「Boxes → polygons (this image)」（同上，逐 box 呼叫，embedding 快取）
+- 整個專案、可指定類別：Auto-label 對話框「Boxes → polygons (SAM)」→ `POST /api/v1/segment/boxes`
+  背景 job（`segment.boxes_to_polygons_batch`；CLI `horos boxes-to-polygons --class X`）；
+  單張版 `POST /api/v1/images/<id>/segment/boxes`（`segment.boxes_to_polygons`）
+幾何以外的欄位（id、類別、pending 狀態、分數、來源）保持不變；SAM 找不到 mask 的 box 維持 box 並計入 skipped。
+測試：`tests/api/test_segment_boxes.py`、`tests/web/test_segment_routes.py`、`tests/api/test_cli.py`；
+介面情境 `tests/ui_scenarios/SAM-T4.md` E 節、`E3-autolabel.md` D 節。
+

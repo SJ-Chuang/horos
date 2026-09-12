@@ -232,6 +232,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p = sub.add_parser(
+        "boxes-to-polygons",
+        help="Rewrite box annotations as SAM polygons — each box is the prompt (foreground)",
+    )
+    p.add_argument("--project", help="Project directory (default: the enclosing project)")
+    p.add_argument(
+        "--class", action="append", dest="classes", metavar="NAME",
+        help="Only this class (repeatable); default: every class",
+    )
+    p.add_argument("--model", default="sam2.1-tiny", help="Segmenter (default sam2.1-tiny)")
+    p.add_argument("--split", choices=["train", "valid", "test"])
+    p.add_argument(
+        "--skip-pending", action="store_true",
+        help="Leave pending pre-labels as boxes; only confirmed boxes are rewritten",
+    )
+
+    p = sub.add_parser(
         "train", help="Train a model (runs in a worker subprocess, streams events)"
     )
     p.add_argument(
@@ -505,7 +521,9 @@ def _emit(payload) -> None:
 
 
 #: commands that cannot run without the ML stack `horos install` provides
-_ML_GATED_COMMANDS = frozenset({"autolabel", "train", "infer", "evaluate", "export-model"})
+_ML_GATED_COMMANDS = frozenset(
+    {"autolabel", "boxes-to-polygons", "train", "infer", "evaluate", "export-model"}
+)
 
 
 def _ml_preflight(command: str) -> int | None:
@@ -676,6 +694,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 only_unannotated=not args.include_annotated,
             ):
                 sys.stdout.write(dump_event(event) + "\n")  # JSONL stream (E3-T3)
+                sys.stdout.flush()
+                failed = failed or event.type == "failed"
+            if failed:
+                return 2
+        elif args.command == "boxes-to-polygons":
+            from horos.api.segment import boxes_to_polygons_events
+            from horos.backends.base import dump_event
+
+            failed = False
+            for event in boxes_to_polygons_events(
+                _project_arg(args),
+                categories=args.classes or None,
+                split=args.split,
+                include_pending=not args.skip_pending,
+                model=args.model,
+            ):
+                sys.stdout.write(dump_event(event) + "\n")  # JSONL stream, like autolabel
                 sys.stdout.flush()
                 failed = failed or event.type == "failed"
             if failed:

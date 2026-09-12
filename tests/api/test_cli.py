@@ -363,3 +363,38 @@ def test_install_needs_no_gpu_flag_on_an_amd_machine(capsys, monkeypatch):
     # and the flag really is gone
     with pytest.raises(SystemExit):
         main(["install", "--rocm", "gfx1201", "--dry-run"])
+
+
+def test_boxes_to_polygons_streams_events_and_filters_by_class(tmp_path, monkeypatch, capsys):
+    """SAM-T6 from the CLI: JSONL events like autolabel; --class narrows it."""
+    import json
+
+    from helpers.data import write_sample_coco_dir
+    from helpers.fake_backend import FakePromptableSegmenter
+
+    import horos.backends
+    import horos.cli as cli_mod
+    from horos.api.dataset import import_dataset
+    from horos.api.project import create_project
+    from horos.api.segment import _reset_segmenters
+
+    project = create_project(tmp_path / "proj")
+    import_dataset(project, write_sample_coco_dir(tmp_path / "coco"))
+    fake = FakePromptableSegmenter()
+    monkeypatch.setattr(horos.backends, "get_backend", lambda key, **kw: fake)
+    monkeypatch.setattr(cli_mod, "_ml_preflight", lambda command: None)
+    _reset_segmenters()
+    try:
+        name = project.categories[0].name
+        code = main(["boxes-to-polygons", "--project", str(project.root), "--class", name])
+        assert code == 0
+        events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]
+        assert events[0]["type"] == "started" and events[-1]["type"] == "completed"
+        assert events[0]["config"]["categories"] == [project.categories[0].id]
+        assert events[-1]["result"]["converted"] >= 1
+        # a bad class name fails through the stream, exit code 2
+        code = main(["boxes-to-polygons", "--project", str(project.root), "--class", "ghost"])
+        assert code == 2
+        assert json.loads(capsys.readouterr().out.splitlines()[-1])["type"] == "failed"
+    finally:
+        _reset_segmenters()

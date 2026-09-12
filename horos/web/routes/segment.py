@@ -30,3 +30,46 @@ def prefetch_embedding(image_id: int):
     if not isinstance(model, str) or not model:
         raise ProjectError("'model' must be a model key")
     return jsonify(api.prefetch_embedding(_project(), image_id, model=model).model_dump())
+
+
+def _model(body: dict) -> str:
+    model = body.get("model", DEFAULT_SEGMENTER)
+    if not isinstance(model, str) or not model:
+        raise ProjectError("'model' must be a model key")
+    return model
+
+
+def _categories(body: dict):
+    categories = body.get("categories")
+    if categories is None:
+        return None
+    if not isinstance(categories, list) or not all(isinstance(c, int | str) for c in categories):
+        raise ProjectError("'categories' must be a list of category ids or names")
+    return categories
+
+
+@bp.post("/images/<int:image_id>/segment/boxes")
+def boxes_to_polygons(image_id: int):
+    body = request.get_json(silent=True) or {}
+    ids = body.get("annotation_ids")
+    if ids is not None and not (isinstance(ids, list) and all(isinstance(i, int) for i in ids)):
+        raise ProjectError("'annotation_ids' must be a list of annotation ids")
+    version = body.get("expected_version")
+    if version is not None and not isinstance(version, int):
+        raise ProjectError("'expected_version' must be an integer")
+    result = api.boxes_to_polygons(
+        _project(), image_id, annotation_ids=ids, categories=_categories(body),
+        include_pending=bool(body.get("include_pending", True)), model=_model(body),
+        expected_version=version,
+    )
+    return jsonify(result.model_dump())
+
+
+@bp.post("/segment/boxes")
+def start_boxes_to_polygons():
+    body = request.get_json(silent=True) or {}
+    job_id = api.start_boxes_to_polygons(
+        _project(), categories=_categories(body), split=body.get("split") or None,
+        include_pending=bool(body.get("include_pending", True)), model=_model(body),
+    )
+    return jsonify({"job_id": job_id}), 202

@@ -39,10 +39,22 @@ horos ui ./demo_project
    走同一套審核流程；新類別自動建立
 3. 找不到物件時顯示「no objects found — lower the confidence?」
 
-### D. CLI 對等（E9-S3）
+### D. 整個專案的 box → polygon（SAM-T6）
+1. 打開 Auto-label 對話框，下方「Boxes → polygons (SAM)」區塊：Class 下拉列出專案所有類別
+   （預設 all classes），旁邊可選 SAM 模型，「include pending pre-labels」預設勾選
+2. 選一個類別按「Convert boxes to polygons」：對話框切到同一個進度面板，逐張顯示
+   「3/12 — img_007.jpg: 2 converted」；每張圖只算一次 embedding
+3. 完成時 toast「Converted N box(es) into polygons on M image(s)」，若有 SAM 找不到 mask 的 box
+   會註明「kept as box」；影像列表與開著的編輯器重新載入，該類別的 box 都變成 polygon，
+   其他類別與原本就是 polygon 的標註不動；pending 預標轉換後仍是 pending、分數不變
+4. 沒有符合的 box 時 toast「No box annotations matched — nothing to convert.」；Cancel 會保留已處理影像的結果
+
+### E. CLI 對等（E9-S3）
 ```bash
 horos autolabel --project ./demo_project --prompt "helmet=helmet,hard hat" --prompt vest
 # 逐行輸出 JSON events（started/prediction/progress/completed）
+horos boxes-to-polygons --project ./demo_project --class helmet [--skip-pending] [--split train]
+# 同樣逐行 JSON events；--class 可重複，省略則全部類別
 ```
 
 ## 預期結果
@@ -56,3 +68,5 @@ horos autolabel --project ./demo_project --prompt "helmet=helmet,hard hat" --pro
 - 單張 AI 輔助的首次呼叫需載入模型（數秒到數十秒），期間 Apply 按鈕停用
 - dev 環境未裝 transformers 時，job 會以明確的 failed 事件結束（不會靜默）
 - 批次進度輪詢間隔 0.8 秒，進度最多慢一拍
+- box → polygon 轉換寫入的是已儲存的標註；開著的編輯器若有未儲存的修改，會在重新載入時被覆蓋
+  （Auto Save 開著時幾乎不會發生）

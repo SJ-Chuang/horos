@@ -47,7 +47,16 @@ horos ui <project>
 18. Esc 第一下清掉目前物體的點與框(入列的保留);再按 Esc 丟掉整個隊列(toast 提示數量)
 19. 切工具或切圖:隊列一併清空(未寫入的不會偷跟到下一張)
 
-### E. 邊界
+### E. 既有 box 當作 hint(SAM-T6)
+
+20. 用 ▭ 工具畫一個 box(或開一張已有 box 標註的圖)。Shapes 列表中 rectangle 的那一列多了「⬠」按鈕;
+    點它:該 box 原地變成 polygon(類別、pending 狀態、分數、id 都不變),toast「1 box → polygon」
+21. 用 select 工具點選另一個 box,按 <b>P</b>:效果相同;Ctrl+Z 可還原成 box
+22. SAM 面板底部「Boxes → polygons (this image)」:這張圖所有 box 一次轉換(embedding 只算一次,
+    每個 box 一次 decoder);沒有 box 時按鈕停用。SAM 找不到 mask 的 box 維持 box,toast 註明「kept as box」
+23. 尚未儲存的 box 也能轉:結果走一般的儲存流程(Auto Save / Ctrl+S)
+
+### F. 邊界
 
 11. 只放負點:狀態列黃字「no mask for this prompt — add a point inside the object」,Accept 停用
 12. 切到別張圖再切回:prompt 清空;若工具仍是 SAM,新圖自動 prefetch
@@ -61,5 +70,6 @@ horos ui <project>
 
 - 一次一張圖;沒有跨影格追蹤(SAM 2 的 video 功能未使用)
 - 入列的物體不能再修 prompt;要改就 Esc 丟掉隊列重來,或接受後用 select 工具編輯
+- box → polygon 只用 box 當 prompt,沒有正負點;結果不滿意就 Ctrl+Z 後改用 SAM 工具點選修正
 - 候選 polygon 由 mask 邊界簡化而來,細碎孔洞不保留
 - 觸控裝置沒有右鍵與 Shift,負點需以滑鼠操作

@@ -122,6 +122,13 @@ def test_annotator_has_the_sam_tool(client):
     # SAM-T5: several objects per Enter — a "Next object" control and the
     # queue in the tool's state
     assert 'id="sam-next"' in html and "queued: []" in html
+    # SAM-T6: boxes are prompts — per shape (⬠ / P), per image, and per class
+    # across the project from the Auto-label dialog
+    assert 'data-poly="${i}"' in html and 'case "KeyP"' in html
+    assert 'id="sam-convert-all"' in html
+    for control in ("b2p-class", "b2p-model", "b2p-pending", "b2p-start"):
+        assert f'id="{control}"' in html, control
+    assert 'api("/segment/boxes"' in html and "/segment`" in html
     for element in ("sam-accept", "sam-clear", "sam-model", "sam-status"):
         assert f'id="{element}"' in html, element
     assert "/segment/prefetch" in html and "/segment`" in html
