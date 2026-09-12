@@ -92,6 +92,17 @@ def add_category():
     return jsonify(category.model_dump()), 201
 
 
+@bp.post("/categories/merge")
+def merge_categories():
+    body = _body()
+    sources, target = body.get("sources"), body.get("target")
+    if not isinstance(sources, list) or not all(isinstance(v, int) for v in sources):
+        raise ProjectError("Request body must include 'sources': a list of category ids")
+    if not isinstance(target, int):
+        raise ProjectError("Request body must include 'target': the category id to keep")
+    return jsonify(api.merge_categories(_project(), sources, target).model_dump())
+
+
 @bp.patch("/categories/<int:category_id>")
 def update_category(category_id: int):
     body = _body()

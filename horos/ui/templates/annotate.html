@@ -362,9 +362,17 @@
       <button class="btn" id="class-modal-close">✕</button>
     </div>
     <table>
-      <thead><tr><th></th><th>Class Name</th><th>Count</th><th style="width:130px">Actions</th></tr></thead>
+      <thead><tr><th></th><th>Class Name</th><th>Count</th><th style="width:130px">Actions</th>
+        <th title="Tick the classes to fold into another one">Merge</th></tr></thead>
       <tbody id="class-tbody"></tbody>
     </table>
+    <div id="merge-row" style="display:none;gap:6px;align-items:center;margin-top:10px;
+         padding:8px 10px;border:1px solid var(--accent);border-radius:6px;
+         background:rgba(77,171,247,.08);font-size:12px;flex-wrap:wrap">
+      <span id="merge-label">Merge 1 class into</span>
+      <select id="merge-target" style="flex:1;min-width:120px"></select>
+      <button class="btn" id="btn-merge">Merge</button>
+    </div>
     <div style="display:flex;gap:6px;margin-top:10px">
       <input type="text" id="new-class-name" placeholder="New class name" style="flex:1">
       <button class="btn" id="btn-add-class">Add</button>
@@ -521,6 +529,7 @@ const Page = {
     $("btn-delete-selected").onclick = () => this.deleteSelected();
     $("class-modal-close").onclick = () => { $("class-modal").style.display = "none"; };
     $("btn-add-class").onclick = () => this.addClassFromManager();
+    $("btn-merge").onclick = () => this.mergeClasses();
     $("btn-back").onclick = () => this.closeEditor();
     $("btn-prev").onclick = () => this.prevImage();
     $("btn-next").onclick = () => this.nextImage();
@@ -1714,12 +1723,19 @@ const Page = {
             <button class="btn danger" data-act="delete" data-id="${c.id}">Del</button>
           </div>
         </td>
+        <td style="text-align:center"><input type="checkbox" data-merge="${c.id}"
+             title="Merge '${c.name}' into another class"></td>
       </tr>`).join("");
     $("class-tbody").querySelectorAll("button").forEach((b) => {
       const id = Number(b.dataset.id);
       b.onclick = b.dataset.act === "rename"
         ? () => this.renameClass(id) : () => this.deleteClass(id);
     });
+    this._mergeCounts = counts;
+    $("class-tbody").querySelectorAll("input[data-merge]").forEach((box) => {
+      box.onchange = () => this._updateMergeRow();
+    });
+    this._updateMergeRow();
     $("class-tbody").querySelectorAll("input[type=color]").forEach((inp) => {
       // live preview while the picker is open; the PATCH persists on commit
       inp.oninput = () => {
@@ -1733,6 +1749,64 @@ const Page = {
         this.renderChips(); this._drawCanvas();
       };
     });
+  },
+  _mergeSelection() {
+    return [...$("class-tbody").querySelectorAll("input[data-merge]:checked")]
+      .map((box) => Number(box.dataset.merge));
+  },
+  _updateMergeRow() {
+    const sources = this._mergeSelection();
+    const row = $("merge-row");
+    row.style.display = sources.length ? "flex" : "none";
+    if (!sources.length) return;
+    const names = sources.map((id) => this.categories.find((c) => c.id === id).name);
+    $("merge-label").textContent =
+      `Merge ${names.map((n) => `'${n}'`).join(", ")} into`;
+    const targets = this.categories.filter((c) => !sources.includes(c.id));
+    const keep = $("merge-target").value;
+    $("merge-target").innerHTML = targets
+      .map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+    if (targets.some((c) => String(c.id) === keep)) $("merge-target").value = keep;
+    $("btn-merge").disabled = targets.length === 0;
+  },
+  async mergeClasses() {
+    const sources = this._mergeSelection();
+    const targetId = Number($("merge-target").value);
+    const target = this.categories.find((c) => c.id === targetId);
+    if (!sources.length || !target) return;
+    const sourceCats = sources.map((id) => this.categories.find((c) => c.id === id));
+    const moving = sourceCats.reduce((n, c) => n + (this._mergeCounts[c.name] || 0), 0);
+    if (!confirm(`Merge ${sourceCats.map((c) => `'${c.name}'`).join(", ")} into `
+                 + `'${target.name}'?\n\n${moving} annotation(s) will be relabelled as `
+                 + `'${target.name}' and the merged class(es) removed. This cannot be undone.`)) return;
+    let result;
+    try {
+      result = await api("/categories/merge", json("POST", { sources, target: targetId }));
+    } catch (e) { toast(e.message, "err"); return; }
+    const sourceNames = new Set(sourceCats.map((c) => c.name));
+    this.categories = this.categories.filter((c) => !sources.includes(c.id));
+    // everything else keys classes by NAME — fold the counts, the session
+    // set and the class input into the target
+    sourceNames.forEach((name) => {
+      this.classCounts[target.name] = (this.classCounts[target.name] || 0)
+        + (this.classCounts[name] || 0);
+      delete this.classCounts[name];
+      if (this.sessionNames.delete(name)) this.sessionNames.add(target.name);
+    });
+    if (sourceNames.has($("class-input").value.trim())) $("class-input").value = target.name;
+    // the server relabelled (and version-bumped) the open image too: reload
+    // it so the editor matches instead of re-saving stale labels
+    if (this.currentIdx >= 0 && this.editorShapes.some((s) => sourceNames.has(s.label))) {
+      if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+      const image = this.queue[this.currentIdx].image;
+      const view = await api(`/images/${image.id}/annotations`);
+      this.version = view.version;
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      this.selectedShapeIdx = -1; this.isDirty = false;
+      this._setSaveState("", "");
+    }
+    toast(`Merged ${result.merged_annotations} annotation(s) into '${target.name}'`, "ok");
+    this.renderChips(); this._drawCanvas(); this.openClassManager();
   },
   async addClassFromManager() {
     const name = $("new-class-name").value.trim();

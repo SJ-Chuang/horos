@@ -79,7 +79,13 @@ from horos.api.export import (
 from horos.api.hparams import DerivedValue, HyperparameterPlan
 from horos.api.install import InstallPlan, MLReadiness, check_ml_ready, plan_install
 from horos.api.jobs import JobStatus, cancel_job, job_status
-from horos.api.labels import add_category, delete_category, update_category
+from horos.api.labels import (
+    MergeResult,
+    add_category,
+    delete_category,
+    merge_categories,
+    update_category,
+)
 from horos.api.manifest import Capability, get_capability, list_capabilities
 from horos.api.media import (
     MediaFrame,
@@ -180,7 +186,9 @@ __all__ = [
     "TrainRunConfig",
     "TrainStatus",
     "ValidationFixResult",
+    "MergeResult",
     "add_category",
+    "merge_categories",
     "annotation_progress",
     "assist_image",
     "cancel_job",

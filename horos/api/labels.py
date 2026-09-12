@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from pydantic import BaseModel, Field
+
 from horos.api.manifest import capability
 from horos.core.dataset import Category, default_color
 from horos.core.project import Project
@@ -11,7 +13,15 @@ from horos.errors import ProjectError
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["add_category", "update_category", "delete_category"]
+__all__ = ["MergeResult", "add_category", "update_category", "delete_category", "merge_categories"]
+
+
+class MergeResult(BaseModel):
+    target: Category
+    #: annotations relabelled from a source class to the target
+    merged_annotations: int = 0
+    images_touched: int = 0
+    removed_ids: list[int] = Field(default_factory=list)
 
 
 def _find(project: Project, category_id: int) -> Category:
@@ -123,3 +133,59 @@ def delete_category(project: Project, category_id: int, *, force: bool = False) 
     project.set_categories([c for c in project.categories if c.id != category_id])
     logger.info("deleted category %d and %d annotation(s)", category_id, total)
     return total
+
+
+@capability(
+    "labels.merge",
+    summary="Merge classes: relabel their annotations to a target class and remove them",
+    web_route="/api/v1/categories/merge",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Label management is interactive; scripts edit via the Python API.",
+)
+def merge_categories(
+    project: Project, source_ids: list[int], target_id: int
+) -> MergeResult:
+    """Fold one or more source classes into `target_id`.
+
+    Every annotation of a source class is relabelled to the target (boxes and
+    polygons are kept as they are — nothing is deleted or de-duplicated), the
+    source classes are removed, and each touched image's version bumps so a
+    concurrent annotator sees a conflict instead of stale labels. The target
+    keeps its id, name and color, so runs and exports referring to it stay
+    valid.
+    """
+    target = _find(project, target_id)
+    sources: list[int] = []
+    for raw in source_ids:
+        cid = int(raw)
+        if cid == target_id:
+            raise ProjectError(
+                f"Cannot merge category {cid} into itself — pick a different target"
+            )
+        _find(project, cid)
+        if cid not in sources:
+            sources.append(cid)
+    if not sources:
+        raise ProjectError("merge_categories needs at least one source category")
+
+    merged = touched = 0
+    for record in project.list_images():
+        stored = project.load_annotations(record.id)
+        if not any(a.category_id in sources for a in stored.annotations):
+            continue
+        relabelled = [
+            a.model_copy(update={"category_id": target_id}) if a.category_id in sources else a
+            for a in stored.annotations
+        ]
+        merged += sum(1 for a in stored.annotations if a.category_id in sources)
+        touched += 1
+        project.save_annotations(record.id, relabelled, expected_version=stored.version)
+    project.set_categories([c for c in project.categories if c.id not in sources])
+    logger.info(
+        "merged categories %s into %d (%d annotation(s) across %d image(s))",
+        sources, target_id, merged, touched,
+    )
+    return MergeResult(
+        target=target, merged_annotations=merged, images_touched=touched, removed_ids=sources
+    )

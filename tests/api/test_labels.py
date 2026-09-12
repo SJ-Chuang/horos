@@ -4,7 +4,12 @@ import pytest
 from helpers.data import write_sample_coco_dir
 
 from horos.api.dataset import import_dataset
-from horos.api.labels import add_category, delete_category, update_category
+from horos.api.labels import (
+    add_category,
+    delete_category,
+    merge_categories,
+    update_category,
+)
 from horos.api.project import create_project, open_project
 from horos.errors import ProjectError
 
@@ -96,3 +101,57 @@ def test_forced_delete_cascades_and_bumps_versions(project):
 def test_unknown_id_is_explicit(project):
     with pytest.raises(ProjectError, match="No category"):
         update_category(project, 999, name="x")
+
+
+def _count(project, category_id):
+    return sum(
+        1
+        for r in project.list_images()
+        for a in project.load_annotations(r.id).annotations
+        if a.category_id == category_id
+    )
+
+
+def test_merge_relabels_annotations_and_removes_sources(project):
+    forklift = next(c for c in project.categories if c.name == "forklift")
+    pallet = next(c for c in project.categories if c.name == "pallet")
+    before = _count(project, forklift.id) + _count(project, pallet.id)
+    touched = [
+        r.id for r in project.list_images()
+        if any(a.category_id == pallet.id for a in project.load_annotations(r.id).annotations)
+    ]
+    versions = {i: project.load_annotations(i).version for i in touched}
+
+    result = merge_categories(project, [pallet.id], forklift.id)
+    assert result.target.id == forklift.id and result.target.name == "forklift"
+    assert result.merged_annotations == 2 and result.images_touched == len(touched) == 2
+    assert result.removed_ids == [pallet.id]
+    # nothing lost: every former pallet box is now a forklift box
+    assert _count(project, forklift.id) == before and _count(project, pallet.id) == 0
+    assert [c.name for c in open_project(project.root).categories] == ["forklift"]
+    for image_id in touched:
+        assert project.load_annotations(image_id).version == versions[image_id] + 1
+
+
+def test_merge_several_sources_at_once_and_keep_target_color(project):
+    forklift = next(c for c in project.categories if c.name == "forklift")
+    pallet = next(c for c in project.categories if c.name == "pallet")
+    crate = add_category(project, "crate")  # unreferenced source: still removed
+    result = merge_categories(project, [pallet.id, crate.id, pallet.id], forklift.id)
+    assert result.removed_ids == [pallet.id, crate.id]
+    assert result.target.color == forklift.color
+    assert {c.id for c in project.categories} == {forklift.id}
+
+
+def test_merge_input_validation(project):
+    forklift = next(c for c in project.categories if c.name == "forklift")
+    with pytest.raises(ProjectError, match="into itself"):
+        merge_categories(project, [forklift.id], forklift.id)
+    with pytest.raises(ProjectError, match="at least one source"):
+        merge_categories(project, [], forklift.id)
+    with pytest.raises(ProjectError, match="No category"):
+        merge_categories(project, [999], forklift.id)
+    with pytest.raises(ProjectError, match="No category"):
+        merge_categories(project, [forklift.id], 999)
+    # nothing changed after the refusals
+    assert len(project.categories) == 2

@@ -112,3 +112,24 @@ def test_delete_referenced_category_is_400_without_force(client, project):
     forced = client.delete(f"/api/v1/categories/{cat_id}", json={"force": True})
     assert forced.status_code == 200
     assert forced.get_json()["deleted_annotations"] > 0
+
+
+def test_merge_categories_route(client, project):
+    forklift = next(c for c in project.categories if c.name == "forklift")
+    pallet = next(c for c in project.categories if c.name == "pallet")
+    response = client.post(
+        "/api/v1/categories/merge", json={"sources": [pallet.id], "target": forklift.id}
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["target"]["name"] == "forklift" and body["merged_annotations"] == 2
+    assert body["removed_ids"] == [pallet.id]
+    assert [c["name"] for c in client.get("/api/v1/project").get_json()["categories"]] == [
+        "forklift"
+    ]
+    # validation: sources must be a list of ids, target an id
+    assert client.post(
+        "/api/v1/categories/merge", json={"sources": "1", "target": forklift.id}
+    ).status_code == 400
+    assert client.post("/api/v1/categories/merge", json={"sources": [1]}).status_code == 400
+
