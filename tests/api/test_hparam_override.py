@@ -134,3 +134,24 @@ def test_user_extra_beats_derived_extra(tmp_path, monkeypatch):
         if time.monotonic() > deadline:
             pytest.fail("run did not finish")
         time.sleep(0.2)
+
+
+def test_extra_knob_override_shows_in_the_plan(tmp_path):
+    """Derived knobs that are not TrainRunConfig fields (patience, warmup,
+    scheduler...) are overridden through `extra`; the plan must mark them as
+    overrides rather than show a derived value the backend would ignore."""
+    project = create_project(tmp_path / "proj")
+    import_dataset(project, write_sample_coco_dir(tmp_path / "coco"))
+    plan = derive_hyperparameters(
+        project,
+        TrainRunConfig(
+            extra={"early_stopping_patience": 3, "lr_scheduler": "step", "not_a_knob": 1}
+        ),
+    )
+    by_name = {d.name: d for d in plan.derivations}
+    assert by_name["early_stopping_patience"].value == 3
+    assert by_name["early_stopping_patience"].overridden
+    assert by_name["lr_scheduler"].value == "step" and by_name["lr_scheduler"].overridden
+    assert not by_name["early_stopping"].overridden  # neighbours untouched
+    assert "not_a_knob" not in by_name  # unknown extras are passthrough, not knobs
+    assert plan.extra_fields()["early_stopping_patience"] == 3

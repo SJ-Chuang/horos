@@ -266,3 +266,33 @@ def test_update_rejects_fractional_integer_knobs(project):
         stop_training(project, queued.run_id)
         stop_training(project, active.run_id)
         _wait_state(project, active.run_id, ("stopped",))
+
+
+def test_queued_edit_keeps_extra_knob_overrides(project):
+    """A knob overridden through `extra` (patience, scheduler...) must survive
+    a queued-run edit: the re-derivation may only reset values the plan
+    derived itself, never the user's explicit choices."""
+    from horos.api.train import update_queued_run
+
+    first = start_training(project, _config(epochs=60, extra={"sleep_per_epoch": 0.5}))
+    queued = start_training(
+        project,
+        _config(extra={"early_stopping_patience": 3, "lr_scheduler": "step", "custom": 1}),
+    )
+    try:
+        by_name = {h.name: h for h in queued.hparams}
+        assert by_name["early_stopping_patience"].overridden
+        updated = update_queued_run(project, queued.run_id, {"epochs": 5})
+        by_name = {h.name: h for h in updated.hparams}
+        assert by_name["epochs"].value == 5 and by_name["epochs"].overridden
+        assert by_name["early_stopping_patience"].value == 3
+        assert by_name["early_stopping_patience"].overridden
+        assert by_name["lr_scheduler"].value == "step" and by_name["lr_scheduler"].overridden
+        assert not by_name["early_stopping"].overridden  # derived stays derived
+        extra = updated.config["extra"]
+        assert extra["early_stopping_patience"] == 3 and extra["custom"] == 1
+        assert not by_name["mosaic_ratio"].overridden  # a resolved value is not an override
+    finally:
+        stop_training(project, queued.run_id)
+        stop_training(project, first.run_id)
+        _wait_state(project, first.run_id, ("stopped", "completed", "failed"))

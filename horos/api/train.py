@@ -321,6 +321,9 @@ def _reconcile(run_dir: Path, record: RunRecord) -> RunRecord:
 
 #: knobs a user can set at start or edit on a queued run; None = re-derive
 _EDITABLE_KNOBS = ("epochs", "batch_size", "resolution", "lr")
+#: derived knobs that are TrainRunConfig fields; every other derived knob is
+#: overridden through `extra`
+_CONFIG_KNOBS = (*_EDITABLE_KNOBS, "mosaic_ratio")
 
 
 def _criterion_entry(criterion: str) -> DerivedValue:
@@ -493,6 +496,11 @@ def derive_hyperparameters(
         model_info=model_info,
         memory=memory,
         overrides={
+            # any derived knob the user set in `extra` (grad_accum_steps,
+            # warmup_epochs, early_stopping_* ...) is an override too: the plan
+            # shows it as such instead of a derived value the backend would
+            # then silently ignore
+            **{k: v for k, v in config.extra.items() if k not in _CONFIG_KNOBS},
             "epochs": config.epochs,
             "batch_size": config.batch_size,
             "resolution": config.resolution,
@@ -775,10 +783,15 @@ def update_queued_run(
     overridden = {h.name for h in record.hparams if h.overridden}
     base = {
         knob: (getattr(stored, knob) if knob in overridden else None)
-        for knob in _EDITABLE_KNOBS
+        for knob in _CONFIG_KNOBS
     }
     derived_names = {h.name for h in record.hparams}
-    user_extra = {k: v for k, v in stored.extra.items() if k not in derived_names}
+    # keep the user's own extras AND the derived knobs they overrode through
+    # extra (patience, scheduler...); drop only values the plan derived itself
+    user_extra = {
+        k: v for k, v in stored.extra.items()
+        if k not in derived_names or k in overridden
+    }
     new_config = stored.model_copy(update={**base, **updates, "extra": user_extra})
     # updates arrive as a raw dict and model_copy performs NO validation — a
     # fractional epochs value would land in config.json and only blow up when

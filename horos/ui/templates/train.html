@@ -104,7 +104,19 @@
   .step-btns button + button { border-top: 1px solid var(--line); }
   .step-btns button:hover { color: var(--accent); background: rgba(77,171,247,.10); }
   .step-btns svg { width: 10px; height: 10px; }
-  input.overridden { border-color: var(--accent); }
+  input.overridden, select.overridden { border-color: var(--accent); }
+  .hp-line select { padding: 4px 8px; font-size: 13px; }
+  /* one checkbox look on every page: flat box, accent fill, dark check */
+  input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 15px; height: 15px;
+    margin: 0; vertical-align: -2px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); cursor: pointer; display: inline-block; position: relative;
+    flex: none; }
+  input[type=checkbox]:hover { border-color: var(--accent); }
+  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px;
+    width: 4px; height: 8px; border: solid #101418; border-width: 0 2px 2px 0;
+    transform: rotate(45deg); }
+  input[type=checkbox]:focus-visible { outline: 2px solid rgba(77,171,247,.4); outline-offset: 1px; }
   .stepper input.overridden + .step-btns { border-color: var(--accent); }
   select:focus, input:focus { outline: none; border-color: var(--accent); }
   button { background: var(--bg); color: var(--text); border: 1px solid var(--line);
@@ -395,9 +407,36 @@ const post = (path, body) => api(path, {
   body: JSON.stringify(body),
 });
 
-// E5-T1/T2: which knobs the user can override from this page
-const EDITABLE = ["epochs", "batch_size", "resolution", "lr"];
-const overrides = { epochs: null, batch_size: null, resolution: null, lr: null };
+// E5-T1/T2: every hyperparameter shown on this page can be overridden.
+// Numeric knobs get a stepper (step / min / decimals allowed), booleans and
+// enumerations a select; knobs that are not sensible to hand-edit (dict
+// configs, the R7-fixed augmentation backend) are not shown at all.
+const KNOBS = {
+  epochs: { step: 1, min: 1 }, batch_size: { step: 1, min: 1 },
+  // resolution moves in 64s to keep rfdetr's divisible-by-64 input constraint
+  resolution: { step: 64, min: 64 }, grad_accum_steps: { step: 1, min: 1 },
+  lr: { step: 0.00001, min: 0.000001, float: true },
+  warmup_epochs: { step: 0.5, min: 0, float: true },
+  early_stopping_patience: { step: 1, min: 1 },
+  mosaic_ratio: { step: 0.1, min: 0, float: true }, num_workers: { step: 1, min: 0 },
+};
+const BOOL_KNOBS = ["early_stopping", "early_stopping_use_ema"];
+const CHOICE_KNOBS = { lr_scheduler: ["cosine", "step"] };
+const EDITABLE = [...Object.keys(KNOBS), ...BOOL_KNOBS, ...Object.keys(CHOICE_KNOBS)];
+// the headline knobs stay in view; the rest fold into "Advanced settings"
+const PRIMARY = ["epochs", "batch_size", "resolution", "lr"];
+// TrainRunConfig fields travel top-level; every other override rides in `extra`
+const CONFIG_FIELDS = ["epochs", "batch_size", "resolution", "lr", "mosaic_ratio"];
+const overrides = Object.fromEntries(EDITABLE.map((k) => [k, null]));
+
+function applyOverrides(body) {
+  for (const k of EDITABLE) {
+    if (overrides[k] === null) continue;
+    if (CONFIG_FIELDS.includes(k)) body[k] = overrides[k];
+    else (body.extra = body.extra || {})[k] = overrides[k];
+  }
+  return body;
+}
 let currentPlan = null;
 let allCategories = [];          // [{id, name, color}]
 let classInstances = null;       // name → annotation count; null until stats load
@@ -543,8 +582,7 @@ async function updateDataSummary() {
 
 async function derive() {
   updateDataSummary();
-  const body = { model: $("model-select").value };
-  for (const k of EDITABLE) if (overrides[k] !== null) body[k] = overrides[k];
+  const body = applyOverrides({ model: $("model-select").value });
   const picked = classSelection();
   if (picked !== null && picked.length === 0) return;  // nothing selected yet
   if (picked !== null) {
@@ -560,23 +598,21 @@ async function derive() {
   }
 }
 
-// step sizes for the custom steppers; resolution moves in 64s to keep
-// rfdetr's divisible-by-64 input constraint
-const KNOB_STEP = { epochs: 1, batch_size: 1, resolution: 64, lr: 0.00001 };
-const KNOB_MIN = { epochs: 1, batch_size: 1, resolution: 64, lr: 0.000001 };
+const KNOB_STEP = Object.fromEntries(Object.entries(KNOBS).map(([k, v]) => [k, v.step]));
+const KNOB_MIN = Object.fromEntries(Object.entries(KNOBS).map(([k, v]) => [k, v.min]));
 const CHEVRON_UP = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
   stroke-width="1.6" stroke-linecap="round"><polyline points="2,6.5 5,3.5 8,6.5"/></svg>`;
 const CHEVRON_DOWN = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
   stroke-width="1.6" stroke-linecap="round"><polyline points="2,3.5 5,6.5 8,3.5"/></svg>`;
 
-// every knob except lr is an integer — a stray decimal (epochs 100.1) must be
-// rounded here, not bounced back as a pydantic validation error. toFixed(6)
-// keeps float steps clean (lr: 0.0001 + 0.00001, not 0.00011000000000000002).
+// integer knobs are rounded here — a stray decimal (epochs 100.1) must not
+// bounce back as a pydantic validation error. toFixed(6) keeps float steps
+// clean (lr: 0.0001 + 0.00001, not 0.00011000000000000002).
 function sanitizeKnob(knob, raw) {
   if (raw === "" || raw == null) return null;
   let v = Number(raw);
   if (!Number.isFinite(v)) return null;
-  if (knob !== "lr") v = Math.round(v);
+  if (!(KNOBS[knob] && KNOBS[knob].float)) v = Math.round(v);
   return Math.max(KNOB_MIN[knob] ?? 0, Number(v.toFixed(6)));
 }
 
@@ -611,16 +647,22 @@ function wireSteppers(root, attr) {
 // as "[object Object]"
 const fmtValue = (v) => (v !== null && typeof v === "object") ? JSON.stringify(v) : String(v);
 
+function knobWidget(d) {
+  const cls = d.overridden ? "overridden" : "";
+  if (KNOBS[d.name]) return stepperHTML("data-knob", d.name, d.value, d.overridden);
+  const options = BOOL_KNOBS.includes(d.name)
+    ? [["true", "on"], ["false", "off"]]
+    : CHOICE_KNOBS[d.name].map((c) => [c, c]);
+  return `<select data-knob="${d.name}" class="${cls}">${options
+    .map(([v, label]) => `<option value="${v}" ${String(d.value) === v ? "selected" : ""}>${label}</option>`)
+    .join("")}</select>`;
+}
+
 function hparamRow(d) {
-  let value;
-  if (EDITABLE.includes(d.name)) {
-    value = `<span style="display:flex;align-items:center;gap:6px">
-      ${d.overridden ? `<button class="reset" data-reset="${d.name}"
-           title="Back to the derived value">auto ↺</button>` : ""}
-      ${stepperHTML("data-knob", d.name, d.value, d.overridden)}</span>`;
-  } else {
-    value = `<span class="hp-value">${fmtValue(d.value)}</span>`;
-  }
+  const value = `<span style="display:flex;align-items:center;gap:6px">
+    ${d.overridden ? `<button class="reset" data-reset="${d.name}"
+         title="Back to the derived value">auto ↺</button>` : ""}
+    ${knobWidget(d)}</span>`;
   return `<div class="hp-row">
     <div class="hp-line"><span>${d.name}</span>${value}</div>
     <div class="hp-reason">${d.overridden ? "user override" : d.reason}</div>
@@ -628,30 +670,41 @@ function hparamRow(d) {
 }
 
 function renderPlan(plan) {
-  // the four knobs people actually touch stay in view; every other derived
-  // setting folds into "Advanced settings" so the form stays scannable
-  const primary = plan.derivations.filter((d) => EDITABLE.includes(d.name));
-  const advanced = plan.derivations.filter((d) => !EDITABLE.includes(d.name));
+  // the four knobs people actually touch stay in view; the other editable
+  // ones fold into "Advanced settings"; anything not editable is not shown
+  const shown = plan.derivations.filter((d) => EDITABLE.includes(d.name));
+  const primary = shown.filter((d) => PRIMARY.includes(d.name));
+  const advanced = shown.filter((d) => !PRIMARY.includes(d.name));
   $("hparams-list").innerHTML = primary.map(hparamRow).join("");
   $("hparams-advanced").innerHTML = advanced.map(hparamRow).join("");
-  $("advanced-count").textContent = advanced.length
-    ? `· checkpoint criterion, seed and ${advanced.length} derived: ${advanced.map((d) => d.name).join(", ")}`
-    : "· checkpoint criterion and seed";
+  const touched = advanced.filter((d) => d.overridden).length;
+  $("advanced-count").textContent =
+    `· checkpoint criterion, seed, ${advanced.map((d) => d.name).join(", ")}`
+    + (touched ? ` · ${touched} overridden` : "");
   $("plan-notes").innerHTML = (plan.notes || [])
     .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
 
-  $("hparams-list").querySelectorAll("input[data-knob]").forEach((inp) => {
-    inp.onchange = () => {
-      const v = sanitizeKnob(inp.dataset.knob, inp.value);
-      if (v !== null) inp.value = v;  // show what will actually be sent
-      overrides[inp.dataset.knob] = v;
-      scheduleDerive();
-    };
-  });
-  wireSteppers($("hparams-list"), "data-knob");
-  $("hparams-list").querySelectorAll("button[data-reset]").forEach((btn) => {
-    btn.onclick = () => { overrides[btn.dataset.reset] = null; derive(); };
-  });
+  for (const root of [$("hparams-list"), $("hparams-advanced")]) {
+    root.querySelectorAll("input[data-knob]").forEach((inp) => {
+      inp.onchange = () => {
+        const v = sanitizeKnob(inp.dataset.knob, inp.value);
+        if (v !== null) inp.value = v;  // show what will actually be sent
+        overrides[inp.dataset.knob] = v;
+        scheduleDerive();
+      };
+    });
+    root.querySelectorAll("select[data-knob]").forEach((sel) => {
+      sel.onchange = () => {
+        const knob = sel.dataset.knob;
+        overrides[knob] = BOOL_KNOBS.includes(knob) ? sel.value === "true" : sel.value;
+        scheduleDerive();
+      };
+    });
+    wireSteppers(root, "data-knob");
+    root.querySelectorAll("button[data-reset]").forEach((btn) => {
+      btn.onclick = () => { overrides[btn.dataset.reset] = null; derive(); };
+    });
+  }
 }
 
 // remember whether the user left the advanced section open
@@ -1228,8 +1281,7 @@ $("chart").addEventListener("mouseleave", () => {
 
 // -------------------------------------------------------------------- actions
 $("start-btn").onclick = async () => {
-  const body = { model: $("model-select").value };
-  for (const k of EDITABLE) if (overrides[k] !== null) body[k] = overrides[k];
+  const body = applyOverrides({ model: $("model-select").value });
   const seed = $("seed-input").value;
   if (seed !== "") body.seed = Number(seed);
   body.checkpoint_criterion = $("criterion-select").value;
