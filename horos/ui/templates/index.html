@@ -44,6 +44,37 @@
               transition: border-color .15s, color .15s; }
   #dropzone.hover, #dropzone:hover { border-color: var(--accent); color: var(--text); }
   #dropzone input { display: none; }
+  .split-label { display: inline-flex; align-items: center; gap: 8px; color: var(--dim);
+                 font-size: 13px; }
+  /* the same stepper widget the Training page uses */
+  .stepper { display: inline-flex; align-items: stretch; }
+  .stepper input[type="number"] { border-radius: 6px 0 0 6px; border-right: none;
+                                  text-align: center; width: 64px; appearance: textfield;
+                                  -moz-appearance: textfield; background: var(--bg);
+                                  color: var(--text); border: 1px solid var(--line);
+                                  padding: 5px 8px; font: inherit; }
+  .stepper input::-webkit-inner-spin-button, .stepper input::-webkit-outer-spin-button {
+    -webkit-appearance: none; margin: 0; }
+  .stepper input:focus { outline: none; border-color: var(--accent); }
+  .step-btns { display: flex; flex-direction: column; border: 1px solid var(--line);
+               border-radius: 0 6px 6px 0; overflow: hidden; }
+  .step-btns button { border: none; border-radius: 0; padding: 0 6px; flex: 1;
+                      display: flex; align-items: center; color: var(--dim);
+                      background: var(--bg); cursor: pointer; }
+  .step-btns button + button { border-top: 1px solid var(--line); }
+  .step-btns button:hover { color: var(--accent); background: rgba(77,171,247,.10); }
+  .step-btns svg { width: 10px; height: 10px; }
+  /* one checkbox look on every page: flat box, accent fill, dark check */
+  input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 15px; height: 15px;
+    margin: 0; vertical-align: -2px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); cursor: pointer; display: inline-block; position: relative;
+    flex: none; }
+  input[type=checkbox]:hover { border-color: var(--accent); }
+  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px;
+    width: 4px; height: 8px; border: solid #101418; border-width: 0 2px 2px 0;
+    transform: rotate(45deg); }
+  input[type=checkbox]:focus-visible { outline: 2px solid rgba(77,171,247,.4); outline-offset: 1px; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
   .card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
           padding: 14px; }
@@ -193,19 +224,23 @@
       Training uses this allocation: <code>train</code> trains,
       <code>valid</code> validates and picks the best checkpoint,
       <code>test</code> is never touched by training.</p>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <label>train % <input type="number" id="split-train" value="80" min="1" max="100"
-        style="width:64px;background:var(--bg);color:var(--text);border:1px solid var(--line);
-               border-radius:6px;padding:5px 8px"></label>
-      <label>valid % <input type="number" id="split-valid" value="10" min="0" max="99"
-        style="width:64px;background:var(--bg);color:var(--text);border:1px solid var(--line);
-               border-radius:6px;padding:5px 8px"></label>
-      <label>test % <input type="number" id="split-test" value="10" min="0" max="99"
-        style="width:64px;background:var(--bg);color:var(--text);border:1px solid var(--line);
-               border-radius:6px;padding:5px 8px"></label>
-      <label>seed <input type="number" id="split-seed" value="42"
-        style="width:74px;background:var(--bg);color:var(--text);border:1px solid var(--line);
-               border-radius:6px;padding:5px 8px"></label>
+    <div id="split-controls" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <label class="split-label">train %
+        <span class="stepper"><input type="number" id="split-train" value="80" min="1" max="100" step="5">
+          <span class="step-btns"><button data-step="1" data-for="split-train" tabindex="-1" title="+5"></button>
+            <button data-step="-1" data-for="split-train" tabindex="-1" title="−5"></button></span></span></label>
+      <label class="split-label">valid %
+        <span class="stepper"><input type="number" id="split-valid" value="10" min="0" max="99" step="5">
+          <span class="step-btns"><button data-step="1" data-for="split-valid" tabindex="-1" title="+5"></button>
+            <button data-step="-1" data-for="split-valid" tabindex="-1" title="−5"></button></span></span></label>
+      <label class="split-label">test %
+        <span class="stepper"><input type="number" id="split-test" value="10" min="0" max="99" step="5">
+          <span class="step-btns"><button data-step="1" data-for="split-test" tabindex="-1" title="+5"></button>
+            <button data-step="-1" data-for="split-test" tabindex="-1" title="−5"></button></span></span></label>
+      <label class="split-label">seed
+        <span class="stepper"><input type="number" id="split-seed" value="42" min="0" step="1" style="width:74px">
+          <span class="step-btns"><button data-step="1" data-for="split-seed" tabindex="-1" title="+1"></button>
+            <button data-step="-1" data-for="split-seed" tabindex="-1" title="−1"></button></span></span></label>
       <button id="split-btn" style="background:var(--bg);color:var(--accent);
         border:1px solid var(--accent);border-radius:6px;padding:6px 14px;cursor:pointer">
         Re-split</button>
@@ -511,6 +546,24 @@ $("file-input").addEventListener("change", (e) => {
   zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove("hover"); }));
 zone.addEventListener("drop", (e) => {
   if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+});
+
+// the split steppers: chevron buttons move the value by the input's step and
+// clamp to its min/max (same widget as the Training page's knobs)
+const CHEVRON_UP = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
+  stroke-width="1.6" stroke-linecap="round"><polyline points="2,6.5 5,3.5 8,6.5"/></svg>`;
+const CHEVRON_DOWN = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor"
+  stroke-width="1.6" stroke-linecap="round"><polyline points="2,3.5 5,6.5 8,3.5"/></svg>`;
+$("split-controls").querySelectorAll("button[data-step]").forEach((btn) => {
+  btn.innerHTML = btn.dataset.step === "1" ? CHEVRON_UP : CHEVRON_DOWN;
+  btn.onclick = () => {
+    const input = $(btn.dataset.for);
+    const step = Number(input.step) || 1;
+    let v = (Number(input.value) || 0) + step * Number(btn.dataset.step);
+    if (input.min !== "") v = Math.max(Number(input.min), v);
+    if (input.max !== "") v = Math.min(Number(input.max), v);
+    input.value = v;
+  };
 });
 
 $("split-btn").addEventListener("click", async () => {

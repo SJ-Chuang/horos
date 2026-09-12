@@ -59,8 +59,22 @@
   .note.ok { color: var(--ok); }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
+  /* columns shrink to their content; only the tags column takes the slack,
+     so a short model name never gets a wide column */
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
-           white-space: nowrap; }
+           white-space: nowrap; width: 1%; }
+  th.fill, td.fill { width: auto; white-space: normal; }
+  #runs-table .sub { display: none; color: var(--dim); font-size: 11px; }
+  /* narrower viewports drop secondary columns instead of scrolling */
+  @media (max-width: 1400px) { #runs-table .col-best { display: none; } }
+  @media (max-width: 1200px) {
+    #runs-table .col-model { display: none; }
+    #runs-table .sub { display: block; }
+  }
+  @media (max-width: 1000px) {
+    #runs-table .col-created, #runs-table .col-metric:not(.sorted) { display: none; }
+  }
+  @media (max-width: 760px) { #runs-table .col-epochs, #runs-table .col-data { display: none; } }
   th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
   th.sortable { cursor: pointer; }
   th.sortable:hover { color: var(--accent); }
@@ -103,6 +117,17 @@
   #detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; }
   @media (max-width: 1000px) { #detail-grid { grid-template-columns: 1fr; } }
   #detail-links a { color: var(--accent); }
+  /* one checkbox look on every page: flat box, accent fill, dark check */
+  input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 15px; height: 15px;
+    margin: 0; vertical-align: -2px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); cursor: pointer; display: inline-block; position: relative;
+    flex: none; }
+  input[type=checkbox]:hover { border-color: var(--accent); }
+  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px;
+    width: 4px; height: 8px; border: solid #101418; border-width: 0 2px 2px 0;
+    transform: rotate(45deg); }
+  input[type=checkbox]:focus-visible { outline: 2px solid rgba(77,171,247,.4); outline-offset: 1px; }
   .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px;
         font-size: 13px; }
   .kv dt { color: var(--dim); margin: 0; }
@@ -245,7 +270,14 @@ const fmt = (v) => {
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(v < 0.01 ? 5 : 3);
   return String(v);
 };
-const metricLabel = (key) => key.startsWith("eval.") ? key.slice(5).replace(".", " · ") : key;
+const METRIC_SHORT = { map_5095: "mAP", map_50: "mAP50", map_75: "mAP75", mar_100: "mAR" };
+const metricLabel = (key) => {
+  if (!key.startsWith("eval.")) return key;
+  const [, split, metric] = key.split(".");
+  return `${split} ${METRIC_SHORT[metric] || metric}`;
+};
+const shortDate = (iso) => new Date(iso).toLocaleString([], {
+  month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const metricValue = (s, key) => {
   if (key in s.scores) return s.scores[key];
   if (key.startsWith("eval.")) {
@@ -311,10 +343,11 @@ function renderTable() {
   const th = (key, label, cls = "") =>
     `<th class="sortable ${cls} ${state.sort === key ? "sorted" : ""} ${!state.desc ? "asc" : ""}" data-sort="${esc(key)}">${esc(label)}</th>`;
   $("runs-table").querySelector("thead").innerHTML = `<tr>
-    <th></th>${th("run_id", "Run")}${th("model", "Model")}${th("state", "State")}
-    ${th("created_at", "Created")}${th("epochs_completed", "Epochs", "num")}<th class="num">Best</th>
-    ${metricKeys.map((k) => th(k, metricLabel(k), "num")).join("")}
-    <th>Tags</th><th>Data</th><th></th></tr>`;
+    <th></th>${th("run_id", "Run")}${th("model", "Model", "col-model")}${th("state", "State")}
+    ${th("created_at", "Created", "col-created")}${th("epochs_completed", "Epochs", "num col-epochs")}
+    <th class="num col-best">Best</th>
+    ${metricKeys.map((k) => th(k, metricLabel(k), "num col-metric")).join("")}
+    <th class="fill">Tags</th><th class="col-data">Data</th><th></th></tr>`;
   const best = runs.length && !RECORD_KEYS.includes(state.sort) ? runs[0].run.run_id : null;
   $("runs-table").querySelector("tbody").innerHTML = runs.map((s) => {
     const r = s.run;
@@ -323,14 +356,15 @@ function renderTable() {
         data-run="${esc(r.run_id)}">
       <td><input type="checkbox" data-pick="${esc(r.run_id)}" ${checked ? "checked" : ""}
            title="Select for side-by-side comparison"></td>
-      <td class="mono">${esc(r.run_id)}</td><td>${esc(r.model)}</td>
+      <td><div class="mono">${esc(r.run_id)}</div><div class="sub">${esc(r.model)}</div></td>
+      <td class="col-model">${esc(r.model)}</td>
       <td><span class="state ${esc(r.state)}">${esc(r.state === "queued" ? "pending" : r.state)}</span></td>
-      <td>${new Date(r.created_at).toLocaleString()}</td>
-      <td class="num">${fmt(r.epochs_completed)}</td>
-      <td class="num">${fmt(s.best_epoch)}</td>
-      ${metricKeys.map((k) => `<td class="num ${state.sort === k ? "sorted" : ""}">${fmt(metricValue(s, k))}</td>`).join("")}
-      <td>${s.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</td>
-      <td>${dataBadge(s.comparability)}</td>
+      <td class="col-created" title="${new Date(r.created_at).toLocaleString()}">${shortDate(r.created_at)}</td>
+      <td class="num col-epochs">${fmt(r.epochs_completed)}</td>
+      <td class="num col-best">${fmt(s.best_epoch)}</td>
+      ${metricKeys.map((k) => `<td class="num col-metric ${state.sort === k ? "sorted" : ""}">${fmt(metricValue(s, k))}</td>`).join("")}
+      <td class="fill">${s.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</td>
+      <td class="col-data">${dataBadge(s.comparability)}</td>
       <td><a class="btn" href="/train#${encodeURIComponent(r.run_id)}" title="Open this run on the Training page — export lives there"
              onclick="event.stopPropagation()">${r.state === "completed" ? "Export" : "Open"}</a></td>
     </tr>`;

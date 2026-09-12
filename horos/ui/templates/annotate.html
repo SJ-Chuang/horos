@@ -22,6 +22,17 @@
   .btn:disabled { opacity: .45; cursor: default; }
   .btn.primary { border-color: var(--accent); color: var(--accent); }
   .btn.danger { border-color: var(--err); color: var(--err); }
+  /* one checkbox look on every page: flat box, accent fill, dark check */
+  input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 15px; height: 15px;
+    margin: 0; vertical-align: -2px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); cursor: pointer; display: inline-block; position: relative;
+    flex: none; }
+  input[type=checkbox]:hover { border-color: var(--accent); }
+  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px;
+    width: 4px; height: 8px; border: solid #101418; border-width: 0 2px 2px 0;
+    transform: rotate(45deg); }
+  input[type=checkbox]:focus-visible { outline: 2px solid rgba(77,171,247,.4); outline-offset: 1px; }
   select, input[type=text], input[type=number] { background: var(--panel);
     color: var(--text); border: 1px solid var(--line); border-radius: 6px;
     padding: 5px 8px; font-size: 12px; }
@@ -96,8 +107,7 @@
            overflow: hidden; cursor: pointer; position: relative; }
   .thumb:hover { border-color: var(--accent); }
   .thumb .pick { position: absolute; top: 6px; left: 6px; z-index: 2; margin: 0;
-                 width: 16px; height: 16px; accent-color: var(--accent);
-                 cursor: pointer; display: none; }
+                 cursor: pointer; display: none; background: var(--panel); }
   .thumb:hover .pick, .image-grid.selecting .pick { display: block; }
   .thumb.selected { border-color: var(--accent);
                     box-shadow: 0 0 0 1px var(--accent) inset; }
@@ -1723,7 +1733,7 @@ const Page = {
             <button class="btn danger" data-act="delete" data-id="${c.id}">Del</button>
           </div>
         </td>
-        <td style="text-align:center"><input type="checkbox" data-merge="${c.id}"
+        <td style="text-align:center;vertical-align:middle"><input type="checkbox" data-merge="${c.id}"
              title="Merge '${c.name}' into another class"></td>
       </tr>`).join("");
     $("class-tbody").querySelectorAll("button").forEach((b) => {
