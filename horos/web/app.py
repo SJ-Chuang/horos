@@ -78,6 +78,7 @@ def create_app(project_root: str | Path | None = None) -> Flask:
     from horos.web.routes.experiment import bp as experiment_bp
     from horos.web.routes.export import bp as export_bp
     from horos.web.routes.meta import bp as meta_bp
+    from horos.web.routes.segment import bp as segment_bp
     from horos.web.routes.serve import bp as serve_bp
     from horos.web.routes.train import bp as train_bp
 
@@ -88,6 +89,7 @@ def create_app(project_root: str | Path | None = None) -> Flask:
     app.register_blueprint(experiment_bp)
     app.register_blueprint(export_bp)
     app.register_blueprint(meta_bp)
+    app.register_blueprint(segment_bp)
     app.register_blueprint(serve_bp)
     app.register_blueprint(train_bp)
 

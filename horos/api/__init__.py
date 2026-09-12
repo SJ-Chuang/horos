@@ -96,6 +96,13 @@ from horos.api.media import (
     start_media_inference,
 )
 from horos.api.project import create_project, open_project
+from horos.api.segment import (
+    PrefetchResult,
+    SegmentCandidate,
+    SegmentRequest,
+    prefetch_embedding,
+    segment_image,
+)
 from horos.api.serve import (
     InferenceServer,
     ServeSource,
@@ -141,6 +148,11 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "PrefetchResult",
+    "SegmentCandidate",
+    "SegmentRequest",
+    "prefetch_embedding",
+    "segment_image",
     "InferenceServer",
     "ServeSource",
     "ServeStatus",
