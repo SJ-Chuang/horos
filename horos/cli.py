@@ -374,6 +374,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--tag", action="append", default=[], help="Keep only runs carrying this tag (repeatable)"
     )
+    p.add_argument(
+        "--reference", default="project", metavar="RUN_ID|project|none",
+        help="Judge each run's comparability against this run, the project's current "
+        "data (default), or skip it",
+    )
+    p = sub.add_parser(
+        "compare", help="Compare runs side by side: hyperparameters, metrics, dataset (E7)"
+    )
+    p.add_argument("run_ids", nargs="+", metavar="RUN_ID", help="Runs to compare (2-8)")
+    p.add_argument("--project", help="Project directory (default: the enclosing project)")
+    p.add_argument(
+        "--all", action="store_true", help="Print every row, not only the ones that differ"
+    )
     p = sub.add_parser(
         "tag", help="Set a training run's notes or edit its tags (E7)"
     )
@@ -774,6 +787,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 descending=not args.asc,
                 states=args.state or None,
                 tags=args.tag or None,
+                reference=None if args.reference == "none" else args.reference,
             )
             _emit([
                 {
@@ -788,9 +802,37 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "tags": s.tags,
                     "notes": s.notes,
                     "fingerprint": s.fingerprint.digest if s.fingerprint else None,
+                    "comparable": None if s.comparability is None else s.comparability.comparable,
+                    "comparability": None if s.comparability is None else s.comparability.reason,
                 }
                 for s in result.runs
             ])
+        elif args.command == "compare":
+            comparison = api.compare_runs(_project_arg(args), args.run_ids)
+
+            def _table(rows):
+                return [
+                    row.model_dump() for row in rows if args.all or row.differs
+                ]
+
+            _emit({
+                "runs": [
+                    {
+                        "run_id": s.run.run_id,
+                        "model": s.run.model,
+                        "state": s.run.state,
+                        "tags": s.tags,
+                        "comparable": None if s.comparability is None
+                        else s.comparability.comparable,
+                        "comparability": None if s.comparability is None
+                        else s.comparability.reason,
+                    }
+                    for s in comparison.runs
+                ],
+                "hparams": _table(comparison.hparams),
+                "metrics": _table(comparison.metrics),
+                "dataset": _table(comparison.dataset),
+            })
         elif args.command == "tag":
             summary = api.update_run_notes(
                 _project_arg(args),

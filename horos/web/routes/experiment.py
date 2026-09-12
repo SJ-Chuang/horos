@@ -27,13 +27,30 @@ def query_runs():
         descending=desc in ("1", "true"),
         states=_csv("state"),
         tags=_csv("tag"),
+        reference=_reference(),
     )
     return jsonify(result.model_dump())
 
 
+def _reference() -> str | None:
+    # ?reference=project (default) | <run_id> | none
+    raw = request.args.get("reference", "project")
+    return None if raw in ("", "none") else raw
+
+
 @bp.get("/experiments/runs/<run_id>")
 def run_summary(run_id: str):
-    return jsonify(api.get_run_summary(_project(), run_id).model_dump())
+    return jsonify(
+        api.get_run_summary(_project(), run_id, reference=_reference()).model_dump()
+    )
+
+
+@bp.get("/experiments/compare")
+def compare_runs():
+    ids = _csv("runs") or []
+    if not ids:
+        raise ProjectError("'runs' (comma-separated run ids) is required")
+    return jsonify(api.compare_runs(_project(), ids).model_dump())
 
 
 def _str_list(body: dict, key: str) -> list[str] | None:

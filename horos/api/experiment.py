@@ -33,14 +33,22 @@ from horos.api.train import (
     list_runs,
     read_record,
 )
-from horos.core.fingerprint import DatasetFingerprint, fingerprint_snapshot
+from horos.core.fingerprint import (
+    DatasetFingerprint,
+    compare_fingerprints,
+    fingerprint_dataset,
+    fingerprint_snapshot,
+)
 from horos.core.project import Project
 from horos.errors import ProjectError
 
 __all__ = [
     "RunExtras",
     "RunSummary",
+    "Comparability",
+    "RunComparison",
     "RunQueryResult",
+    "compare_runs",
     "get_run_summary",
     "query_runs",
     "update_run_notes",
@@ -66,6 +74,19 @@ class RunExtras(BaseModel):
     fingerprint: DatasetFingerprint | None = None
 
 
+class Comparability(BaseModel):
+    """Whether a run's metrics may be compared with the reference's (E7-S4).
+
+    `reference` is a run id, or "project" for the project's data as it is
+    today (fingerprinted under the run's own class scope)."""
+
+    reference: str
+    comparable: bool
+    reason: str
+    changed_splits: list[str] = Field(default_factory=list)
+    classes_changed: bool = False
+
+
 class RunSummary(BaseModel):
     """One run as the experiment view sees it: record + scores + metadata."""
 
@@ -80,12 +101,16 @@ class RunSummary(BaseModel):
     #: {"test": {"map_50": 0.68, ...}}
     evals: dict[str, dict[str, float]] = Field(default_factory=dict)
     fingerprint: DatasetFingerprint | None = None
+    #: against the query's reference; None when either side has no fingerprint
+    comparability: Comparability | None = None
 
 
 class RunQueryResult(BaseModel):
     runs: list[RunSummary] = Field(default_factory=list)
     sort_by: str
     descending: bool
+    #: what every run's `comparability` was judged against
+    reference: str = "project"
     #: every sort key valid for this project's runs right now (record fields,
     #: score keys, eval.<split>.<metric>) — the UI's sort menu is built from it
     sort_keys: list[str] = Field(default_factory=list)
@@ -220,9 +245,14 @@ def _all_summaries(project: Project) -> list[RunSummary]:
     cli=None,
     not_cli_because="'horos runs' prints every run with the same fields.",
 )
-def get_run_summary(project: Project, run_id: str) -> RunSummary:
+def get_run_summary(
+    project: Project, run_id: str, *, reference: str | None = "project"
+) -> RunSummary:
     run_dir = _run_dir(project, run_id)
-    return _summarize(run_dir, _reconcile(run_dir, read_record(run_dir)))
+    summary = _summarize(run_dir, _reconcile(run_dir, read_record(run_dir)))
+    if reference:
+        summary.comparability = judge_comparability(project, summary, reference)
+    return summary
 
 
 # ------------------------------------------------------------------ notes/tags
@@ -364,11 +394,14 @@ def query_runs(
     descending: bool = True,
     states: list[str] | None = None,
     tags: list[str] | None = None,
+    reference: str | None = "project",
 ) -> RunQueryResult:
     """Every run of the project as a RunSummary. `states` keeps only runs in
     those states; `tags` keeps runs carrying ALL the given tags (matched
     case-insensitively). Sorting happens after filtering, and `sort_keys`
-    lists what the project's runs can currently be sorted by."""
+    lists what the project's runs can currently be sorted by. Each run's
+    `comparability` is judged against `reference` (a run id, "project" for
+    today's data, or None to skip the judgement)."""
     summaries = _all_summaries(project)
     if states:
         wanted = {s.strip() for s in states if s.strip()}
@@ -380,9 +413,181 @@ def query_runs(
             if wanted_tags <= {t.casefold() for t in s.tags}
         ]
     ordered = sort_summaries(summaries, sort_by, descending=descending)
+    if reference:
+        judge = _comparability_judge(project, reference)
+        for summary in ordered:
+            summary.comparability = judge(summary)
     return RunQueryResult(
         runs=ordered,
         sort_by=sort_by,
         descending=descending,
+        reference=reference or "",
         sort_keys=available_sort_keys(summaries),
+    )
+
+
+# ------------------------------------------------------------------ comparability
+
+
+def _project_fingerprint(project: Project, record: RunRecord) -> DatasetFingerprint:
+    """Today's project data under the run's own class scope, so a run trained
+    on two of five classes is compared against those two classes today."""
+    from horos.api.dataset import filter_dataset_categories
+
+    dataset = project.to_dataset()
+    categories = record.config.get("categories")
+    if categories is not None:
+        dataset = filter_dataset_categories(
+            dataset,
+            list(categories),
+            include_background=bool(record.config.get("include_background", False)),
+        )
+    return fingerprint_dataset(dataset)
+
+
+def _judge(
+    summary: RunSummary, reference: str, reference_fp: DatasetFingerprint | None
+) -> Comparability | None:
+    if summary.fingerprint is None or reference_fp is None:
+        return None
+    diff = compare_fingerprints(summary.fingerprint, reference_fp)
+    target = "the project's current data" if reference == "project" else f"run {reference}"
+    if diff.identical:
+        reason = f"Trained on the same data as {target}"
+    else:
+        reason = (
+            f"Not directly comparable with {target}: {diff.describe()} — metrics "
+            f"were measured on different data"
+        )
+    return Comparability(
+        reference=reference,
+        comparable=diff.identical,
+        reason=reason,
+        changed_splits=diff.changed_splits,
+        classes_changed=diff.classes_changed,
+    )
+
+
+def _comparability_judge(project: Project, reference: str):
+    """A callable judging summaries against one reference, resolving the
+    reference once. For "project" the fingerprint depends on each run's class
+    scope, so it is computed per distinct scope and memoized."""
+    if reference == "project":
+        cache: dict[str, DatasetFingerprint] = {}
+
+        def judge(summary: RunSummary) -> Comparability | None:
+            scope = repr((
+                summary.run.config.get("categories"),
+                summary.run.config.get("include_background", False),
+            ))
+            if scope not in cache:
+                cache[scope] = _project_fingerprint(project, summary.run)
+            return _judge(summary, reference, cache[scope])
+
+        return judge
+
+    ref_dir = _run_dir(project, reference)
+    ref_fp, _ = _fingerprint(ref_dir, read_record(ref_dir), read_extras(ref_dir))
+    return lambda summary: _judge(summary, reference, ref_fp)
+
+
+def judge_comparability(
+    project: Project, summary: RunSummary, reference: str = "project"
+) -> Comparability | None:
+    return _comparability_judge(project, reference)(summary)
+
+
+# ------------------------------------------------------------------ side by side
+
+
+class ComparisonRow(BaseModel):
+    name: str
+    #: one value per compared run, in request order (None = not recorded)
+    values: list[object] = Field(default_factory=list)
+    #: for hyperparameters: the derivation reason per run
+    reasons: list[str | None] = Field(default_factory=list)
+    differs: bool = False
+
+
+class RunComparison(BaseModel):
+    runs: list[RunSummary] = Field(default_factory=list)
+    hparams: list[ComparisonRow] = Field(default_factory=list)
+    metrics: list[ComparisonRow] = Field(default_factory=list)
+    dataset: list[ComparisonRow] = Field(default_factory=list)
+
+
+def _rows(names: list[str], per_run: list[dict], reasons: list[dict] | None = None):
+    rows = []
+    for name in names:
+        values = [d.get(name) for d in per_run]
+        rows.append(ComparisonRow(
+            name=name,
+            values=values,
+            reasons=[r.get(name) for r in reasons] if reasons else [],
+            differs=len({repr(v) for v in values}) > 1,
+        ))
+    return rows
+
+
+@capability(
+    "experiment.compare",
+    summary="Compare runs side by side: hyperparameters, metrics, dataset",
+    web_route="/api/v1/experiments/compare",
+    web_methods=("GET",),
+    cli="compare",
+)
+def compare_runs(project: Project, run_ids: list[str]) -> RunComparison:
+    """Side-by-side table for 1..8 runs. Every run's comparability is judged
+    against the FIRST run given; rows whose values differ are flagged so the
+    UI can highlight what actually changed between runs (E7-S1)."""
+    ids = [r for r in run_ids if r]
+    if not ids:
+        raise ProjectError("compare_runs needs at least one run id")
+    if len(ids) > 8:
+        raise ProjectError("compare_runs handles at most 8 runs at once")
+    if len(set(ids)) != len(ids):
+        raise ProjectError("compare_runs: the same run was given twice")
+    summaries = [get_run_summary(project, run_id, reference=ids[0]) for run_id in ids]
+
+    hparam_values, hparam_reasons = [], []
+    for s in summaries:
+        hparam_values.append({h.name: h.value for h in s.run.hparams})
+        hparam_reasons.append({h.name: h.reason for h in s.run.hparams})
+    hparam_names: list[str] = []
+    for d in hparam_values:
+        for name in d:
+            if name not in hparam_names:
+                hparam_names.append(name)
+
+    metric_values = []
+    for s in summaries:
+        flat = {**s.scores}
+        for split, metrics in s.evals.items():
+            for key, value in metrics.items():
+                flat[f"eval.{split}.{key}"] = value
+        if s.best_epoch is not None:
+            flat["best_epoch"] = s.best_epoch
+        metric_values.append(flat)
+    metric_names = sorted({k for d in metric_values for k in d})
+
+    dataset_values = [
+        {
+            "images": s.run.dataset_images,
+            "classes": ", ".join(s.run.dataset_classes),
+            **{f"split.{k}": v for k, v in sorted(s.run.dataset_splits.items())},
+            "fingerprint": s.fingerprint.digest if s.fingerprint else None,
+        }
+        for s in summaries
+    ]
+    dataset_names: list[str] = []
+    for d in dataset_values:
+        for name in d:
+            if name not in dataset_names:
+                dataset_names.append(name)
+
+    return RunComparison(
+        runs=summaries,
+        hparams=_rows(hparam_names, hparam_values, hparam_reasons),
+        metrics=_rows(metric_names, metric_values),
+        dataset=_rows(dataset_names, dataset_values),
     )

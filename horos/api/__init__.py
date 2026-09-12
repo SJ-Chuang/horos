@@ -58,9 +58,12 @@ from horos.api.evaluate import (
     start_evaluation,
 )
 from horos.api.experiment import (
+    Comparability,
+    RunComparison,
     RunExtras,
     RunQueryResult,
     RunSummary,
+    compare_runs,
     get_run_summary,
     query_runs,
     update_run_notes,
@@ -124,7 +127,10 @@ from horos.api.visualize import (
 __all__ = [
     "RunExtras",
     "RunSummary",
+    "Comparability",
+    "RunComparison",
     "RunQueryResult",
+    "compare_runs",
     "get_run_summary",
     "query_runs",
     "update_run_notes",
