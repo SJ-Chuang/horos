@@ -36,8 +36,26 @@
   header nav a:hover::after { opacity: 1; }
   header nav svg { width: 18px; height: 18px; }
   main { max-width: 1560px; margin: 0 auto; padding: 20px 24px; display: grid; gap: 20px; }
+  /* min-width: 0 — a grid item otherwise grows to its content's minimum width,
+     which let a wide table push the whole panel past the viewport */
   .panel { background: var(--panel); border: 1px solid var(--line);
-           border-radius: 10px; padding: 18px; }
+           border-radius: 10px; padding: 18px; min-width: 0; }
+  .table-wrap { min-width: 0; max-width: 100%; }
+  /* column picker: a details popover listing the metric columns */
+  details.cols { position: relative; }
+  details.cols summary { list-style: none; cursor: pointer; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px; }
+  details.cols summary::-webkit-details-marker { display: none; }
+  details.cols[open] summary, details.cols summary:hover { border-color: var(--accent); }
+  details.cols .menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; min-width: 220px; max-height: 320px; overflow-y: auto;
+    display: grid; gap: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  details.cols .menu label { display: flex; align-items: center; gap: 8px; font-size: 13px;
+    white-space: nowrap; cursor: pointer; }
+  details.cols .menu .foot { display: flex; gap: 8px; margin-top: 4px; padding-top: 8px;
+    border-top: 1px solid var(--line); }
+  details.cols .menu .foot button { padding: 3px 10px; font-size: 12px; }
   .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
               text-transform: uppercase; letter-spacing: .08em; }
   .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -197,6 +215,10 @@
       </select></label>
       <label>Tag <input type="text" id="tag-filter" placeholder="any" size="12"></label>
       <label>Data vs <select id="ref-select"></select></label>
+      <details class="cols" id="cols-picker">
+        <summary title="Choose which metric columns to show">Columns <span id="cols-count"></span></summary>
+        <div class="menu" id="cols-menu"></div>
+      </details>
       <button id="refresh-btn">Refresh</button>
       <span id="status" class="note"></span>
     </div>
@@ -263,7 +285,68 @@ const RECORD_KEYS = ["created_at", "run_id", "model", "state", "epochs_completed
 const state = {
   sort: "created_at", desc: true, reference: "project",
   runs: [], sortKeys: [], selected: [], active: null,
+  metricCols: null,   // user's pick of metric columns; null = the default set
 };
+try {
+  const saved = JSON.parse(localStorage.getItem("horos.experiments.metricCols") || "null");
+  if (Array.isArray(saved)) state.metricCols = saved;
+} catch (e) { /* default set */ }
+
+// Backends report a dozen metric keys; a default set keeps the table
+// readable. Ranked patterns pick the headline ones (a raw mAP before an EMA
+// variant, the overall mAP before mAP50), capped at four, plus whatever key
+// is being sorted on. The Columns picker overrides this.
+const DEFAULT_METRIC_PATTERNS = [
+  /^(?!.*ema).*map_50_95$/, /^(?!.*ema).*map50$/, /^(?!.*ema).*map_50$/,
+  /f1$/, /^loss$/, /^eval\..*\.map_5095$/, /^eval\..*\.map_50$/, /loss$/,
+];
+function defaultMetricCols(keys) {
+  const picked = [];
+  for (const pattern of DEFAULT_METRIC_PATTERNS) {
+    for (const k of keys) if (pattern.test(k) && !picked.includes(k)) picked.push(k);
+  }
+  return picked.slice(0, 4);
+}
+function visibleMetricKeys(allKeys) {
+  const chosen = state.metricCols === null
+    ? defaultMetricCols(allKeys)
+    : state.metricCols.filter((k) => allKeys.includes(k));
+  if (!RECORD_KEYS.includes(state.sort) && allKeys.includes(state.sort) && !chosen.includes(state.sort)) {
+    chosen.push(state.sort);  // the sort key is always visible
+  }
+  return allKeys.filter((k) => chosen.includes(k));
+}
+function saveMetricCols() {
+  try {
+    if (state.metricCols === null) localStorage.removeItem("horos.experiments.metricCols");
+    else localStorage.setItem("horos.experiments.metricCols", JSON.stringify(state.metricCols));
+  } catch (e) { /* storage unavailable */ }
+}
+
+function renderColumnPicker(allKeys, shown) {
+  $("cols-count").textContent = allKeys.length ? `${shown.length}/${allKeys.length}` : "";
+  $("cols-menu").innerHTML = allKeys.map((k) => `<label>
+      <input type="checkbox" data-col="${esc(k)}" ${shown.includes(k) ? "checked" : ""}
+             ${k === state.sort ? "disabled title='the sort column is always shown'" : ""}>
+      ${esc(metricLabel(k))}</label>`).join("")
+    + `<div class="foot"><button data-cols="default">default</button>
+       <button data-cols="all">all</button><button data-cols="none">none</button></div>`;
+  $("cols-menu").querySelectorAll("input[data-col]").forEach((box) => {
+    box.onchange = () => {
+      const current = new Set(visibleMetricKeys(allKeys));
+      if (box.checked) current.add(box.dataset.col); else current.delete(box.dataset.col);
+      state.metricCols = allKeys.filter((k) => current.has(k));
+      saveMetricCols(); renderTable();
+    };
+  });
+  $("cols-menu").querySelectorAll("button[data-cols]").forEach((btn) => {
+    btn.onclick = () => {
+      const mode = btn.dataset.cols;
+      state.metricCols = mode === "default" ? null : mode === "all" ? [...allKeys] : [];
+      saveMetricCols(); renderTable();
+    };
+  });
+}
 
 function setStatus(text, kind) {
   $("status").textContent = text || "";
@@ -364,7 +447,9 @@ new ResizeObserver(() => { clearTimeout(fitTimer); fitTimer = setTimeout(fitColu
 function renderTable() {
   const runs = state.runs;
   $("no-runs").classList.toggle("hidden", runs.length > 0 || !!$("tag-filter").value || !!$("state-select").value);
-  const metricKeys = state.sortKeys.filter((k) => !RECORD_KEYS.includes(k));
+  const allMetricKeys = state.sortKeys.filter((k) => !RECORD_KEYS.includes(k));
+  const metricKeys = visibleMetricKeys(allMetricKeys);
+  renderColumnPicker(allMetricKeys, metricKeys);
   const metricCls = (k) => `col-metric col-m${metricKeys.indexOf(k)}`;
   // give way right-to-left: best epoch, model (moves under the run id),
   // created, the metrics that are not being sorted on, epochs, data badge
