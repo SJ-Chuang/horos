@@ -11,6 +11,26 @@ from horos.web.routes.autolabel import _project
 bp = Blueprint("experiment", __name__, url_prefix="/api/v1")
 
 
+def _csv(name: str) -> list[str] | None:
+    raw = request.args.get(name)
+    return None if raw is None else [part for part in raw.split(",") if part.strip()]
+
+
+@bp.get("/experiments/runs")
+def query_runs():
+    desc = request.args.get("desc", "1")
+    if desc not in ("0", "1", "true", "false"):
+        raise ProjectError("'desc' must be 0/1 or true/false")
+    result = api.query_runs(
+        _project(),
+        sort_by=request.args.get("sort", "created_at"),
+        descending=desc in ("1", "true"),
+        states=_csv("state"),
+        tags=_csv("tag"),
+    )
+    return jsonify(result.model_dump())
+
+
 @bp.get("/experiments/runs/<run_id>")
 def run_summary(run_id: str):
     return jsonify(api.get_run_summary(_project(), run_id).model_dump())

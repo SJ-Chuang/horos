@@ -59,8 +59,10 @@ from horos.api.evaluate import (
 )
 from horos.api.experiment import (
     RunExtras,
+    RunQueryResult,
     RunSummary,
     get_run_summary,
+    query_runs,
     update_run_notes,
 )
 from horos.api.export import (
@@ -122,7 +124,9 @@ from horos.api.visualize import (
 __all__ = [
     "RunExtras",
     "RunSummary",
+    "RunQueryResult",
     "get_run_summary",
+    "query_runs",
     "update_run_notes",
     "ExportArtifact",
     "ModelCard",

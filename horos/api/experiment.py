@@ -40,7 +40,9 @@ from horos.errors import ProjectError
 __all__ = [
     "RunExtras",
     "RunSummary",
+    "RunQueryResult",
     "get_run_summary",
+    "query_runs",
     "update_run_notes",
 ]
 
@@ -78,6 +80,15 @@ class RunSummary(BaseModel):
     #: {"test": {"map_50": 0.68, ...}}
     evals: dict[str, dict[str, float]] = Field(default_factory=dict)
     fingerprint: DatasetFingerprint | None = None
+
+
+class RunQueryResult(BaseModel):
+    runs: list[RunSummary] = Field(default_factory=list)
+    sort_by: str
+    descending: bool
+    #: every sort key valid for this project's runs right now (record fields,
+    #: score keys, eval.<split>.<metric>) — the UI's sort menu is built from it
+    sort_keys: list[str] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------ sidecar
@@ -287,3 +298,91 @@ def update_run_notes(
         extras.updated_at = _now()
         write_extras(run_dir, extras)
     return _summarize(run_dir, _reconcile(run_dir, read_record(run_dir)))
+
+
+# ------------------------------------------------------------------ query
+
+_RECORD_SORT_KEYS = ("created_at", "run_id", "model", "state", "epochs_completed")
+
+
+def _sort_value(summary: RunSummary, key: str):
+    if key in _RECORD_SORT_KEYS:
+        return getattr(summary.run, key)
+    if key in summary.scores:
+        return summary.scores[key]
+    if key.startswith("eval."):
+        _, _, rest = key.partition(".")
+        split, _, metric = rest.partition(".")
+        return summary.evals.get(split, {}).get(metric)
+    return None
+
+
+def available_sort_keys(summaries: list[RunSummary]) -> list[str]:
+    keys: list[str] = list(_RECORD_SORT_KEYS)
+    scores = sorted({k for s in summaries for k in s.scores})
+    evals = sorted(
+        f"eval.{split}.{metric}"
+        for s in summaries
+        for split, metrics in s.evals.items()
+        for metric in metrics
+    )
+    for key in [*scores, *evals]:
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+def sort_summaries(
+    summaries: list[RunSummary], sort_by: str, *, descending: bool = True
+) -> list[RunSummary]:
+    """Runs lacking the key sort last in either direction; ties fall back to
+    newest first so the order is stable across refreshes."""
+    keys = available_sort_keys(summaries)
+    if sort_by not in keys:
+        raise ProjectError(
+            f"Unknown sort key '{sort_by}'. Available for this project: {', '.join(keys)}"
+        )
+    present = [s for s in summaries if _sort_value(s, sort_by) is not None]
+    missing = [s for s in summaries if _sort_value(s, sort_by) is None]
+    present.sort(key=lambda s: s.run.created_at, reverse=True)
+    present.sort(key=lambda s: _sort_value(s, sort_by), reverse=descending)
+    missing.sort(key=lambda s: s.run.created_at, reverse=True)
+    return [*present, *missing]
+
+
+@capability(
+    "experiment.runs",
+    summary="List runs with scores, sorted by any metric, filtered by state or tag",
+    web_route="/api/v1/experiments/runs",
+    web_methods=("GET",),
+    cli="runs",
+)
+def query_runs(
+    project: Project,
+    *,
+    sort_by: str = "created_at",
+    descending: bool = True,
+    states: list[str] | None = None,
+    tags: list[str] | None = None,
+) -> RunQueryResult:
+    """Every run of the project as a RunSummary. `states` keeps only runs in
+    those states; `tags` keeps runs carrying ALL the given tags (matched
+    case-insensitively). Sorting happens after filtering, and `sort_keys`
+    lists what the project's runs can currently be sorted by."""
+    summaries = _all_summaries(project)
+    if states:
+        wanted = {s.strip() for s in states if s.strip()}
+        summaries = [s for s in summaries if s.run.state in wanted]
+    if tags:
+        wanted_tags = {t.strip().casefold() for t in tags if t.strip()}
+        summaries = [
+            s for s in summaries
+            if wanted_tags <= {t.casefold() for t in s.tags}
+        ]
+    ordered = sort_summaries(summaries, sort_by, descending=descending)
+    return RunQueryResult(
+        runs=ordered,
+        sort_by=sort_by,
+        descending=descending,
+        sort_keys=available_sort_keys(summaries),
+    )

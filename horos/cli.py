@@ -357,6 +357,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include runs that are still queued, running, stopped, or failed",
     )
     p = sub.add_parser(
+        "runs",
+        help="List training runs with their scores, sorted by any metric (E7)",
+    )
+    p.add_argument("--project", help="Project directory (default: the enclosing project)")
+    p.add_argument(
+        "--sort", default="created_at", metavar="KEY",
+        help="Sort key: a record field (created_at, model, epochs_completed, ...), a "
+        "score key (map50, loss, ...) or eval.<split>.<metric>; an unknown key lists "
+        "the valid ones",
+    )
+    p.add_argument("--asc", action="store_true", help="Ascending order (default: descending)")
+    p.add_argument(
+        "--state", action="append", default=[], help="Keep only runs in this state (repeatable)"
+    )
+    p.add_argument(
+        "--tag", action="append", default=[], help="Keep only runs carrying this tag (repeatable)"
+    )
+    p = sub.add_parser(
         "tag", help="Set a training run's notes or edit its tags (E7)"
     )
     p.add_argument("run_id", help="The run to annotate (see 'horos models --all')")
@@ -749,6 +767,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
             _emit(rows)
+        elif args.command == "runs":
+            result = api.query_runs(
+                _project_arg(args),
+                sort_by=args.sort,
+                descending=not args.asc,
+                states=args.state or None,
+                tags=args.tag or None,
+            )
+            _emit([
+                {
+                    "run_id": s.run.run_id,
+                    "model": s.run.model,
+                    "state": s.run.state,
+                    "created_at": s.run.created_at,
+                    "epochs_completed": s.run.epochs_completed,
+                    "best_epoch": s.best_epoch,
+                    "scores": s.scores,
+                    "evals": s.evals,
+                    "tags": s.tags,
+                    "notes": s.notes,
+                    "fingerprint": s.fingerprint.digest if s.fingerprint else None,
+                }
+                for s in result.runs
+            ])
         elif args.command == "tag":
             summary = api.update_run_notes(
                 _project_arg(args),
