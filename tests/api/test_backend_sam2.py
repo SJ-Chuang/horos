@@ -148,3 +148,26 @@ def test_concurrent_first_use_loads_the_model_once_and_safely(monkeypatch):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert loads == [1] and overlaps == []
+
+
+def test_result_polygon_box_and_area_describe_the_largest_blob():
+    """A noisy image gives SAM stray specks around the object; the polygon,
+    box and area must all come from the object's blob, not the speck that
+    happens to hold the top-most pixel nor the union of everything."""
+    import numpy as np
+
+    from horos.backends.sam.promptable import TransformersPromptableMixin
+
+    mask = np.zeros((64, 64), dtype=bool)
+    mask[2, 3] = True  # speck above-left of the object
+    mask[20:50, 10:40] = True  # the object
+    mask[60, 60:62] = True  # speck below-right
+    result = TransformersPromptableMixin._result_from_mask(mask, 0.9)
+    assert result.bbox == (10.0, 20.0, 30.0, 30.0)
+    assert result.area == 900
+    xs, ys = result.polygon[0::2], result.polygon[1::2]
+    assert min(xs) == 10 and max(xs) == 39 and min(ys) == 20 and max(ys) == 49
+    assert result.score == 0.9
+
+    empty = TransformersPromptableMixin._result_from_mask(np.zeros((8, 8), dtype=bool), 0.1)
+    assert empty.polygon is None and empty.bbox is None and empty.area == 0

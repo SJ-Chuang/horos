@@ -5,15 +5,112 @@ are implemented directly: Moore-neighbor boundary tracing (with Jacob's
 stopping criterion) and Douglas-Peucker simplification. Pixel coordinates use
 cell centers, so a polygon vertex (x, y) sits on pixel (row y, col x).
 
-The mask may be any 2D indexable (numpy array or nested lists); only the blob
-containing the top-most/left-most foreground pixel is traced — SAM's
-box-prompted masks are single blobs in practice.
+The mask may be any 2D indexable (numpy array or nested lists). A prompted
+mask is rarely one clean blob: noisy images give SAM stray islands of a few
+pixels, and a box prompt on a cluttered scene picks up crumbs of the
+neighbours. Only the LARGEST 8-connected blob is kept — traced as the polygon
+and measured for the box — so the polygon, its box and its area always
+describe the same pixels. (Tracing whichever blob held the top-most pixel
+turned a stray speck into the "polygon" of an otherwise correct box.)
 """
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 # Moore neighborhood, clockwise, starting west: (dx, dy)
 _MOORE = [(-1, 0), (-1, -1), (0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1)]
+
+
+class MaskShape(NamedTuple):
+    """The largest blob of a mask: its simplified outline, COCO xywh box in
+    pixel counts, and pixel area."""
+
+    polygon: list[float]
+    bbox: tuple[float, float, float, float]
+    area: int
+
+
+def _row_runs(row, width: int) -> list[tuple[int, int]]:
+    """Half-open [start, stop) foreground runs of one mask row."""
+    if hasattr(row, "shape"):  # numpy fast path
+        import numpy as np
+
+        padded = np.concatenate(([False], np.asarray(row, dtype=bool), [False]))
+        edges = np.flatnonzero(padded[1:] != padded[:-1]).tolist()
+        return list(zip(edges[0::2], edges[1::2], strict=True))
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for x in range(width):
+        if row[x]:
+            if start is None:
+                start = x
+        elif start is not None:
+            runs.append((start, x))
+            start = None
+    if start is not None:
+        runs.append((start, width))
+    return runs
+
+
+def largest_blob(mask) -> tuple[list[tuple[int, int, int]], int, tuple[int, int, int, int]] | None:
+    """The largest 8-connected foreground component as (runs, area, box).
+
+    `runs` are (y, start, stop) half-open row runs; `box` is (x0, y0, x1, y1)
+    in half-open pixel coordinates. None for an empty mask. Row runs are
+    unioned with an overlap test against the previous row, so the work is
+    proportional to the number of runs, not pixels.
+    """
+    height = len(mask)
+    width = len(mask[0]) if height else 0
+    parent: list[int] = []
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    runs: list[tuple[int, int, int]] = []  # (y, start, stop) indexed like parent
+    previous: list[int] = []  # run indices of the row above
+    for y in range(height):
+        current: list[int] = []
+        for start, stop in _row_runs(mask[y], width):
+            index = len(runs)
+            runs.append((y, start, stop))
+            parent.append(index)
+            current.append(index)
+            for above in previous:
+                _, a0, a1 = runs[above]
+                if a0 <= stop and start <= a1:  # touching, corners included (8-conn)
+                    union(index, above)
+        previous = current
+    if not runs:
+        return None
+    members: dict[int, list[int]] = {}
+    for index in range(len(runs)):
+        members.setdefault(find(index), []).append(index)
+    best = max(members.values(), key=lambda idx: sum(runs[i][2] - runs[i][1] for i in idx))
+    blob = [runs[i] for i in best]
+    area = sum(stop - start for _, start, stop in blob)
+    x0 = min(start for _, start, _ in blob)
+    x1 = max(stop for _, _, stop in blob)
+    y0 = min(y for y, _, _ in blob)
+    y1 = max(y for y, _, _ in blob) + 1
+    return blob, area, (x0, y0, x1, y1)
+
+
+def _blob_mask(blob, height: int, width: int):
+    """A nested-list mask holding only the blob's pixels."""
+    rows = [bytearray(width) for _ in range(height)]
+    for y, start, stop in blob:
+        rows[y][start:stop] = b"\x01" * (stop - start)
+    return rows
 
 
 def _first_foreground(mask, height: int, width: int) -> tuple[int, int] | None:
@@ -107,14 +204,19 @@ def _douglas_peucker(points: list[tuple[int, int]], epsilon: float) -> list[tupl
     return [p for p, k in zip(points, keep, strict=True) if k]
 
 
-def mask_to_polygon(mask, *, epsilon: float = 1.5, min_points: int = 3) -> list[float] | None:
-    """Trace the mask's boundary and return a simplified flat polygon
-    [x1, y1, x2, y2, ...], or None when the mask is empty or degenerate."""
+def mask_to_shape(mask, *, epsilon: float = 1.5, min_points: int = 3) -> MaskShape | None:
+    """Trace the mask's largest blob and return its simplified flat polygon
+    [x1, y1, x2, y2, ...] with the blob's box and area, or None when the mask
+    is empty or the blob is degenerate (fewer than `min_points` corners)."""
     height = len(mask)
     width = len(mask[0]) if height else 0
     if not height or not width:
         return None
-    boundary = _trace_boundary(mask, height, width)
+    found = largest_blob(mask)
+    if found is None:
+        return None
+    blob, area, (x0, y0, x1, y1) = found
+    boundary = _trace_boundary(_blob_mask(blob, height, width), height, width)
     if boundary is None or len(boundary) < min_points:
         return None
     # close the ring for DP, then drop the duplicate endpoint
@@ -125,4 +227,14 @@ def mask_to_polygon(mask, *, epsilon: float = 1.5, min_points: int = 3) -> list[
     flat: list[float] = []
     for x, y in simplified:
         flat.extend((float(x), float(y)))
-    return flat
+    return MaskShape(
+        polygon=flat,
+        bbox=(float(x0), float(y0), float(x1 - x0), float(y1 - y0)),
+        area=area,
+    )
+
+
+def mask_to_polygon(mask, *, epsilon: float = 1.5, min_points: int = 3) -> list[float] | None:
+    """The polygon of `mask_to_shape`, or None."""
+    shape = mask_to_shape(mask, epsilon=epsilon, min_points=min_points)
+    return shape.polygon if shape is not None else None

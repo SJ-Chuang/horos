@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from horos.backends.base import ImageEmbedding, SegmentPrompt, SegmentResult
-from horos.backends.sam.polygonize import mask_to_polygon
+from horos.backends.sam.polygonize import mask_to_shape
 
 
 class TransformersPromptableMixin:
@@ -63,7 +63,6 @@ class TransformersPromptableMixin:
             return self._segment(embedding, prompt)
 
     def _segment(self, embedding: ImageEmbedding, prompt: SegmentPrompt) -> SegmentResult:
-        import numpy as np
         import torch
         from PIL import Image
 
@@ -94,13 +93,13 @@ class TransformersPromptableMixin:
         masks = self._processor.post_process_masks(*post_args)[0]
         mask = masks.reshape(-1, masks.shape[-2], masks.shape[-1])[0].numpy().astype(bool)
         score = float(outputs.iou_scores.flatten()[0])
-        ys, xs = np.nonzero(mask)
-        if xs.size == 0:
+        return self._result_from_mask(mask, score)
+
+    @staticmethod
+    def _result_from_mask(mask, score: float) -> SegmentResult:
+        """Polygon, box and area all from the mask's largest blob, so the three
+        agree (stray specks neither widen the box nor become the polygon)."""
+        shape = mask_to_shape(mask)
+        if shape is None:
             return SegmentResult(polygon=None, bbox=None, score=score, area=0)
-        x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
-        return SegmentResult(
-            polygon=mask_to_polygon(mask),
-            bbox=(float(x0), float(y0), float(x1 - x0), float(y1 - y0)),
-            score=score,
-            area=int(mask.sum()),
-        )
+        return SegmentResult(polygon=shape.polygon, bbox=shape.bbox, score=score, area=shape.area)
