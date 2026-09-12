@@ -59,11 +59,22 @@
   .note.ok { color: var(--ok); }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
-  /* columns shrink to their content; only the tags column takes the slack,
-     so a short model name never gets a wide column */
-  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
-           white-space: nowrap; width: 1%; }
-  th.fill, td.fill { width: auto; white-space: normal; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  /* run table: columns shrink to their content; only the tags column takes
+     the slack, so a short model name never gets a wide column */
+  #runs-table th, #runs-table td { white-space: nowrap; width: 1%; }
+  #runs-table th.fill, #runs-table td.fill { width: auto; white-space: normal; }
+  /* last resort once every secondary column is folded: let cells wrap
+     rather than scroll */
+  #runs-table.squeeze th, #runs-table.squeeze td { white-space: normal; width: auto;
+                                                   overflow-wrap: anywhere; }
+  /* compare tables: fixed layout and wrapping cells — long reasons and JSON
+     values grow the row, never the table */
+  .compare table { table-layout: fixed; }
+  .compare th, .compare td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+  .compare th:first-child, .compare td:first-child { width: 150px; }
+  .compare td .value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                       font-size: 12px; }
   #runs-table .sub { display: none; color: var(--dim); font-size: 11px; }
   #runs-table.model-hidden .sub { display: block; }
   /* fitColumns() measures the table and hides secondary columns (marked
@@ -103,8 +114,7 @@
   .compare td.differs, .compare th.differs { color: var(--text); }
   .compare tr.differs td { background: rgba(252, 196, 25, .07); }
   .compare tr.differs td:first-child { color: var(--warn); }
-  .compare td .reason { display: block; color: var(--dim); font-size: 11px;
-                        white-space: normal; max-width: 280px; }
+  .compare td .reason { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; }
   .compare .run-head { font-weight: 600; }
   .compare .run-head .data-badge { margin-left: 6px; }
   .hidden { display: none; }
@@ -262,6 +272,7 @@ function setStatus(text, kind) {
 const fmt = (v) => {
   if (v === null || v === undefined) return "—";
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(v < 0.01 ? 5 : 3);
+  if (typeof v === "object") return JSON.stringify(v);  // aug_config and friends
   return String(v);
 };
 const METRIC_SHORT = { map_5095: "mAP", map_50: "mAP50", map_75: "mAP75", mar_100: "mAR" };
@@ -337,12 +348,14 @@ function fitColumns() {
   const table = $("runs-table");
   const wrap = table.parentElement;
   table.querySelectorAll(".folded").forEach((el) => el.classList.remove("folded"));
-  table.classList.remove("model-hidden");
+  table.classList.remove("model-hidden", "squeeze");
   for (const cls of foldOrder) {
     if (table.getBoundingClientRect().width <= wrap.clientWidth + 0.5) break;
     table.querySelectorAll("." + cls).forEach((el) => el.classList.add("folded"));
     if (cls === "col-model") table.classList.add("model-hidden");
   }
+  // everything foldable is folded and it still does not fit: wrap instead of scroll
+  table.classList.toggle("squeeze", table.getBoundingClientRect().width > wrap.clientWidth + 0.5);
 }
 let fitTimer;
 new ResizeObserver(() => { clearTimeout(fitTimer); fitTimer = setTimeout(fitColumns, 60); })
@@ -493,7 +506,7 @@ async function renderCompare() {
     const shown = rows.filter((r) => showAll || r.differs);
     const body = shown.length ? shown.map((r) => `<tr class="${r.differs ? "differs" : ""}">
         <td>${esc(r.name)}</td>
-        ${r.values.map((v, i) => `<td>${esc(fmt(v))}${withReasons && r.reasons[i] ? `<span class="reason">${esc(r.reasons[i])}</span>` : ""}</td>`).join("")}
+        ${r.values.map((v, i) => `<td><span class="value">${esc(fmt(v))}</span>${withReasons && r.reasons[i] ? `<span class="reason">${esc(r.reasons[i])}</span>` : ""}</td>`).join("")}
       </tr>`).join("")
       : `<tr><td colspan="${cmp.runs.length + 1}" class="note">identical across the selected runs</td></tr>`;
     return `<h3>${esc(title)}</h3><table><thead>${head}</thead><tbody>${body}</tbody></table>`;

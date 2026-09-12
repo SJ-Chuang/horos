@@ -73,13 +73,7 @@
   #advanced-details summary:hover { color: var(--text); }
   /* the derivation reason lives in the name's tooltip (hover), not in a line
      of prose under every knob */
-  .hp-name { display: inline-flex; align-items: center; gap: 5px; cursor: help; }
-  .hp-name .why { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--dim);
-                  color: var(--dim); font-size: 10px; line-height: 12px; text-align: center;
-                  font-style: italic; font-family: Georgia, serif; flex: none; }
-  .hp-row:hover .hp-name .why { border-color: var(--accent); color: var(--accent); }
-  .hp-name.overridden .why { border-color: var(--accent); color: var(--accent);
-                             font-style: normal; }
+  .hp-name.overridden { color: var(--accent); }
   .panel { background: var(--panel); border: 1px solid var(--line);
            border-radius: 10px; padding: 18px; }
   .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
@@ -655,14 +649,13 @@ function wireSteppers(root, attr) {
 const fmtValue = (v) => (v !== null && typeof v === "object") ? JSON.stringify(v) : String(v);
 const escAttr = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;")
   .replace(/</g, "&lt;");
-// name + ⓘ, with the derivation reason as the hover tooltip (E5-S2: the "why"
-// stays one hover away instead of a paragraph under every knob)
+// the knob's name carries the derivation reason as its hover tooltip (E5-S2:
+// the "why" stays one hover away instead of a paragraph under every knob)
 function hparamName(d) {
   const why = d.overridden
     ? `User override — "auto ↺" restores the derived value.\nDerivation rule: ${d.reason === "user override" ? "(re-derived from the dataset when reset)" : d.reason}`
     : d.reason;
-  return `<span class="hp-name ${d.overridden ? "overridden" : ""}" title="${escAttr(why)}">
-    ${d.name}<span class="why">${d.overridden ? "!" : "i"}</span></span>`;
+  return `<span class="hp-name ${d.overridden ? "overridden" : ""}" title="${escAttr(why)}">${d.name}</span>`;
 }
 
 function knobWidget(d) {
