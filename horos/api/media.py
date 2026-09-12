@@ -36,6 +36,7 @@ from horos.backends.base import (
     RunStarted,
     WarningRaised,
 )
+from horos.core.fsutil import atomic_write_text, rmtree_retry
 from horos.core.project import Project
 from horos.errors import ProjectError
 
@@ -97,9 +98,7 @@ def media_dir(project: Project, run_id: str, media_id: str) -> Path:
 
 
 def _write_item(item_dir: Path, item: MediaItem) -> None:
-    tmp = item_dir / f"{_MEDIA_JSON}.tmp"
-    tmp.write_text(item.model_dump_json(indent=2), "utf-8")
-    tmp.replace(item_dir / _MEDIA_JSON)
+    atomic_write_text(item_dir / _MEDIA_JSON, item.model_dump_json(indent=2))
 
 
 def _iter_frames(source: Path):
@@ -322,5 +321,7 @@ def get_media(project: Project, run_id: str, media_id: str) -> MediaItem:
     not_cli_because="The gallery is a UI concern.",
 )
 def delete_media(project: Project, run_id: str, media_id: str) -> bool:
-    shutil.rmtree(media_dir(project, run_id, media_id))
+    # a browser may still be fetching a frame: on Windows that handle blocks
+    # the delete for an instant (R7; see horos.core.fsutil)
+    rmtree_retry(media_dir(project, run_id, media_id))
     return True

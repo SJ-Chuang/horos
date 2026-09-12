@@ -33,6 +33,7 @@ from horos.api.hparams import DerivedValue, HyperparameterPlan, derive_plan
 from horos.api.manifest import capability
 from horos.api.system import ensure_supported
 from horos.core.fingerprint import DatasetFingerprint, fingerprint_dataset
+from horos.core.fsutil import atomic_write_text, read_text_retry, rmtree_retry
 from horos.core.project import Project
 from horos.core.registry import get_model_info
 from horos.errors import LicenseError, ProjectError, UnknownModelError
@@ -158,15 +159,17 @@ def _run_dir(project: Project, run_id: str) -> Path:
 
 
 def read_record(run_dir: Path) -> RunRecord:
-    return RunRecord.model_validate_json((run_dir / _RUN_JSON).read_text("utf-8"))
+    # the worker may be replacing run.json this very instant (Windows: a
+    # transient PermissionError) — read_text_retry waits it out
+    return RunRecord.model_validate_json(read_text_retry(run_dir / _RUN_JSON))
 
 
 def write_record(run_dir: Path, record: RunRecord) -> None:
-    """Atomic replace so a poll never reads a half-written run.json (R7:
-    os.replace is atomic on POSIX and Windows alike)."""
-    tmp = run_dir / f"{_RUN_JSON}.tmp"
-    tmp.write_text(record.model_dump_json(indent=2), "utf-8")
-    os.replace(tmp, run_dir / _RUN_JSON)
+    """Atomic replace so a poll never reads a half-written run.json. The
+    worker and the parent (reconciling) both write it, so the tmp name is
+    per writer — a shared name made one replace steal the other's file
+    (R7; see horos.core.fsutil)."""
+    atomic_write_text(run_dir / _RUN_JSON, record.model_dump_json(indent=2))
 
 
 def _read_events(run_dir: Path, after: int = 0) -> tuple[list[dict[str, Any]], int]:
@@ -723,7 +726,6 @@ def stop_training(project: Project, run_id: str) -> bool:
 def delete_run(project: Project, run_id: str) -> bool:
     """Remove runs/<id> — checkpoints, dataset snapshot, events, eval reports.
     An active run must be stopped first; deletion is permanent."""
-    import shutil
 
     run_dir = _run_dir(project, run_id)
     record = read_record(run_dir)
@@ -734,7 +736,7 @@ def delete_run(project: Project, run_id: str) -> bool:
             f"Run {run_id} is still {record.state} — stop it before deleting."
         )
     _PROCESSES.pop(run_id, None)
-    shutil.rmtree(run_dir)
+    rmtree_retry(run_dir)
     logger.info("deleted training run %s", run_id)
     return True
 

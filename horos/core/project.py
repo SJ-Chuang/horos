@@ -16,15 +16,14 @@ no fcntl, works on Windows (R7).
 
 from __future__ import annotations
 
-import os
 import shutil
 import time
-import uuid
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from horos.core.dataset import Annotation, Category, ImageRecord, default_color
+from horos.core.fsutil import atomic_write_text
 from horos.errors import AnnotationConflictError, ProjectError
 
 MANIFEST_NAME = "horos.json"
@@ -64,10 +63,9 @@ class AnnotationFile(BaseModel):
 
 
 def _write_json_atomic(path: Path, text: str) -> None:
-    """Atomic write: tmp file in the same directory + os.replace (R7-safe)."""
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    """Atomic write: per-writer tmp file + os.replace, retried through a
+    Windows sharing violation (R7; see horos.core.fsutil)."""
+    atomic_write_text(path, text)
 
 
 class Project:

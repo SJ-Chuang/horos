@@ -18,7 +18,6 @@ Design decisions (confirmed 2026-09-12):
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +39,7 @@ from horos.core.fingerprint import (
     fingerprint_dataset,
     fingerprint_snapshot,
 )
+from horos.core.fsutil import atomic_write_text
 from horos.core.project import Project
 from horos.errors import ProjectError
 
@@ -136,10 +136,8 @@ def read_extras(run_dir: Path) -> RunExtras:
 
 
 def write_extras(run_dir: Path, extras: RunExtras) -> None:
-    """Atomic replace, like run.json (R7: os.replace is atomic everywhere)."""
-    tmp = run_dir / f"{_EXTRAS_JSON}.tmp"
-    tmp.write_text(extras.model_dump_json(indent=2), "utf-8")
-    os.replace(tmp, _extras_path(run_dir))
+    """Atomic replace, like run.json (R7; see horos.core.fsutil)."""
+    atomic_write_text(_extras_path(run_dir), extras.model_dump_json(indent=2))
 
 
 def _now() -> str:
