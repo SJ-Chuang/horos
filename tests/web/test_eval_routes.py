@@ -154,6 +154,11 @@ def test_media_gif_upload_gallery_and_frame_serving(trained_client):
     )
     assert frame.status_code == 200
     assert frame.content_type.startswith("image/jpeg")
+    # consume and close the download like a browser does: an unread test
+    # response keeps the frame's file handle open, and Windows then refuses
+    # the delete below (WinError 32) however long the API retries
+    assert frame.data[:2] == b"\xff\xd8"
+    frame.close()
 
     deleted = client.delete(
         f"/api/v1/train/runs/{run_id}/media/{body['media_id']}"
