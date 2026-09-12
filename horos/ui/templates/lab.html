@@ -521,6 +521,7 @@ document.addEventListener("keydown", (e) => {
 // ----------------------------------------------------------------- serve (E8-T7)
 let serveTimer = null;
 let serveStatus = null;
+let platformFeatures = null;
 
 async function refreshServeFormats() {
   const runId = $("run-select").value;
@@ -531,13 +532,28 @@ async function refreshServeFormats() {
     exported = (await api(`/train/runs/${runId}/exports`))
       .filter((a) => a.kind === "model").map((a) => a.format);
   } catch (e) { /* no exports listing: checkpoint only */ }
+  // E4-T13: the platform capability list decides what is greyed out (an
+  // engine only runs where TensorRT exists), never a hardcoded OS check here
+  if (!platformFeatures) {
+    try { platformFeatures = (await api("/capabilities")).features || []; }
+    catch (e) { platformFeatures = []; }
+  }
+  const unsupported = (feature) => {
+    const f = platformFeatures.find((x) => x.feature === feature);
+    return f && f.level === "unavailable" ? f.note : "";
+  };
   const options = [
-    ["onnx", "ONNX bundle (onnxruntime, framework-free)"],
-    ["pytorch", "PyTorch weights bundle"],
-    ["checkpoint", "training checkpoint (training stack)"],
-  ].map(([fmt, label]) => {
+    ["onnx", "ONNX bundle (onnxruntime, framework-free)", ""],
+    ["tensorrt", "TensorRT engine (this GPU only)", unsupported("export_tensorrt")],
+    ["tflite", "TFLite model (LiteRT, CPU)", ""],
+    ["pytorch", "PyTorch weights bundle", ""],
+    ["checkpoint", "training checkpoint (training stack)", ""],
+  ].map(([fmt, label, blocked]) => {
     const missing = fmt !== "checkpoint" && !exported.includes(fmt);
-    return `<option value="${fmt}" ${missing ? "disabled" : ""}>${label}${missing ? " — not exported yet" : ""}</option>`;
+    const note = blocked ? " — not supported on this platform"
+      : missing ? " — not exported yet" : "";
+    return `<option value="${fmt}" ${blocked || missing ? "disabled" : ""} `
+      + `${blocked ? `title="${blocked.replace(/"/g, "&quot;")}"` : ""}>${label}${note}</option>`;
   });
   sel.innerHTML = options.join("");
   sel.value = exported.includes("onnx") ? "onnx" : "checkpoint";
@@ -556,6 +572,11 @@ function renderServeStatus(status) {
     const src = status.source || {};
     $("serve-status").innerHTML = `Running — <a href="${status.url}/health" target="_blank"
       style="color:var(--accent)">${status.url}</a> · ${src.kind} ${src.run_id || ""} · pid ${status.pid}`;
+    fetch(`${status.url}/health`).then((r) => r.json()).then((h) => {
+      if (h && h.runtime && serveStatus === status) {
+        $("serve-status").insertAdjacentHTML("beforeend", ` · ${h.runtime} on ${h.device}`);
+      }
+    }).catch(() => {});
     $("serve-curl").textContent =
       `curl -F "file=@photo.jpg" "${status.url}/predict?threshold=0.5"
 `

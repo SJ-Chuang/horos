@@ -144,6 +144,8 @@ RF-DETR XL/2XL are deliberately unregistered: their weights are not Apache-2.0
 | Inference & evaluation | ✅ | ✅ | ✅ | ✅ |
 | TensorRT export | ✅ | ✅ | ❌ refused explicitly | ✅ |
 | TFLite export (`horos install --tflite`) | ✅ | ✅ | ✅ | ✅ (CPU conversion) |
+| `horos serve` — ONNX / TFLite | ✅ | ✅ | ✅ | ✅ |
+| `horos serve` — TensorRT engine | ✅ | ✅ | ❌ refused explicitly | ✅ (the engine built there) |
 
 Unsupported combinations raise a clear error at the API layer and show up as
 disabled buttons with an explanation in the UI — never a silent CPU fallback.

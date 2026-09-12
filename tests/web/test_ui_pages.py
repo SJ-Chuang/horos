@@ -105,6 +105,17 @@ def test_every_page_uses_the_shared_controls(client):
     assert 'class="file-btn"' in lab and 'id="serve-file"' in lab
 
 
+def test_lab_serve_offers_every_artifact_format_from_the_capability_list(client):
+    """Serve-T3: the Source picker lists ONNX / TensorRT / TFLite / PyTorch /
+    checkpoint, and greys the engine out from /api/v1/capabilities (E4-T13),
+    never from a hardcoded platform check in the page."""
+    lab = client.get("/lab").get_data(as_text=True)
+    for fmt in ("onnx", "tensorrt", "tflite", "pytorch", "checkpoint"):
+        assert f'["{fmt}",' in lab, fmt
+    assert 'api("/capabilities")' in lab and 'unsupported("export_tensorrt")' in lab
+    assert "not supported on this platform" in lab
+
+
 def test_annotator_has_the_sam_tool(client):
     html = client.get("/annotate").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html
