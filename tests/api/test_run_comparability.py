@@ -108,3 +108,26 @@ def test_cli_compare_and_runs_report_comparability(world, capsys):
     assert main(["runs", "--project", str(project.root), "--reference", r1.run_id]) == 0
     rows = {r["run_id"]: r for r in json.loads(capsys.readouterr().out)}
     assert rows[r2.run_id]["comparable"] is True and rows[r3.run_id]["comparable"] is False
+
+
+def test_runs_whose_classes_were_deleted_are_flagged_not_crashed(tmp_path):
+    """After 'delete all data' (or a class deletion) a scoped run's classes no
+    longer exist: the Experiments listing must report it as not comparable,
+    never raise 'Unknown category'."""
+    from helpers.experiments import project_with_runs, train_fake
+
+    from horos.api.labels import delete_category
+
+    project, _ = project_with_runs(tmp_path, epochs=(1,))
+    time.sleep(1.05)
+    scoped = train_fake(project, epochs=1, categories=["pallet"], include_background=True)
+    pallet = next(c for c in project.categories if c.name == "pallet")
+    delete_category(project, pallet.id, force=True)
+
+    result = query_runs(project)  # reference = the project's data today
+    judged = {s.run.run_id: s.comparability for s in result.runs}[scoped.run_id]
+    assert judged is not None and not judged.comparable and judged.classes_changed
+    assert "no longer exist" in judged.reason and "pallet" in judged.reason
+    # the single-run view and a run-to-run comparison keep working too
+    assert get_run_summary(project, scoped.run_id).comparability.comparable is False
+    assert compare_runs(project, [s.run.run_id for s in result.runs[:2]]).runs

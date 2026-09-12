@@ -33,6 +33,7 @@ from horos.api.train import (
     list_runs,
     read_record,
 )
+from horos.core.dataset import Dataset
 from horos.core.fingerprint import (
     DatasetFingerprint,
     compare_fingerprints,
@@ -437,9 +438,16 @@ def _project_fingerprint(project: Project, record: RunRecord) -> DatasetFingerpr
     dataset = project.to_dataset()
     categories = record.config.get("categories")
     if categories is not None:
+        present = {c.name for c in dataset.categories}
+        wanted = [name for name in categories if name in present]
+        if not wanted:
+            # the run's classes are gone from the project (deleted or renamed):
+            # nothing of "its" data exists today — an empty view, which the
+            # fingerprint diff reports as changed classes, never an error
+            return fingerprint_dataset(Dataset(categories=list(dataset.categories)))
         dataset = filter_dataset_categories(
             dataset,
-            list(categories),
+            wanted,
             include_background=bool(record.config.get("include_background", False)),
         )
     return fingerprint_dataset(dataset)
@@ -450,6 +458,20 @@ def _judge(
 ) -> Comparability | None:
     if summary.fingerprint is None or reference_fp is None:
         return None
+    missing = [c for c in summary.fingerprint.classes if c not in reference_fp.classes]
+    if reference == "project" and missing:
+        return Comparability(
+            reference=reference,
+            comparable=False,
+            reason=(
+                f"Not comparable with the project's current data: the run's class"
+                f"{'es' if len(missing) > 1 else ''} {missing} no longer exist"
+                f"{'' if len(missing) > 1 else 's'} in the project — metrics were "
+                f"measured on data that is gone"
+            ),
+            changed_splits=sorted(set(summary.fingerprint.splits) | set(reference_fp.splits)),
+            classes_changed=True,
+        )
     diff = compare_fingerprints(summary.fingerprint, reference_fp)
     target = "the project's current data" if reference == "project" else f"run {reference}"
     if diff.identical:
@@ -480,8 +502,15 @@ def _comparability_judge(project: Project, reference: str):
                 summary.run.config.get("categories"),
                 summary.run.config.get("include_background", False),
             ))
-            if scope not in cache:
-                cache[scope] = _project_fingerprint(project, summary.run)
+            try:
+                if scope not in cache:
+                    cache[scope] = _project_fingerprint(project, summary.run)
+            except ProjectError as exc:
+                # one odd run must never take the whole Experiments page down
+                return Comparability(
+                    reference=reference, comparable=False, classes_changed=True,
+                    reason=f"Cannot compare with the project's current data: {exc}",
+                )
             return _judge(summary, reference, cache[scope])
 
         return judge

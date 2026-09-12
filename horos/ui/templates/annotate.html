@@ -175,6 +175,13 @@
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none;
            align-items: center; justify-content: center; z-index: 1000; }
   .modal .card { width: 460px; max-height: 80vh; overflow-y: auto; }
+  /* the class manager keeps one height whatever the class count: the list
+     scrolls, the header, merge row and add row stay put */
+  .modal .card.class-card { height: min(560px, 80vh); display: flex; flex-direction: column;
+                            overflow: hidden; }
+  .class-scroll { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--line);
+                  border-radius: 6px; scrollbar-width: thin; }
+  .class-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
   .modal table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .modal th, .modal td { text-align: left; padding: 6px 8px;
                          border-bottom: 1px solid var(--line); }
@@ -387,16 +394,18 @@
 
 <!-- class manager modal -->
 <div class="modal" id="class-modal">
-  <div class="card">
+  <div class="card class-card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <h4 style="margin:0">Manage Classes</h4>
       <button class="btn" id="class-modal-close">✕</button>
     </div>
+    <div class="class-scroll">
     <table>
       <thead><tr><th></th><th>Class Name</th><th>Count</th><th style="width:130px">Actions</th>
         <th title="Tick the classes to fold into another one">Merge</th></tr></thead>
       <tbody id="class-tbody"></tbody>
     </table>
+    </div>
     <div id="merge-row" style="display:none;gap:6px;align-items:center;margin-top:10px;
          padding:8px 10px;border:1px solid var(--accent);border-radius:6px;
          background:rgba(77,171,247,.08);font-size:12px;flex-wrap:wrap">
