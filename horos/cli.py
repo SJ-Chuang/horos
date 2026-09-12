@@ -356,6 +356,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include runs that are still queued, running, stopped, or failed",
     )
+    p = sub.add_parser(
+        "tag", help="Set a training run's notes or edit its tags (E7)"
+    )
+    p.add_argument("run_id", help="The run to annotate (see 'horos models --all')")
+    p.add_argument("--project", help="Project directory (default: the enclosing project)")
+    p.add_argument("--notes", help="Replace the run's free-text notes")
+    p.add_argument(
+        "--add", action="append", default=[], metavar="TAG", help="Add a tag (repeatable)"
+    )
+    p.add_argument(
+        "--remove", action="append", default=[], metavar="TAG",
+        help="Remove a tag (repeatable)",
+    )
+    p.add_argument(
+        "--set", metavar="TAG[,TAG...]", help="Replace the whole tag list (comma-separated)"
+    )
     sub.add_parser(
         "catalog", help="List the model architectures horos can train or run, with licenses"
     )
@@ -733,6 +749,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
             _emit(rows)
+        elif args.command == "tag":
+            summary = api.update_run_notes(
+                _project_arg(args),
+                args.run_id,
+                notes=args.notes,
+                tags=None if args.set is None else args.set.split(","),
+                add_tags=args.add or None,
+                remove_tags=args.remove or None,
+            )
+            _emit({
+                "run_id": summary.run.run_id,
+                "notes": summary.notes,
+                "tags": summary.tags,
+            })
         elif args.command == "catalog":
             _emit([m.model_dump() for m in api.list_models()])
         elif args.command == "capabilities":

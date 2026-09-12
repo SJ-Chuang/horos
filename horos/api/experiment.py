@@ -35,11 +35,13 @@ from horos.api.train import (
 )
 from horos.core.fingerprint import DatasetFingerprint, fingerprint_snapshot
 from horos.core.project import Project
+from horos.errors import ProjectError
 
 __all__ = [
     "RunExtras",
     "RunSummary",
     "get_run_summary",
+    "update_run_notes",
 ]
 
 _EXTRAS_JSON = "experiment.json"
@@ -209,4 +211,79 @@ def _all_summaries(project: Project) -> list[RunSummary]:
 )
 def get_run_summary(project: Project, run_id: str) -> RunSummary:
     run_dir = _run_dir(project, run_id)
+    return _summarize(run_dir, _reconcile(run_dir, read_record(run_dir)))
+
+
+# ------------------------------------------------------------------ notes/tags
+
+_MAX_TAG = 40
+_MAX_TAGS = 32
+_MAX_NOTES = 20_000
+
+
+def normalize_tags(tags) -> list[str]:
+    """Trim, drop empties and duplicates (first occurrence wins), keep order.
+    Commas are refused because tag lists travel comma-separated through the
+    CLI and query strings."""
+    out: list[str] = []
+    for raw in tags or []:
+        tag = str(raw).strip()
+        if not tag:
+            continue
+        if "," in tag:
+            raise ProjectError(f"Tag {tag!r} may not contain a comma")
+        if len(tag) > _MAX_TAG:
+            raise ProjectError(f"Tag {tag!r} is longer than {_MAX_TAG} characters")
+        if tag.casefold() not in {t.casefold() for t in out}:
+            out.append(tag)
+    if len(out) > _MAX_TAGS:
+        raise ProjectError(f"A run can carry at most {_MAX_TAGS} tags")
+    return out
+
+
+@capability(
+    "experiment.annotate",
+    summary="Set a run's notes, or replace / add / remove its tags",
+    web_route="/api/v1/experiments/runs/<run_id>",
+    web_methods=("PATCH",),
+    cli="tag",
+)
+def update_run_notes(
+    project: Project,
+    run_id: str,
+    *,
+    notes: str | None = None,
+    tags: list[str] | None = None,
+    add_tags: list[str] | None = None,
+    remove_tags: list[str] | None = None,
+) -> RunSummary:
+    """Every argument is optional and independent: `notes` replaces the
+    notes, `tags` replaces the whole tag list, `add_tags` / `remove_tags`
+    edit it in place (matching case-insensitively). Nothing else on the run
+    is touched — the record stays the worker's."""
+    run_dir = _run_dir(project, run_id)
+    extras = read_extras(run_dir)
+    changed = False
+    if notes is not None:
+        text = str(notes).rstrip()
+        if len(text) > _MAX_NOTES:
+            raise ProjectError(f"Notes are limited to {_MAX_NOTES} characters")
+        changed |= text != extras.notes
+        extras.notes = text
+    if tags is not None:
+        new_tags = normalize_tags(tags)
+        changed |= new_tags != extras.tags
+        extras.tags = new_tags
+    if add_tags:
+        merged = normalize_tags([*extras.tags, *add_tags])
+        changed |= merged != extras.tags
+        extras.tags = merged
+    if remove_tags:
+        drop = {t.strip().casefold() for t in remove_tags}
+        kept = [t for t in extras.tags if t.casefold() not in drop]
+        changed |= kept != extras.tags
+        extras.tags = kept
+    if changed:
+        extras.updated_at = _now()
+        write_extras(run_dir, extras)
     return _summarize(run_dir, _reconcile(run_dir, read_record(run_dir)))

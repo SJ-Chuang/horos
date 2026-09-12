@@ -61,6 +61,7 @@ from horos.api.experiment import (
     RunExtras,
     RunSummary,
     get_run_summary,
+    update_run_notes,
 )
 from horos.api.export import (
     ExportArtifact,
@@ -122,6 +123,7 @@ __all__ = [
     "RunExtras",
     "RunSummary",
     "get_run_summary",
+    "update_run_notes",
     "ExportArtifact",
     "ModelCard",
     "TrainingReport",
