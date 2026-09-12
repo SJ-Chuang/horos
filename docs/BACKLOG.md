@@ -3,11 +3,11 @@
 尚未排入 Epic 的待辦項目,以及 CLAUDE.md §6 各 Epic 尚未完成的任務卡。
 開工前依 §7 流程先提設計選項。
 
-最後盤點:2026-09-10。
+最後盤點:2026-09-12。
 
 ## Epic 進度
 
-E1、E2、E3、E4、E5、E6、E9 全部任務卡已完成。其餘尚未完成的任務卡:
+E1、E2、E3、E4、E5、E6、E7、E9 全部任務卡已完成。其餘尚未完成的任務卡:
 
 ### E6 — 評估與測試(P3)
 
@@ -15,17 +15,14 @@ E1、E2、E3、E4、E5、E6、E9 全部任務卡已完成。其餘尚未完成�
 `horos/api/error_analysis.py` 與 `horos/api/visualize.py` 的模組 docstring:
 評估時保存原始偵測、類別無關的貪婪 IoU 配對、錯誤數排序、伺服器端 Pillow 疊圖。
 
-### E7 — 實驗管理(P4,幾乎未做)
+### E7 — 實驗管理(P4)
 
-| 任務 | 狀態 | 備註 |
-|---|---|---|
-| E7-T1 run metadata schema 與儲存 | 部分 | `RunRecord` 已存在(`horos/api/train.py`),缺 `tests/api/test_run_store.py` |
-| E7-T2 資料集指紋 | 部分 | `_dataset_fingerprint` 在 `horos/api/export.py`,只寫進 model card;缺獨立模組與 `tests/api/test_dataset_fingerprint.py` |
-| E7-T3 run 查詢與排序 | 部分 | 有 `list_runs`,沒有依指標排序 |
-| E7-T4 不可比較性警告 | 未做 | 指紋不同時要標示 |
-| E7-T5 備註與標籤 | 未做 | train.html 的 notes 是超參數推導說明,不是使用者備註 |
-| E7-T6 比較 UI | 未做 | |
-| E7-T7 Web API endpoints | 未做 | 缺 `tests/web/test_experiment_routes.py` |
+全部任務卡已完成(2026-09-12 補齊 E7-T1~T7)。設計決定記錄在
+`horos/api/experiment.py` 與 `horos/core/fingerprint.py` 的模組 docstring:
+使用者備註/標籤與快取放在 `<run>/experiment.json` sidecar(避免與 worker 改寫
+`run.json` 競爭)、指紋以資料內容(每 split 的檔名/尺寸/類別名/框/多邊形)雜湊、
+mosaic 合成圖不計入、可比較性以指紋差異判定並指出是哪個 split 變了。
+UI 為獨立的 `/experiments` 頁;匯出流程由該頁深連結到 `/train#<run_id>`。
 
 ### E8 — 匯出與部署(P4,部分完成)
 

@@ -251,7 +251,7 @@ horos install       # rfdetr (--no-deps), training stack, albumentations, transf
 - [x] Training — derived hyperparameters, queue, resume, live monitoring
 - [x] Evaluation — media gallery, COCO metrics, per-class analysis
 - [x] Error analysis — confusion matrix, worst-case mining, colour-coded overlays
-- [ ] Experiment management — run comparison, dataset fingerprints
+- [x] Experiment management — run comparison, dataset fingerprints, notes & tags
 - [ ] Export & deploy — ONNX / TensorRT / TFLite, model cards, parity checks
 
 ## Development
