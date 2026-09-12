@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2">
+<link rel="stylesheet" href="/static/controls.css?v=1">
+<script src="/static/controls.js?v=1" defer></script>
 <title>horos — annotate</title>
 <style>
   :root {
@@ -22,17 +24,6 @@
   .btn:disabled { opacity: .45; cursor: default; }
   .btn.primary { border-color: var(--accent); color: var(--accent); }
   .btn.danger { border-color: var(--err); color: var(--err); }
-  /* one checkbox look on every page: flat box, accent fill, dark check */
-  input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 15px; height: 15px;
-    margin: 0; vertical-align: -2px; border: 1px solid var(--line); border-radius: 4px;
-    background: var(--bg); cursor: pointer; display: inline-block; position: relative;
-    flex: none; }
-  input[type=checkbox]:hover { border-color: var(--accent); }
-  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
-  input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px;
-    width: 4px; height: 8px; border: solid #101418; border-width: 0 2px 2px 0;
-    transform: rotate(45deg); }
-  input[type=checkbox]:focus-visible { outline: 2px solid rgba(77,171,247,.4); outline-offset: 1px; }
   select, input[type=text], input[type=number] { background: var(--panel);
     color: var(--text); border: 1px solid var(--line); border-radius: 6px;
     padding: 5px 8px; font-size: 12px; }
@@ -57,7 +48,8 @@
   .conf-control { display: flex; align-items: center; gap: 10px; flex: 1;
                   min-width: 0; }
   .conf-control input[type=range] { flex: 1; min-width: 0; }
-  .conf-control input[type=number] { width: 60px; padding: 4px 6px; flex: none; }
+  .conf-control .stepper { flex: none; }
+  .conf-control .stepper input[type=number] { width: 60px; padding: 4px 6px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
           padding: 14px; }
   h4 { margin: 0 0 8px; font-size: 11px; color: var(--dim); text-transform: uppercase;
@@ -324,7 +316,9 @@
             <span>Confidence</span>
             <div class="conf-control">
               <input type="range" id="assist-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
-              <input type="number" id="assist-conf" min="0.01" max="1" step="0.01" value="0.10">
+              <span class="stepper narrow"><input type="number" id="assist-conf" min="0.01" max="1" step="0.05" value="0.10">
+                <span class="step-btns"><button type="button" data-step="1" title="+0.05"></button>
+                  <button type="button" data-step="-1" title="−0.05"></button></span></span>
             </div>
           </div>
           <button class="btn primary" id="assist-run" style="width:100%;margin-top:8px">Apply</button>
@@ -416,7 +410,9 @@
         <span>Confidence</span>
         <div class="conf-control">
           <input type="range" id="autolabel-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
-          <input type="number" id="autolabel-conf" min="0.01" max="1" step="0.01" value="0.10">
+          <span class="stepper narrow"><input type="number" id="autolabel-conf" min="0.01" max="1" step="0.05" value="0.10">
+                <span class="step-btns"><button type="button" data-step="1" title="+0.05"></button>
+                  <button type="button" data-step="-1" title="−0.05"></button></span></span>
         </div>
       </div>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--dim);margin-bottom:10px">
@@ -663,10 +659,13 @@ const Page = {
     }
     parts.push(btn("›", cur + 1), btn("»", pages));
     parts.push(`<span class="pager-jump">page
-      <input type="number" id="page-jump" min="1" max="${pages}" value="${cur}"
-             aria-label="Go to page"> of ${pages}
-      · ${this.queue.length} images</span>`);
+      <span class="stepper narrow"><input type="number" id="page-jump" min="1" max="${pages}"
+             value="${cur}" step="1" aria-label="Go to page">
+        <span class="step-btns"><button type="button" data-step="1" title="next page"></button>
+          <button type="button" data-step="-1" title="previous page"></button></span></span>
+      of ${pages} · ${this.queue.length} images</span>`);
     $("pagination").innerHTML = parts.join("");
+    if (window.horosControls) horosControls.wire($("pagination"));
     $("pagination").querySelectorAll("button[data-p]").forEach((el) => {
       el.onclick = () => { this.page = Number(el.dataset.p); this.renderGrid(); };
     });

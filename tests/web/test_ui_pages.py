@@ -82,3 +82,24 @@ def test_class_manager_offers_merge_and_train_setup_folds_advanced_knobs(client)
     for element in ("criterion-select", "hparams-advanced", "seed-input"):
         assert f'id="{element}"' in details, element
     assert 'id="hparams-list"' in train  # the primary knobs stay in view
+
+
+def test_every_page_uses_the_shared_controls(client):
+    """User decision 2026-09-12: one stepper / checkbox / file-button look on
+    every page, served from static/controls.css+js rather than restyled per
+    template."""
+    for path in PAGES:
+        html = client.get(path).get_data(as_text=True)
+        assert '/static/controls.css' in html and '/static/controls.js' in html, path
+        assert "one checkbox look" not in html, f"{path} restyles checkboxes locally"
+    assert client.get("/static/controls.css").status_code == 200
+    assert client.get("/static/controls.js").status_code == 200
+    # every native number box sits inside a stepper (dynamic ones are built
+    # by stepperHTML / horosControls.stepper, which emit the same markup)
+    for path in ("/", "/lab", "/train", "/annotate"):
+        html = client.get(path).get_data(as_text=True)
+        for match in re.finditer(r'<input type="number"[^>]*id="([^"]+)"', html):
+            before = html[max(0, match.start() - 60):match.start()]
+            assert 'class="stepper' in before, f"{path}: #{match.group(1)} is not a stepper"
+    lab = client.get("/lab").get_data(as_text=True)
+    assert 'class="file-btn"' in lab and 'id="serve-file"' in lab

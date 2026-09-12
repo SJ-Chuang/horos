@@ -1,0 +1,47 @@
+/* horos shared form controls — one look on every page.
+   Rule (user decision 2026-09-12): every numeric adjustment is a .stepper
+   (number box + chevron up/down), every checkbox is the flat accent box,
+   every file picker is a .file-btn. Pages must not restyle these locally. */
+
+/* ---------------------------------------------------------------- stepper */
+.stepper { display: inline-flex; align-items: stretch; vertical-align: middle; }
+.stepper input[type=number] { border-radius: 6px 0 0 6px; border-right: none;
+  text-align: center; width: 90px; min-width: 0; appearance: textfield;
+  -moz-appearance: textfield; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); padding: 5px 8px; font: inherit; }
+.stepper input[type=number]::-webkit-inner-spin-button,
+.stepper input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.stepper input[type=number]:focus { outline: none; border-color: var(--accent); }
+.stepper.narrow input[type=number] { width: 64px; }
+.stepper.wide input[type=number] { width: 110px; }
+.step-btns { display: flex; flex-direction: column; border: 1px solid var(--line);
+  border-radius: 0 6px 6px 0; overflow: hidden; }
+.step-btns button { border: none; border-radius: 0; padding: 0 6px; flex: 1; margin: 0;
+  display: flex; align-items: center; color: var(--dim); background: var(--bg);
+  cursor: pointer; font: inherit; }
+.step-btns button + button { border-top: 1px solid var(--line); }
+.step-btns button:hover { color: var(--accent); background: rgba(77, 171, 247, .10); }
+.step-btns svg { width: 10px; height: 10px; }
+.stepper input.overridden { border-color: var(--accent); }
+.stepper input.overridden + .step-btns { border-color: var(--accent); }
+
+/* --------------------------------------------------------------- checkbox */
+input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 15px; height: 15px;
+  margin: 0; vertical-align: -2px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); cursor: pointer; display: inline-block; position: relative;
+  flex: none; }
+input[type=checkbox]:hover { border-color: var(--accent); }
+input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px;
+  width: 4px; height: 8px; border: solid #101418; border-width: 0 2px 2px 0;
+  transform: rotate(45deg); }
+input[type=checkbox]:focus-visible { outline: 2px solid rgba(77, 171, 247, .4);
+  outline-offset: 1px; }
+
+/* ------------------------------------------------------------ file picker */
+.file-btn { display: inline-flex; align-items: center; gap: 6px; background: var(--bg);
+  color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px;
+  cursor: pointer; font: inherit; font-size: 13px; }
+.file-btn:hover { border-color: var(--accent); }
+.file-btn input[type=file] { display: none; }
+.file-btn svg { width: 14px; height: 14px; }
