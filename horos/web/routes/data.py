@@ -174,6 +174,21 @@ def images():
     return jsonify([i.model_dump() for i in api.list_images(_project())])
 
 
+@bp.delete("/dataset")
+def dataset_clear():
+    body = _body()
+    confirm = body.get("confirm")
+    if not isinstance(confirm, str):
+        raise ProjectError("Request body must include 'confirm': the project name")
+    summary = api.clear_dataset(
+        _project(),
+        confirm=confirm,
+        keep_categories=bool(body.get("keep_categories", True)),
+        session_id=body.get("session"),
+    )
+    return jsonify(summary.model_dump())
+
+
 @bp.post("/images/delete")
 def images_delete():
     body = _body()

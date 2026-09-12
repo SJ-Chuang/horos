@@ -221,6 +221,22 @@
     </div>
   </section>
 
+  <section class="panel hidden" id="danger-panel">
+    <h2 style="color:var(--err)">Danger zone</h2>
+    <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
+      Delete every image and annotation of this project to start over. Training runs keep
+      their own dataset snapshots and are not touched. Images another annotator is
+      working on right now are skipped.</p>
+    <div class="row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px;cursor:pointer">
+        <input type="checkbox" id="clear-classes"> also delete the class list</label>
+      <button id="clear-btn" style="background:var(--bg);color:var(--err);
+        border:1px solid var(--err);border-radius:6px;padding:6px 14px;cursor:pointer">
+        Delete all images and annotations…</button>
+      <span id="clear-status" style="color:var(--dim);font-size:13px"></span>
+    </div>
+  </section>
+
   <section class="panel hidden" id="issues-panel">
     <h2>Validation</h2>
     <ul class="issues" id="issues-list"></ul>
@@ -253,16 +269,47 @@ const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
   return data;
 });
 
+let projectName = null;
+
 async function refreshProject() {
   try {
     const p = await api("/project");
+    projectName = p.name;
     $("project-name").textContent = p.name;
     $("project-name").title = p.root;   // full path on hover
+    $("danger-panel").classList.toggle("hidden", !(p.num_images > 0 || (p.categories || []).length > 0));
     if (p.num_images > 0) await refreshStats();
+    else { $("summary-panel").classList.add("hidden"); $("issues-panel").classList.add("hidden"); }
   } catch (e) {
     $("project-name").textContent = "(no project bound)";
   }
 }
+
+// the whole dataset goes only after the user types the project name — the
+// same confirmation the API itself demands (DELETE /dataset {confirm})
+$("clear-btn").addEventListener("click", async () => {
+  if (!projectName) return;
+  const typed = prompt(
+    `Delete EVERY image and annotation of "${projectName}"?\n\n`
+    + `Training runs are kept. Type the project name to confirm:`);
+  if (typed === null) return;
+  const status = $("clear-status");
+  if (typed.trim() !== projectName) { status.textContent = "name did not match — nothing deleted"; return; }
+  status.textContent = "deleting…";
+  $("clear-btn").disabled = true;
+  try {
+    const r = await api("/dataset", {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: typed.trim(), keep_categories: !$("clear-classes").checked }),
+    });
+    status.textContent = `deleted ${r.deleted_images} image(s), ${r.deleted_annotations} annotation(s)`
+      + (r.deleted_categories ? `, ${r.deleted_categories} class(es)` : "")
+      + (r.skipped_claimed.length ? ` — ${r.skipped_claimed.length} image(s) skipped: another annotator holds them` : "");
+    await refreshProject();
+  } catch (e) {
+    status.textContent = "failed: " + e.message;
+  } finally { $("clear-btn").disabled = false; }
+});
 
 async function refreshStats() {
   const s = await api("/dataset/stats");

@@ -111,3 +111,9 @@ def test_annotator_has_the_sam_tool(client):
     for element in ("sam-accept", "sam-clear", "sam-model", "sam-status"):
         assert f'id="{element}"' in html, element
     assert "/segment/prefetch" in html and "/segment`" in html
+
+
+def test_dataset_page_has_the_danger_zone(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'id="danger-panel"' in html and 'id="clear-btn"' in html and 'id="clear-classes"' in html
+    assert '"DELETE"' in html and "confirm" in html  # the name-typed confirmation flow

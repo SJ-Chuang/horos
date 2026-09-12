@@ -660,6 +660,68 @@ def delete_images(
     )
 
 
+class ClearDatasetSummary(BaseModel):
+    deleted_images: int
+    deleted_annotations: int
+    deleted_categories: int
+    #: images left in place because another session is annotating them
+    skipped_claimed: list[int] = Field(default_factory=list)
+
+
+@capability(
+    "dataset.clear",
+    summary="Delete every image and annotation of the project (classes optional)",
+    web_route="/api/v1/dataset",
+    web_methods=("DELETE",),
+    cli="clear",
+)
+def clear_dataset(
+    project: Project,
+    *,
+    confirm: str,
+    keep_categories: bool = True,
+    session_id: str | None = None,
+) -> ClearDatasetSummary:
+    """Empty the dataset: every image (project-owned files deleted, external
+    references dropped) with its annotations, and the class list unless
+    `keep_categories`. Training runs keep their own snapshots and are not
+    touched. `confirm` must equal the project name — the guard every caller
+    (UI, CLI, scripts) has to pass for a call this destructive. Images
+    another session is annotating right now are skipped, like delete_images."""
+    if confirm != project.manifest.name:
+        raise ProjectError(
+            f"Refusing to clear the dataset: confirm must equal the project name "
+            f"({project.manifest.name!r})."
+        )
+    records = project.list_images()
+    annotations = sum(len(project.load_annotations(r.id).annotations) for r in records)
+    summary = delete_images(project, [r.id for r in records], session_id=session_id)
+    deleted_annotations = annotations
+    if summary.skipped_claimed:
+        kept = sum(
+            len(project.load_annotations(i).annotations) for i in summary.skipped_claimed
+        )
+        deleted_annotations -= kept
+    deleted_categories = 0
+    if not keep_categories:
+        if summary.skipped_claimed:
+            logger.info("class list kept: %d image(s) still annotated by others",
+                        len(summary.skipped_claimed))
+        else:
+            deleted_categories = len(project.categories)
+            project.set_categories([])
+    logger.info(
+        "cleared dataset: %d image(s), %d annotation(s), %d class(es)",
+        len(summary.deleted), deleted_annotations, deleted_categories,
+    )
+    return ClearDatasetSummary(
+        deleted_images=len(summary.deleted),
+        deleted_annotations=deleted_annotations,
+        deleted_categories=deleted_categories,
+        skipped_claimed=summary.skipped_claimed,
+    )
+
+
 class FixedBox(BaseModel):
     image_id: int
     annotation_id: int

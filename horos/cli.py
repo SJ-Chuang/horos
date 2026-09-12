@@ -178,6 +178,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project directory (default: the project containing the current directory)",
     )
 
+    p = sub.add_parser(
+        "clear", help="Delete every image and annotation of the project (runs are kept)"
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument("--yes", action="store_true", help="Required: confirm the deletion")
+    p.add_argument(
+        "--drop-classes", action="store_true", help="Also delete the class list"
+    )
     p = sub.add_parser("split", help="Re-split images into train/valid/test")
     p.add_argument(
         "--project",
@@ -625,6 +636,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if report.ok else 1
         elif args.command == "stats":
             _emit(api.dataset_stats(_project_arg(args)).model_dump())
+        elif args.command == "clear":
+            project = _project_arg(args)
+            if not args.yes:
+                raise ProjectError(
+                    f"This deletes every image and annotation of project "
+                    f"{project.manifest.name!r} (training runs are kept). Re-run with --yes."
+                )
+            _emit(api.clear_dataset(
+                project, confirm=project.manifest.name, keep_categories=not args.drop_classes,
+            ).model_dump())
         elif args.command == "split":
             counts = api.resplit(
                 _project_arg(args),

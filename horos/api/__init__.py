@@ -26,9 +26,11 @@ from horos.api.autolabel import (
     start_autolabel,
 )
 from horos.api.dataset import (
+    ClearDatasetSummary,
     DeleteImagesSummary,
     ImportSummary,
     ValidationFixResult,
+    clear_dataset,
     convert_dataset,
     dataset_stats,
     delete_images,
@@ -148,6 +150,8 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "ClearDatasetSummary",
+    "clear_dataset",
     "PrefetchResult",
     "SegmentCandidate",
     "SegmentRequest",

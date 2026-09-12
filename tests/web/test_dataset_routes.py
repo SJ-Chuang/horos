@@ -319,3 +319,18 @@ def test_upload_bad_class_names_is_400(tmp_path, client):
     )
     assert response.status_code == 400
     assert "class_names" in response.get_json()["error"]["message"]
+
+
+def test_clear_dataset_route_requires_the_project_name(client):
+    refused = client.delete("/api/v1/dataset", json={"confirm": "wrong"})
+    assert refused.status_code == 400
+    assert "confirm must equal" in refused.get_json()["error"]["message"]
+    assert client.delete("/api/v1/dataset", json={}).status_code == 400
+    assert client.get("/api/v1/project").get_json()["num_images"] == 3
+
+    name = client.get("/api/v1/project").get_json()["name"]
+    body = client.delete("/api/v1/dataset", json={"confirm": name}).get_json()
+    assert body["deleted_images"] == 3 and body["deleted_annotations"] == 4
+    assert body["deleted_categories"] == 0 and body["skipped_claimed"] == []
+    project = client.get("/api/v1/project").get_json()
+    assert project["num_images"] == 0 and len(project["categories"]) == 2
