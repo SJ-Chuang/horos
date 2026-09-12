@@ -57,6 +57,11 @@ from horos.api.evaluate import (
     infer_image,
     start_evaluation,
 )
+from horos.api.experiment import (
+    RunExtras,
+    RunSummary,
+    get_run_summary,
+)
 from horos.api.export import (
     ExportArtifact,
     ModelCard,
@@ -114,6 +119,9 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "RunExtras",
+    "RunSummary",
+    "get_run_summary",
     "ExportArtifact",
     "ModelCard",
     "TrainingReport",
