@@ -298,6 +298,32 @@
             title="Polygon — click to add each vertex; double-click or click the first point to finish. (shortcut 3)">⬠</button>
           <button class="tool-btn ai" data-tool="ai-text"
             title="AI text prompt — type object names (e.g. helmet, vest), then Apply. OWLv2 pre-labels them on this image. (shortcut 4)">T</button>
+          <button class="tool-btn ai" data-tool="sam"
+            title="SAM — click an object (Shift+click marks what is NOT it) or drag a rough box; a mask preview appears, Enter accepts it. (shortcut 5)">✦</button>
+        </div>
+        <div id="sam-panel" style="display:none;margin-top:10px">
+          <div style="font-size:11px;color:var(--dim);line-height:1.5">
+            Click the object — <b>Shift+click</b> marks what is <i>not</i> it — or drag a
+            rough box. The preview updates after every click. <b>Enter</b> accepts it as
+            <span id="sam-class-echo" style="color:var(--text)">object</span>,
+            <b>Backspace</b> removes the last point, <b>Esc</b> clears.</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
+            <span>Output</span>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+              <input type="radio" name="sam-output" value="polygon" checked> Polygon
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"
+                   title="The mask's bounding box, for detection-only projects">
+              <input type="radio" name="sam-output" value="bbox"> Box
+            </label>
+            <select id="sam-model" style="margin-left:auto;font-size:11px;min-width:0;max-width:150px"
+                    title="Which segmenter runs (all Apache 2.0)"></select>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn primary" id="sam-accept" style="flex:1" disabled>Accept (Enter)</button>
+            <button class="btn" id="sam-clear" disabled>Clear (Esc)</button>
+          </div>
+          <div id="sam-status" style="font-size:11px;color:var(--dim);margin-top:4px;min-height:14px"></div>
         </div>
         <div id="assist-panel" style="display:none;margin-top:10px">
           <input type="text" id="assist-input" placeholder="e.g. helmet, vest, person"
@@ -552,6 +578,18 @@ const Page = {
     $("autolabel-start").onclick = () => this.startAutolabel();
     $("autolabel-cancel").onclick = () => this.cancelAutolabel();
     $("assist-run").onclick = () => this.runAssist();
+    $("sam-accept").onclick = () => this._samAccept();
+    $("sam-clear").onclick = () => this._samReset(true);
+    document.querySelectorAll('input[name="sam-output"]').forEach((r) => {
+      r.onchange = () => { if (this.sam.points.length || this.sam.box) this._samQuery(); };
+    });
+    $("sam-model").onchange = () => {
+      try { localStorage.setItem("horos_sam_model", $("sam-model").value); } catch (e) {}
+      this._samReset(true);
+      if (this.activeTool === "sam") this._samPrefetch();
+    };
+    $("class-input").addEventListener("input", () => this._samSyncButtons());
+    this._samLoadModels();
     $("assist-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); this.runAssist(); }
     });
@@ -1006,11 +1044,18 @@ const Page = {
           e.preventDefault();  // focus moves into the prompt — don't type the "4"
           this.setTool("ai-text", true);
           break;
+        case "Digit5": case "Numpad5": this.setTool("sam"); break;
+        case "Enter": case "NumpadEnter": case "Space":
+          if (this.activeTool === "sam" && this.sam.candidate) { e.preventDefault(); this._samAccept(); }
+          break;
         case "Delete": case "Backspace":
-          if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
+          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box)) {
+            e.preventDefault(); this._samUndoPoint();
+          } else if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
           break;
         case "Escape":
-          if (this.isDrawing) { this.isDrawing = false; this.currentPoints = []; }
+          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box)) this._samReset(true);
+          else if (this.isDrawing) { this.isDrawing = false; this.currentPoints = []; }
           else this.selectShape(-1);
           this._drawCanvas();
           break;
@@ -1024,12 +1069,15 @@ const Page = {
     document.querySelectorAll(".tool-btn").forEach((b) =>
       b.classList.toggle("active", b.dataset.tool === tool));
     $("assist-panel").style.display = tool === "ai-text" ? "block" : "none";
+    $("sam-panel").style.display = tool === "sam" ? "block" : "none";
     // focus only on an explicit tool pick — openEditor re-applies the tool on
     // every image switch, and focusing there makes the browser type the A/D
     // navigation keystroke into the prompt input
     if (tool === "ai-text" && focusAssist) $("assist-input").focus();
     this.isDrawing = false;
     this.currentPoints = [];
+    this._samReset(false);
+    if (tool === "sam") this._samPrefetch();
     if (tool !== "select") this.selectedShapeIdx = -1;
     this._updateCursor();
     this._drawCanvas();
@@ -1283,6 +1331,8 @@ const Page = {
           this.hoverVertexShapeIdx === i && this.hoverVertexIdx === j, faint));
     });
 
+    if (this.activeTool === "sam") this._samDraw(ctx, inv);
+
     if (this.isDrawing && this.currentPoints.length) {
       const cls = $("class-input").value.trim() || "object";
       ctx.strokeStyle = this._getColor(cls);
@@ -1396,6 +1446,10 @@ const Page = {
         this.isDrawing = true;
         const p = this._clampPoint([x, y]);
         this.currentPoints = [p, p];
+      } else if (this.activeTool === "sam") {
+        this.sam.down = this._clampPoint([x, y]);
+        this.sam.dragBox = null;
+        this._samShift = e.shiftKey;
       } else if (this.activeTool === "poly") {
         if (!this.isDrawing) {
           this.isDrawing = true;
@@ -1455,6 +1509,14 @@ const Page = {
         this._drawCanvas();
       } else if (this.activeTool === "poly" && this.isDrawing) {
         this._drawCanvas();
+      } else if (this.activeTool === "sam" && this.sam.down) {
+        const [dx, dy] = this.sam.down;
+        const cur = this._clampPoint([x, y]);
+        // a real drag (not a wobbly click) previews a box prompt
+        if (this.sam.dragBox || Math.hypot(cur[0] - dx, cur[1] - dy) > 6 / (this.baseScale * this.zoom)) {
+          this.sam.dragBox = [this.sam.down, cur];
+          this._drawCanvas();
+        }
       }
     };
 
@@ -1470,6 +1532,20 @@ const Page = {
           this._triggerChange();
         }
         this.dragMode = null; this.dragStart = null;
+      } else if (this.activeTool === "sam" && this.sam.down) {
+        const down = this.sam.down;
+        this.sam.down = null;
+        if (this.sam.dragBox) {
+          const [[x1, y1], [x2, y2]] = this.sam.dragBox;
+          this.sam.dragBox = null;
+          const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
+          if (w > 2 && h > 2) this.sam.box = [Math.min(x1, x2), Math.min(y1, y2), w, h];
+        } else {
+          this.sam.points.push(down);
+          this.sam.labels.push(this._samShift ? 0 : 1);
+        }
+        this._samQuery();
+        this._drawCanvas();
       } else if (this.activeTool === "rect" && this.isDrawing) {
         this.isDrawing = false;
         const cls = $("class-input").value.trim() || "object";
@@ -1508,6 +1584,140 @@ const Page = {
         this._finishPolygon();
       }
     };
+  },
+
+  // ------------------------------------------------------------- SAM tool
+  // Prompt state lives here; the server answers with a CANDIDATE shape that
+  // is only written when the user accepts it (through the ordinary save).
+  sam: { points: [], labels: [], box: null, candidate: null, down: null, dragBox: null, seq: 0 },
+
+  _samModel() { return $("sam-model").value || "sam2.1-tiny"; },
+  _samOutput() {
+    const picked = document.querySelector('input[name="sam-output"]:checked');
+    return picked ? picked.value : "polygon";
+  },
+  _samSetStatus(text, warn = false) {
+    $("sam-status").textContent = text;
+    $("sam-status").style.color = warn ? "var(--warn)" : "var(--dim)";
+  },
+  _samSyncButtons() {
+    const has = this.sam.points.length || this.sam.box;
+    $("sam-accept").disabled = !(this.sam.candidate && this.sam.candidate.points.length);
+    $("sam-clear").disabled = !has;
+    $("sam-class-echo").textContent = $("class-input").value.trim() || "object";
+  },
+  _samReset(redraw) {
+    this.sam.points = []; this.sam.labels = []; this.sam.box = null;
+    this.sam.candidate = null; this.sam.down = null; this.sam.dragBox = null;
+    this.sam.seq++;
+    if ($("sam-panel")) { this._samSyncButtons(); if (this.activeTool !== "sam") this._samSetStatus(""); }
+    if (redraw) this._drawCanvas();
+  },
+  async _samPrefetch() {
+    if (this.currentIdx < 0 || !this.queue[this.currentIdx]) return;
+    const image = this.queue[this.currentIdx].image;
+    this._samSetStatus("preparing the image (encoder runs once; first use downloads the model)…");
+    try {
+      const r = await api(`/images/${image.id}/segment/prefetch`, json("POST", { model: this._samModel() }));
+      if (this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === image.id) {
+        this._samSetStatus(r.embedding_cached ? "ready" : `ready (${Math.round(r.elapsed_ms)} ms)`);
+      }
+    } catch (e) { this._samSetStatus(e.message, true); }
+  },
+  async _samQuery() {
+    const image = this.queue[this.currentIdx].image;
+    const seq = ++this.sam.seq;
+    if (!this.sam.points.length && !this.sam.box) { this.sam.candidate = null; this._samSyncButtons(); return; }
+    this._samSetStatus("segmenting…");
+    try {
+      const cand = await api(`/images/${image.id}/segment`, json("POST", {
+        points: this.sam.points, labels: this.sam.labels, box: this.sam.box,
+        output: this._samOutput(), model: this._samModel(),
+      }));
+      if (seq !== this.sam.seq) return;  // the user clicked again meanwhile
+      this.sam.candidate = cand.points.length ? cand : null;
+      this._samSetStatus(cand.points.length
+        ? `mask ${Math.round(cand.area)} px² · confidence ${cand.score.toFixed(2)} · ${Math.round(cand.elapsed_ms)} ms${cand.embedding_cached ? "" : " (encoder)"}`
+        : "no mask for this prompt — add a point inside the object", !cand.points.length);
+    } catch (e) {
+      if (seq !== this.sam.seq) return;
+      this.sam.candidate = null;
+      this._samSetStatus(e.message, true);
+    }
+    this._samSyncButtons();
+    this._drawCanvas();
+  },
+  _samUndoPoint() {
+    if (this.sam.points.length) { this.sam.points.pop(); this.sam.labels.pop(); }
+    else this.sam.box = null;
+    this._samQuery();
+    this._drawCanvas();
+  },
+  _samAccept() {
+    const cand = this.sam.candidate;
+    if (!cand || !cand.points.length) return;
+    const cls = $("class-input").value.trim() || "object";
+    this._pushHistory();
+    const shape = { label: cls, shape_type: cand.shape_type,
+                    points: cand.points.map((p) => this._clampPoint([p[0], p[1]])) };
+    this._clampShapePoints(shape);
+    this.editorShapes.push(shape);
+    this._triggerChange();
+    this.sessionNames.add(cls);
+    this.renderChips();
+    toast(`Added ${cls} (${cand.shape_type})`, "ok", 900);
+    this._samReset(true);  // stay in the tool: the next object is one click away
+  },
+  _samDraw(ctx, inv) {
+    const cls = $("class-input").value.trim() || "object";
+    const color = this._getColor(cls);
+    const cand = this.sam.candidate;
+    if (cand && cand.points.length) {
+      ctx.beginPath();
+      if (cand.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = cand.points;
+        ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      } else {
+        cand.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+      }
+      ctx.fillStyle = color; ctx.globalAlpha = 0.32; ctx.fill();
+      ctx.globalAlpha = 1; ctx.lineWidth = 2.5 * inv; ctx.strokeStyle = "#ffffff";
+      ctx.setLineDash([6 * inv, 4 * inv]); ctx.stroke(); ctx.setLineDash([]);
+    }
+    const box = this.sam.dragBox
+      ? [Math.min(this.sam.dragBox[0][0], this.sam.dragBox[1][0]),
+         Math.min(this.sam.dragBox[0][1], this.sam.dragBox[1][1]),
+         Math.abs(this.sam.dragBox[1][0] - this.sam.dragBox[0][0]),
+         Math.abs(this.sam.dragBox[1][1] - this.sam.dragBox[0][1])]
+      : this.sam.box;
+    if (box) {
+      ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#4dabf7";
+      ctx.setLineDash([4 * inv, 4 * inv]); ctx.strokeRect(box[0], box[1], box[2], box[3]);
+      ctx.setLineDash([]);
+    }
+    this.sam.points.forEach(([x, y], i) => {
+      const positive = this.sam.labels[i] === 1;
+      ctx.beginPath(); ctx.arc(x, y, 6 * inv, 0, Math.PI * 2);
+      ctx.fillStyle = positive ? "#51cf66" : "#ff6b6b"; ctx.fill();
+      ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#101418"; ctx.stroke();
+      ctx.fillStyle = "#101418"; ctx.font = `700 ${9 * inv}px system-ui, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(positive ? "+" : "−", x, y + 0.5 * inv);
+      ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+    });
+  },
+  async _samLoadModels() {
+    try {
+      const models = (await api("/models")).filter((m) => m.task === "instance_segmentation");
+      let saved = null;
+      try { saved = localStorage.getItem("horos_sam_model"); } catch (e) {}
+      $("sam-model").innerHTML = models.map((m) =>
+        `<option value="${m.key}" title="${m.latency_hint} · ${m.license}">${m.display_name.replace(/ \(.*\)$/, "")}</option>`).join("");
+      const wanted = saved && models.some((m) => m.key === saved) ? saved
+        : models.some((m) => m.key === "sam2.1-tiny") ? "sam2.1-tiny" : (models[0] || {}).key;
+      if (wanted) $("sam-model").value = wanted;
+    } catch (e) { /* the default key still works server-side */ }
   },
 
   _finishPolygon() {

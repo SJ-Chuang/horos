@@ -39,7 +39,7 @@ E8-T3 完成(2026-09-12):ONNX → onnx2tf → TFLite(float32 + float16,輸入維
 
 ## 點/框 prompt 的互動式標註輔助(SAM 2.1)
 
-**進行中(2026-09-12,設計選項已確認「照建議」)。任務卡:**
+**完成(2026-09-12)。設計決定見 `horos/api/segment.py` 與 `horos/backends/sam2/__init__.py` 的模組 docstring。任務卡:**
 
 | 卡 | 內容 | 完成定義 |
 |---|---|---|

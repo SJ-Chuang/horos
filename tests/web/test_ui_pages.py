@@ -103,3 +103,11 @@ def test_every_page_uses_the_shared_controls(client):
             assert 'class="stepper' in before, f"{path}: #{match.group(1)} is not a stepper"
     lab = client.get("/lab").get_data(as_text=True)
     assert 'class="file-btn"' in lab and 'id="serve-file"' in lab
+
+
+def test_annotator_has_the_sam_tool(client):
+    html = client.get("/annotate").get_data(as_text=True)
+    assert 'data-tool="sam"' in html and 'id="sam-panel"' in html
+    for element in ("sam-accept", "sam-clear", "sam-model", "sam-status"):
+        assert f'id="{element}"' in html, element
+    assert "/segment/prefetch" in html and "/segment`" in html
