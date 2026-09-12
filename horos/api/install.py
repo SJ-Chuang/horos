@@ -74,6 +74,15 @@ REPORT_SPECS = ["matplotlib>=3.7", "openpyxl>=3.1"]
 #: NVIDIA TensorRT license, so horos never adds them silently. The CUDA major
 #: comes from the driver; the range tracks the polygraphy release rfdetr pins.
 TENSORRT_SPEC_TEMPLATE = "tensorrt-cu{major}>=10.13,<11"
+#: TFLite is opt-in (`horos install --tflite`): onnx2tf (MIT) converts the
+#: ONNX export and needs tensorflow (Apache 2.0, ~600 MB); ai-edge-litert
+#: (Apache 2.0) is the lightweight interpreter used for the parity check.
+#: All Apache 2.0 / MIT — verified in wheel metadata 2026-09 (§9).
+TFLITE_SPECS = ["onnx2tf", "tensorflow>=2.16,<3", "tf-keras", "ai-edge-litert"]
+TFLITE_NOTE = (
+    "TFLite toolchain planned: onnx2tf + tensorflow (~600 MB download) + "
+    "ai-edge-litert — Apache 2.0 / MIT throughout."
+)
 TENSORRT_LICENSE_NOTE = (
     "TensorRT wheels are distributed under the NVIDIA TensorRT license (not "
     "Apache 2.0); installing them is your choice — horos only uses them locally "
@@ -371,6 +380,8 @@ def plan_install(
     torch_cpu_build: bool | None | Literal["auto"] = "auto",
     tensorrt: bool = False,
     tensorrt_installed: bool | Literal["auto"] = "auto",
+    tflite: bool = False,
+    tflite_installed: bool | Literal["auto"] = "auto",
     amd_gpu: str | None | Literal["auto"] = "auto",
     rocm_arch: str | None | Literal["auto"] = "auto",
 ) -> InstallPlan:
@@ -380,6 +391,8 @@ def plan_install(
     doctor, which has already probed) inject explicit values instead.
     `tensorrt=True` additionally plans NVIDIA's TensorRT wheels for the
     driver's CUDA major (E8-T2) — opt-in because of their license.
+    `tflite=True` plans the onnx2tf + tensorflow toolchain (E8-T3) — opt-in
+    because of its size.
 
     An AMD GPU needs no flag, exactly like an NVIDIA one: it is detected,
     its gfx architecture is detected, and torch is planned from AMD's ROCm
@@ -509,6 +522,22 @@ def plan_install(
         else:
             commands.append([TENSORRT_SPEC_TEMPLATE.format(major=cuda_version[0])])
             notes.append(TENSORRT_LICENSE_NOTE)
+    if tflite:
+        if tflite_installed == "auto":
+            tflite_installed = _find_spec("onnx2tf") and _find_spec("tensorflow")
+        if tflite_installed:
+            notes.append(
+                "onnx2tf and tensorflow are already installed — nothing to add for TFLite."
+            )
+        else:
+            commands.append(list(TFLITE_SPECS))
+            notes.append(TFLITE_NOTE)
+            if plat.is_jetson:
+                notes.append(
+                    "On Jetson, tensorflow's PyPI aarch64 wheel is CPU-only; the conversion "
+                    "runs on CPU regardless, so that is fine for export. Do not let it "
+                    "replace JetPack's torch: the command above installs no torch."
+                )
     if "albumentations" in missing:
         # safe with deps on every platform, Jetson included: albumentations
         # depends on numpy/scipy/opencv-python-headless/albucore, never torch

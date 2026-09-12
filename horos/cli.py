@@ -274,7 +274,9 @@ def build_parser() -> argparse.ArgumentParser:
         dest="run_id",
         help="Training run id (default: the newest completed run of this project)",
     )
-    p.add_argument("--format", choices=["pytorch", "onnx", "tensorrt"], default="onnx")
+    p.add_argument(
+        "--format", choices=["pytorch", "onnx", "tensorrt", "tflite"], default="onnx"
+    )
     p.add_argument("--dynamic-batch", action="store_true", help="ONNX: dynamic batch axis")
     p.add_argument("--opset", type=int, default=17, help="ONNX opset version")
 
@@ -446,6 +448,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Show the planned pip commands without running them",
+    )
+    p.add_argument(
+        "--tflite",
+        action="store_true",
+        help="Also install the TFLite conversion toolchain (onnx2tf + tensorflow, ~600 MB, "
+        "Apache 2.0 / MIT; needed for TFLite export)",
     )
     p.add_argument(
         "--tensorrt",
@@ -911,7 +919,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             from horos.api.install import plan_install
 
-            plan = plan_install(cpu=args.cpu, tensorrt=args.tensorrt)
+            plan = plan_install(cpu=args.cpu, tensorrt=args.tensorrt, tflite=args.tflite)
             plat = plan.platform
             print(f"platform : {plat.os_family}/{plat.arch}"  # noqa: T201
                   f"{' (Jetson)' if plat.is_jetson else ''}  python {plat.python_version}")

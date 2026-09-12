@@ -359,3 +359,20 @@ def test_the_architecture_is_probed_only_when_an_amd_gpu_is_present(monkeypatch)
     assert calls == []
     _plan(_plat(os_family="windows"), amd="AMD Radeon RX 9070 XT", rocm_arch="auto")
     assert calls == [1]
+
+
+# --------------------------------------------------------------- TFLite (E8-T3)
+
+
+def test_tflite_toolchain_is_opt_in():
+    assert not any("onnx2tf" in arg for c in _plan(missing=[]).pip_commands for arg in c)
+    plan = plan_install(_plat("linux"), missing=[], tflite=True, tflite_installed=False)
+    assert ["onnx2tf", "tensorflow>=2.16,<3", "tf-keras", "ai-edge-litert"] in plan.pip_commands
+    assert any("Apache 2.0 / MIT" in n for n in plan.notes)
+    already = plan_install(_plat("linux"), missing=[], tflite=True, tflite_installed=True)
+    assert not any("onnx2tf" in arg for c in already.pip_commands for arg in c)
+    assert any("already installed" in n for n in already.notes)
+    jetson = plan_install(
+        _plat(arch="aarch64", is_jetson=True), missing=[], tflite=True, tflite_installed=False
+    )
+    assert any("installs no torch" in n for n in jetson.notes)

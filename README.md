@@ -142,7 +142,8 @@ RF-DETR XL/2XL are deliberately unregistered: their weights are not Apache-2.0
 | Auto-labeling (OWLv2) | ✅ | ✅ | ✅ (MPS/CPU, slower) | ✅ |
 | Training | ✅ | ✅ | small-dataset validation only | discouraged, not blocked |
 | Inference & evaluation | ✅ | ✅ | ✅ | ✅ |
-| TensorRT export *(planned)* | ✅ | ✅ | ❌ refused explicitly | ✅ |
+| TensorRT export | ✅ | ✅ | ❌ refused explicitly | ✅ |
+| TFLite export (`horos install --tflite`) | ✅ | ✅ | ✅ | ✅ (CPU conversion) |
 
 Unsupported combinations raise a clear error at the API layer and show up as
 disabled buttons with an explanation in the UI — never a silent CPU fallback.
@@ -252,7 +253,7 @@ horos install       # rfdetr (--no-deps), training stack, albumentations, transf
 - [x] Evaluation — media gallery, COCO metrics, per-class analysis
 - [x] Error analysis — confusion matrix, worst-case mining, colour-coded overlays
 - [x] Experiment management — run comparison, dataset fingerprints, notes & tags
-- [ ] Export & deploy — ONNX / TensorRT / TFLite, model cards, parity checks
+- [x] Export & deploy — ONNX / TensorRT / TFLite, model cards, parity checks, `horos serve`
 
 ## Development
 

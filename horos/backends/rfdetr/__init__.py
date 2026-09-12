@@ -544,7 +544,8 @@ class RFDETRBackend(ModelBackend):
     def export(self, checkpoint: Path, spec: ExportSpec) -> Iterator[Event]:
         """pytorch → weights.pt + class_names.txt (rfdetr's own loadable bundle);
         onnx / tensorrt → rfdetr's exporter (the [onnx] extra, and NVIDIA's
-        tensorrt package for engines). tflite is not offered (§ E8 decision)."""
+        tensorrt package for engines); tflite → the ONNX graph converted with
+        onnx2tf (horos/backends/convert/tflite.py, opt-in toolchain, E8-T3)."""
         try:
             yield RunStarted(config={"format": spec.format, "model": self.info.key,
                                      "checkpoint": str(checkpoint)})
@@ -558,7 +559,7 @@ class RFDETRBackend(ModelBackend):
                     yield ProgressUpdated(current=0, total=None, phase="writing weights bundle")
                     model.export_for_roboflow(str(out))
                     artifact = out / "weights.pt"
-                elif spec.format in ("onnx", "tensorrt"):
+                elif spec.format in ("onnx", "tensorrt", "tflite"):
                     import importlib.util
 
                     if importlib.util.find_spec("onnx") is None:
@@ -573,13 +574,22 @@ class RFDETRBackend(ModelBackend):
                             "this machine; horos does not install it.",
                             backend=self.family,
                         )
+                    if spec.format == "tflite":
+                        from horos.backends.convert.tflite import (
+                            INSTALL_HINT,
+                            toolchain_available,
+                        )
+
+                        if not toolchain_available():
+                            raise BackendError(INSTALL_HINT, backend=self.family)
+                    graph_format = "onnx" if spec.format == "tflite" else spec.format
                     yield ProgressUpdated(
                         current=0, total=None,
-                        phase=f"tracing and exporting {spec.format} (this takes a while)",
+                        phase=f"tracing and exporting {graph_format} (this takes a while)",
                     )
                     path = model.export(
                         output_dir=str(out),
-                        format=spec.format,
+                        format=graph_format,
                         opset_version=int(spec.options.get("opset", 17)),
                         batch_size=int(spec.options.get("batch_size", 1)),
                         dynamic_batch=bool(spec.options.get("dynamic_batch", False)),
@@ -587,6 +597,18 @@ class RFDETRBackend(ModelBackend):
                         verbose=False,
                     )
                     artifact = Path(path)
+                    if spec.format == "tflite":
+                        from horos.backends.convert.tflite import convert_onnx_to_tflite
+
+                        yield ProgressUpdated(
+                            current=0, total=None,
+                            phase="converting ONNX to TFLite with onnx2tf (this takes a while)",
+                        )
+                        produced = convert_onnx_to_tflite(
+                            artifact, out, input_names=["input"], stem=self.info.key
+                        )
+                        artifact.unlink()  # the bundle ships TFLite only
+                        artifact = produced["float32"]
                     if spec.format == "tensorrt":
                         # rfdetr builds the engine from an intermediate ONNX graph;
                         # the bundle ships the engine only (export onnx separately)
@@ -632,7 +654,7 @@ class RFDETRBackend(ModelBackend):
         sees: every detection scoring >= 0.25 on one side must have a same-class
         partner on the other side with IoU >= 0.9 and a score within
         `tolerance`. The raw max abs diff is still recorded for the record."""
-        if spec.format != "onnx":
+        if spec.format not in ("onnx", "tflite"):
             return None
         if not images:
             return {"status": "skipped", "message": "no images in the run's snapshot",
@@ -641,7 +663,6 @@ class RFDETRBackend(ModelBackend):
             from copy import deepcopy
 
             import numpy as np
-            import onnxruntime as ort
             import torch
             from PIL import Image
 
@@ -651,8 +672,24 @@ class RFDETRBackend(ModelBackend):
             stds = np.asarray(model.stds, dtype=np.float32)
             reference = deepcopy(model.model.model).to("cpu").eval()
             reference.export()  # the same graph rfdetr traced for ONNX
-            session = ort.InferenceSession(str(artifact), providers=["CPUExecutionProvider"])
-            input_name = session.get_inputs()[0].name
+            if spec.format == "onnx":
+                import onnxruntime as ort
+
+                session = ort.InferenceSession(
+                    str(artifact), providers=["CPUExecutionProvider"]
+                )
+                input_name = session.get_inputs()[0].name
+
+                def run_artifact(array):
+                    return session.run(None, {input_name: array})
+
+                side = "onnxruntime (CPU)"
+            else:
+                from horos.backends.convert.tflite import TFLiteRunner
+
+                runner = TFLiteRunner(artifact)
+                run_artifact = runner.run
+                side = "TFLite interpreter (CPU)"
 
             score_threshold, iou_min = 0.25, 0.9
             raw_max_diff = 0.0
@@ -673,8 +710,7 @@ class RFDETRBackend(ModelBackend):
                 if not isinstance(outs, tuple | list):
                     outs = [outs]
                 torch_outs = [o.detach().cpu().numpy().astype(np.float32) for o in outs]
-                ort_outs = [np.asarray(o, dtype=np.float32) for o in
-                            session.run(None, {input_name: tensor.numpy()})]
+                ort_outs = [np.asarray(o, dtype=np.float32) for o in run_artifact(tensor.numpy())]
                 for a, b in zip(torch_outs, ort_outs, strict=False):
                     if a.shape != b.shape:
                         return {"status": "failed", "passed": False, "images": len(images),
@@ -713,7 +749,7 @@ class RFDETRBackend(ModelBackend):
                 "tolerance": tolerance,
                 "raw_max_abs_diff": raw_max_diff,
                 "passed": passed,
-                "method": "detections >= 0.25 from the original weights (export-mode forward, "
-                          "CPU) vs onnxruntime (CPU) on identical inputs: same class, IoU >= 0.9, "
-                          "score within tolerance; raw tensor diff recorded for reference",
+                "method": f"detections >= 0.25 from the original weights (export-mode forward, "
+                          f"CPU) vs {side} on identical inputs: same class, IoU >= 0.9, "
+                          f"score within tolerance; raw tensor diff recorded for reference",
             }

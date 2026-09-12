@@ -351,6 +351,7 @@
           <option value="pytorch">PyTorch weights (weights.pt + class_names.txt)</option>
           <option value="onnx">ONNX (opset 17, batch 1)</option>
           <option value="tensorrt">TensorRT engine (this GPU only)</option>
+          <option value="tflite">TFLite (float32 + float16, via ONNX)</option>
         </select>
         <button id="model-export-btn">Export model</button>
         <span class="note" id="model-status"></span>
@@ -901,6 +902,10 @@ const MODEL_FORMAT_NOTES = {
   tensorrt: "A TensorRT engine is compiled for THIS machine's GPU architecture and "
     + "TensorRT version — it will not load elsewhere. Export again on each "
     + "deployment device. Needs NVIDIA's tensorrt package: horos install --tensorrt.",
+  tflite: "Portable .tflite models (float32 and float16) converted from the ONNX graph "
+    + "with onnx2tf; the input stays NCHW so the model card's I/O contract is unchanged. "
+    + "horos re-runs sample images through the original weights and the TFLite "
+    + "interpreter and records the difference. Needs the toolchain: horos install --tflite.",
 };
 
 function fmtBytes(n) {

@@ -7,7 +7,7 @@
 
 ## Epic 進度
 
-E1、E2、E3、E4、E5、E6、E7、E9 全部任務卡已完成。其餘尚未完成的任務卡:
+E1–E9 全部任務卡已完成(2026-09-12)。以下為各 Epic 收尾紀錄與尚未排入 Epic 的項目:
 
 ### E6 — 評估與測試(P3)
 
@@ -24,18 +24,18 @@ E1、E2、E3、E4、E5、E6、E7、E9 全部任務卡已完成。其餘尚未完
 mosaic 合成圖不計入、可比較性以指紋差異判定並指出是哪個 split 變了。
 UI 為獨立的 `/experiments` 頁;匯出流程由該頁深連結到 `/train#<run_id>`。
 
-### E8 — 匯出與部署(P4,部分完成)
+### E8 — 匯出與部署(P4)
 
-| 任務 | 狀態 | 備註 |
-|---|---|---|
-| E8-T3 TFLite 匯出 | 未做 | `MODEL_FORMATS` 目前只有 pytorch / onnx / tensorrt |
+全部任務卡已完成(2026-09-12 補齊 E8-T7、E8-T3)。
 
 已完成:E8-T1、T2、T4、T5、T6、T8(測試集中在 `tests/api/test_export_model.py`
 與 `tests/api/test_export_e2e.py`,未依 CLAUDE.md 逐卡命名)。
 
 E8-T7 完成(2026-09-12):`horos serve` 獨立服務、`horos/backends/runtime/` 免框架 ONNX
 執行器、Lab 頁 Serve 區塊;設計決定見 `horos/api/serve.py` 模組 docstring。
-TensorRT engine / TFLite 的執行明確拒絕,待 E8-T3 與後續。
+E8-T3 完成(2026-09-12):ONNX → onnx2tf → TFLite(float32 + float16,輸入維持 NCHW),
+工具鏈為 `horos install --tflite` 選配,parity 以 ai-edge-litert 比對;見 `horos/backends/convert/tflite.py`。
+`horos serve` 目前仍不執行 TensorRT engine 與 TFLite(明確拒絕),可作後續項目。
 
 ## 點/框 prompt 的互動式標註輔助(SAM 2.1)
 

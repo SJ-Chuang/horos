@@ -50,8 +50,8 @@ __all__ = [
     "export_file_path",
 ]
 
-ModelFormat = Literal["pytorch", "onnx", "tensorrt"]
-MODEL_FORMATS: tuple[str, ...] = ("pytorch", "onnx", "tensorrt")
+ModelFormat = Literal["pytorch", "onnx", "tensorrt", "tflite"]
+MODEL_FORMATS: tuple[str, ...] = ("pytorch", "onnx", "tensorrt", "tflite")
 EXPORTS_DIR = "exports"
 MODEL_CARD_NAME = "model_card.json"
 JOB_KIND = "export"
@@ -168,6 +168,12 @@ def _tensorrt_available() -> bool:
         return False
 
 
+def _tflite_available() -> bool:
+    from horos.backends.convert.tflite import toolchain_available
+
+    return toolchain_available()
+
+
 def _check_format(format: str) -> None:
     if format not in MODEL_FORMATS:
         raise ProjectError(
@@ -184,6 +190,16 @@ def _check_format(format: str) -> None:
                 "this GPU's CUDA version (NVIDIA TensorRT license — installed only on "
                 "your request); on Jetson use JetPack's tensorrt via a "
                 "--system-site-packages venv. Then retry."
+            )
+    if format == "tflite":
+        from horos.api.system import ensure_supported
+
+        ensure_supported("export_tflite")
+        if not _tflite_available():
+            raise ProjectError(
+                "TFLite export needs the conversion toolchain (onnx2tf + tensorflow, "
+                "~600 MB, Apache 2.0 / MIT). Run 'horos install --tflite' to add it, "
+                "then retry."
             )
 
 

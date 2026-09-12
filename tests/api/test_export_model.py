@@ -95,7 +95,27 @@ def test_dataset_fingerprint_is_stable_and_content_bound(run, tmp_path):
 def test_unknown_format_is_refused_synchronously(run):
     project, record = run
     with pytest.raises(ProjectError, match="Unsupported model format"):
+        start_model_export(project, record.run_id, format="coreml")
+
+
+def test_tflite_is_refused_without_the_toolchain_and_exports_with_it(run, monkeypatch):
+    project, record = run
+    monkeypatch.setattr(export_mod, "_tflite_available", lambda: False)
+    with pytest.raises(ProjectError, match="horos install --tflite"):
         start_model_export(project, record.run_id, format="tflite")
+
+    # with the toolchain present the pipeline runs end to end (fake backend
+    # here; the real conversion is tests/api/test_export_tflite.py)
+    monkeypatch.setattr(export_mod, "_tflite_available", lambda: True)
+    status = _wait(project, start_model_export(project, record.run_id, format="tflite"))
+    assert status.state == "completed", status.events[-1]
+    card = json.loads(
+        (project.root / "runs" / record.run_id / "exports" / "tflite" / "model_card.json")
+        .read_text("utf-8")
+    )
+    assert card["format"] == "tflite" and card["artifact"] == "model.tflite"
+    assert card["weights_license"] == "Apache-2.0"  # R3 on every format
+    assert "Portable" in card["portability"]
 
 
 def test_tensorrt_is_refused_on_macos_and_without_the_package(run, monkeypatch):
