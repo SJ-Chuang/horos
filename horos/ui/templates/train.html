@@ -71,7 +71,15 @@
   #advanced-details summary::before { content: "▸"; font-size: 12px; transition: transform .12s; }
   #advanced-details[open] summary::before { transform: rotate(90deg); }
   #advanced-details summary:hover { color: var(--text); }
-  .hp-reason { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  /* the derivation reason lives in the name's tooltip (hover), not in a line
+     of prose under every knob */
+  .hp-name { display: inline-flex; align-items: center; gap: 5px; cursor: help; }
+  .hp-name .why { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--dim);
+                  color: var(--dim); font-size: 10px; line-height: 12px; text-align: center;
+                  font-style: italic; font-family: Georgia, serif; flex: none; }
+  .hp-row:hover .hp-name .why { border-color: var(--accent); color: var(--accent); }
+  .hp-name.overridden .why { border-color: var(--accent); color: var(--accent);
+                             font-style: normal; }
   .panel { background: var(--panel); border: 1px solid var(--line);
            border-radius: 10px; padding: 18px; }
   .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--dim);
@@ -80,7 +88,6 @@
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
            vertical-align: top; }
   th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
-  td.reason { color: var(--dim); font-size: 13px; }
   .license { color: var(--ok); font-size: 12px; border: 1px solid var(--ok);
              border-radius: 4px; padding: 1px 6px;
              display: inline-block; white-space: nowrap; }
@@ -368,7 +375,7 @@
       <div id="verdict-findings"></div>
     </div>
     <details id="run-hparams-details" style="margin-top:10px">
-      <summary style="cursor:pointer;color:var(--dim)">Hyperparameters used (with reasons)</summary>
+      <summary style="cursor:pointer;color:var(--dim)">Hyperparameters used — hover a name for the reason</summary>
       <table style="margin-top:8px"><tbody id="run-hparams"></tbody></table>
       <div id="queue-save-row" class="hidden" style="margin-top:10px">
         <button class="primary" id="queue-save-btn">Save changes</button>
@@ -646,6 +653,17 @@ function wireSteppers(root, attr) {
 // dict-valued knobs (aug_config, lr_scheduler_kwargs) would otherwise print
 // as "[object Object]"
 const fmtValue = (v) => (v !== null && typeof v === "object") ? JSON.stringify(v) : String(v);
+const escAttr = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+  .replace(/</g, "&lt;");
+// name + ⓘ, with the derivation reason as the hover tooltip (E5-S2: the "why"
+// stays one hover away instead of a paragraph under every knob)
+function hparamName(d) {
+  const why = d.overridden
+    ? `User override — "auto ↺" restores the derived value.\nDerivation rule: ${d.reason === "user override" ? "(re-derived from the dataset when reset)" : d.reason}`
+    : d.reason;
+  return `<span class="hp-name ${d.overridden ? "overridden" : ""}" title="${escAttr(why)}">
+    ${d.name}<span class="why">${d.overridden ? "!" : "i"}</span></span>`;
+}
 
 function knobWidget(d) {
   const cls = d.overridden ? "overridden" : "";
@@ -664,8 +682,7 @@ function hparamRow(d) {
          title="Back to the derived value">auto ↺</button>` : ""}
     ${knobWidget(d)}</span>`;
   return `<div class="hp-row">
-    <div class="hp-line"><span>${d.name}</span>${value}</div>
-    <div class="hp-reason">${d.overridden ? "user override" : d.reason}</div>
+    <div class="hp-line">${hparamName(d)}${value}</div>
   </div>`;
 }
 
@@ -1029,10 +1046,9 @@ function renderRunHparams(run) {
           ${CRITERIA.map((c) => `<option value="${c}"
             ${c === d.value ? "selected" : ""}>${c}</option>`).join("")}</select>`;
       }
-      return `<tr><td style="width:150px">${d.name}</td>
-        <td style="width:170px">${value}
-          ${d.overridden ? '<span class="overridden-badge">override</span>' : ""}</td>
-        <td class="reason">${d.reason}</td></tr>`;
+      return `<tr><td>${hparamName(d)}</td>
+        <td>${value}
+          ${d.overridden ? '<span class="overridden-badge">override</span>' : ""}</td></tr>`;
     })
     .join("");
   $("queue-save-row").classList.toggle("hidden", !editable);
