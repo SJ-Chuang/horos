@@ -71,3 +71,11 @@ def test_unknown_feature_lookup_is_explicit(on):
     on("linux")
     with pytest.raises(KeyError):
         platform_capabilities().get("time_travel")
+
+
+def test_interactive_assist_is_limited_on_macos_and_full_elsewhere(on):
+    on("macos")
+    support = platform_capabilities().get("assist_interactive")
+    assert support.level == "limited" and support.available and "slower" in support.note
+    on("linux", is_jetson=True)
+    assert platform_capabilities().get("assist_interactive").level == "full"

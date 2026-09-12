@@ -37,6 +37,7 @@ FEATURES = (
     "dataset_management",
     "manual_annotation",
     "autolabel",
+    "assist_interactive",
     "training",
     "export_onnx",
     "export_tflite",
@@ -73,6 +74,11 @@ def _support_matrix(platform: PlatformInfo) -> list[FeatureSupport]:
             feature="autolabel",
             level="limited",
             note="Works, but MPS/CPU inference is slower than CUDA.",
+        )
+        full["assist_interactive"] = FeatureSupport(
+            feature="assist_interactive",
+            level="limited",
+            note="Works; the SAM image encoder is slower on MPS/CPU (a second or two per image).",
         )
         full["training"] = FeatureSupport(
             feature="training",
