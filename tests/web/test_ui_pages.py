@@ -70,3 +70,15 @@ def test_experiments_page_holds_the_comparison_table_and_editor(client):
     assert "/train#" in html
     # every endpoint the page talks to exists under /api/v1/experiments
     assert "/experiments/runs" in html and "/experiments/compare" in html
+
+
+def test_class_manager_offers_merge_and_train_setup_folds_advanced_knobs(client):
+    annotate = client.get("/annotate").get_data(as_text=True)
+    assert 'id="merge-row"' in annotate and 'id="merge-target"' in annotate
+    assert "/categories/merge" in annotate
+    train = client.get("/train").get_data(as_text=True)
+    # criterion, seed and the non-primary derived knobs live inside the fold
+    details = train[train.index('<details id="advanced-details">'):train.index("</details>")]
+    for element in ("criterion-select", "hparams-advanced", "seed-input"):
+        assert f'id="{element}"' in details, element
+    assert 'id="hparams-list"' in train  # the primary knobs stay in view

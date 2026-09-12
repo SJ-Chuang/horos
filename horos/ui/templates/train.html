@@ -60,7 +60,17 @@
   .hp-line { display: flex; align-items: center; justify-content: space-between;
              gap: 10px; }
   .hp-line input[type="number"] { width: 90px; }
-  .hp-value { color: var(--text); }
+  .hp-value { color: var(--text); font-size: 12px; text-align: right; max-width: 62%;
+              overflow-wrap: anywhere; }
+  /* rarely-touched knobs fold away by default (user request 2026-09-12) */
+  #advanced-details { border-top: 1px solid var(--line); margin-top: 2px; }
+  #advanced-details summary { cursor: pointer; list-style: none; padding: 10px 0 8px;
+                              display: flex; align-items: center; gap: 8px;
+                              font-size: 13px; color: var(--dim); user-select: none; }
+  #advanced-details summary::-webkit-details-marker { display: none; }
+  #advanced-details summary::before { content: "▸"; font-size: 12px; transition: transform .12s; }
+  #advanced-details[open] summary::before { transform: rotate(90deg); }
+  #advanced-details summary:hover { color: var(--text); }
   .hp-reason { color: var(--dim); font-size: 12px; margin-top: 2px; }
   .panel { background: var(--panel); border: 1px solid var(--line);
            border-radius: 10px; padding: 18px; }
@@ -233,16 +243,6 @@
       <div id="model-hint" style="color:var(--dim);font-size:12px;margin-top:4px"></div>
     </div>
     <div style="margin-bottom:12px">
-      <div style="color:var(--dim);font-size:12px;margin-bottom:4px"
-           title="Which epoch's weights are kept as the run's best checkpoint">
-        Keep best checkpoint by</div>
-      <select id="criterion-select" style="width:100%">
-        <option value="map">validation mAP — detection quality (default)</option>
-        <option value="smoothed_map">smoothed mAP — noise-robust on small valid splits</option>
-        <option value="loss">validation loss — smooth, but can diverge from mAP</option>
-      </select>
-    </div>
-    <div style="margin-bottom:12px">
       <div style="color:var(--dim);font-size:12px;margin-bottom:4px">Classes</div>
       <div id="class-picks" class="row" style="gap:8px"></div>
       <span id="class-note" class="note hidden">select at least one class</span>
@@ -256,11 +256,28 @@
     <p id="split-summary" style="color:var(--dim);font-size:13px;margin:0 0 12px"></p>
     <p id="platform-note" class="note hidden"></p>
     <div id="hparams-list" style="border-top:1px solid var(--line)"></div>
+    <details id="advanced-details">
+      <summary>
+        <span>Advanced settings</span>
+        <span id="advanced-count" style="color:var(--dim);font-weight:400"></span>
+      </summary>
+      <div style="margin:10px 0 12px">
+        <div style="color:var(--dim);font-size:12px;margin-bottom:4px"
+             title="Which epoch's weights are kept as the run's best checkpoint">
+          Keep best checkpoint by</div>
+        <select id="criterion-select" style="width:100%">
+          <option value="map">validation mAP — detection quality (default)</option>
+          <option value="smoothed_map">smoothed mAP — noise-robust on small valid splits</option>
+          <option value="loss">validation loss — smooth, but can diverge from mAP</option>
+        </select>
+      </div>
+      <div id="hparams-advanced" style="border-top:1px solid var(--line)"></div>
+      <div class="row" style="margin-top:12px">
+        <label for="seed-input" style="color:var(--dim);font-size:12px">Seed</label>
+        <input type="number" id="seed-input" placeholder="random" style="flex:1;min-width:0">
+      </div>
+    </details>
     <div id="plan-notes"></div>
-    <div class="row" style="margin-top:14px">
-      <label for="seed-input" style="color:var(--dim);font-size:12px">Seed</label>
-      <input type="number" id="seed-input" placeholder="random" style="flex:1;min-width:0">
-    </div>
     <button class="primary" id="start-btn"
             style="width:100%;margin-top:12px;padding:9px 14px;font-weight:600">
       Start training</button>
@@ -590,23 +607,36 @@ function wireSteppers(root, attr) {
   });
 }
 
+// dict-valued knobs (aug_config, lr_scheduler_kwargs) would otherwise print
+// as "[object Object]"
+const fmtValue = (v) => (v !== null && typeof v === "object") ? JSON.stringify(v) : String(v);
+
+function hparamRow(d) {
+  let value;
+  if (EDITABLE.includes(d.name)) {
+    value = `<span style="display:flex;align-items:center;gap:6px">
+      ${d.overridden ? `<button class="reset" data-reset="${d.name}"
+           title="Back to the derived value">auto ↺</button>` : ""}
+      ${stepperHTML("data-knob", d.name, d.value, d.overridden)}</span>`;
+  } else {
+    value = `<span class="hp-value">${fmtValue(d.value)}</span>`;
+  }
+  return `<div class="hp-row">
+    <div class="hp-line"><span>${d.name}</span>${value}</div>
+    <div class="hp-reason">${d.overridden ? "user override" : d.reason}</div>
+  </div>`;
+}
+
 function renderPlan(plan) {
-  const rows = plan.derivations.map((d) => {
-    let value;
-    if (EDITABLE.includes(d.name)) {
-      value = `<span style="display:flex;align-items:center;gap:6px">
-        ${d.overridden ? `<button class="reset" data-reset="${d.name}"
-             title="Back to the derived value">auto ↺</button>` : ""}
-        ${stepperHTML("data-knob", d.name, d.value, d.overridden)}</span>`;
-    } else {
-      value = `<span class="hp-value">${d.value}</span>`;
-    }
-    return `<div class="hp-row">
-      <div class="hp-line"><span>${d.name}</span>${value}</div>
-      <div class="hp-reason">${d.overridden ? "user override" : d.reason}</div>
-    </div>`;
-  });
-  $("hparams-list").innerHTML = rows.join("");
+  // the four knobs people actually touch stay in view; every other derived
+  // setting folds into "Advanced settings" so the form stays scannable
+  const primary = plan.derivations.filter((d) => EDITABLE.includes(d.name));
+  const advanced = plan.derivations.filter((d) => !EDITABLE.includes(d.name));
+  $("hparams-list").innerHTML = primary.map(hparamRow).join("");
+  $("hparams-advanced").innerHTML = advanced.map(hparamRow).join("");
+  $("advanced-count").textContent = advanced.length
+    ? `· checkpoint criterion, seed and ${advanced.length} derived: ${advanced.map((d) => d.name).join(", ")}`
+    : "· checkpoint criterion and seed";
   $("plan-notes").innerHTML = (plan.notes || [])
     .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
 
@@ -623,6 +653,14 @@ function renderPlan(plan) {
     btn.onclick = () => { overrides[btn.dataset.reset] = null; derive(); };
   });
 }
+
+// remember whether the user left the advanced section open
+try {
+  $("advanced-details").open = localStorage.getItem("horos.train.advancedOpen") === "1";
+  $("advanced-details").ontoggle = () => {
+    localStorage.setItem("horos.train.advancedOpen", $("advanced-details").open ? "1" : "0");
+  };
+} catch (e) { /* storage unavailable: default closed */ }
 
 function setStatus(text, cls) {
   $("status").textContent = text;
@@ -930,7 +968,7 @@ function renderRunHparams(run) {
   $("run-hparams").innerHTML = (run.hparams || [])
     .map((d) => {
       serverValue[d.name] = d.value;
-      let value = `<strong>${d.value}</strong>`;
+      let value = `<strong>${fmtValue(d.value)}</strong>`;
       if (editable && QUEUE_EDITABLE.includes(d.name)) {
         value = stepperHTML("data-qedit", d.name, d.value, d.overridden);
       } else if (editable && d.name === "checkpoint_criterion") {
