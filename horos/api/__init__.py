@@ -96,6 +96,16 @@ from horos.api.media import (
     start_media_inference,
 )
 from horos.api.project import create_project, open_project
+from horos.api.serve import (
+    InferenceServer,
+    ServeSource,
+    ServeStatus,
+    create_inference_server,
+    resolve_source,
+    server_status,
+    start_server,
+    stop_server,
+)
 from horos.api.system import (
     DoctorReport,
     PlatformCapabilities,
@@ -131,6 +141,14 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "InferenceServer",
+    "ServeSource",
+    "ServeStatus",
+    "create_inference_server",
+    "resolve_source",
+    "server_status",
+    "start_server",
+    "stop_server",
     "RunExtras",
     "RunSummary",
     "Comparability",

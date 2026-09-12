@@ -357,6 +357,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include runs that are still queued, running, stopped, or failed",
     )
     p = sub.add_parser(
+        "serve",
+        help="Serve a trained model over HTTP (POST /predict) from an export bundle or "
+        "checkpoint — the command that runs on the deployment machine (E8)",
+    )
+    p.add_argument(
+        "source", nargs="?",
+        help="Export bundle directory or zip, model_card.json, .onnx file, or checkpoint; "
+        "omit to serve --run from the project",
+    )
+    p.add_argument("--run", metavar="RUN_ID",
+                   help="Serve this run of the project (default: the newest completed run)")
+    p.add_argument(
+        "--format", default="onnx", choices=("onnx", "pytorch", "checkpoint"),
+        help="With --run: which export bundle to serve, or the raw checkpoint (default onnx)",
+    )
+    p.add_argument("--project", help="Project directory (default: the enclosing project)")
+    p.add_argument("--model", help="Model key when serving a bare checkpoint file")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--threshold", type=float, default=0.5,
+                   help="Default confidence threshold (per-request 'threshold' overrides)")
+    p.add_argument("--device", help="cuda | cpu (default: auto, recorded in /health)")
+
+    p = sub.add_parser(
         "runs",
         help="List training runs with their scores, sorted by any metric (E7)",
     )
@@ -780,6 +804,37 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
             _emit(rows)
+        elif args.command == "serve":
+            from horos.web.serve_app import create_serve_app
+
+            if args.source:
+                source = api.resolve_source(path=args.source, model=args.model)
+            else:
+                project = _project_arg(args)
+                run_id = args.run
+                if not run_id:
+                    completed = [
+                        r for r in api.list_runs(project)
+                        if r.state == "completed" and r.checkpoint
+                    ]
+                    if not completed:
+                        raise ProjectError(
+                            "No completed training run to serve — pass a bundle path, or "
+                            "train first."
+                        )
+                    run_id = completed[0].run_id
+                source = api.resolve_source(project, run_id=run_id, format=args.format)
+            server = api.create_inference_server(
+                source, device=args.device, threshold=args.threshold
+            )
+            print(  # noqa: T201 — the CLI is the output device
+                f"serving {source.kind} {Path(source.path).name} "
+                f"({source.model or 'unknown model'}, {len(source.classes)} classes, "
+                f"device {server.device or 'auto'}) on http://{args.host}:{args.port} — "
+                f"POST /predict, GET /health, GET /model_card",
+                file=sys.stderr,
+            )
+            create_serve_app(server).run(host=args.host, port=args.port, threaded=True)
         elif args.command == "runs":
             result = api.query_runs(
                 _project_arg(args),

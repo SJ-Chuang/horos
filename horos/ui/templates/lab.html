@@ -177,6 +177,31 @@
       No completed training runs yet — train a model first.</p>
   </section>
 
+  <section class="panel" id="serve-panel">
+    <h2>Serve</h2>
+    <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
+      Start a standalone inference service for the selected run — the same
+      <code>horos serve</code> that runs on the deployment machine. It answers
+      <code>POST /predict</code>, <code>GET /health</code> and <code>GET /model_card</code>.</p>
+    <div class="row" style="gap:10px">
+      <label style="display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px">
+        Source <select id="serve-format"></select></label>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px">
+        Port <input type="number" id="serve-port" value="8080" min="1" max="65535"
+                    style="width:86px"></label>
+      <button class="primary" id="serve-start">Start</button>
+      <button id="serve-stop" class="hidden">Stop</button>
+    </div>
+    <p id="serve-status" style="color:var(--dim);font-size:13px;margin:8px 0 0"></p>
+    <pre id="serve-curl" class="mono hidden"
+         style="margin:8px 0 0;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
+                border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px"></pre>
+    <div id="serve-test" class="row hidden" style="margin-top:8px;gap:10px">
+      <label style="color:var(--dim);font-size:13px">Test it: <input type="file" id="serve-file" accept="image/*"></label>
+      <span id="serve-test-result" style="color:var(--dim);font-size:13px"></span>
+    </div>
+  </section>
+
   <section class="panel">
     <h2>Try it on photos, GIFs, or videos</h2>
     <div id="dropzone">
@@ -474,6 +499,109 @@ document.addEventListener("keydown", (e) => {
 });
 
 // -------------------------------------------------------------------- boot
+// ----------------------------------------------------------------- serve (E8-T7)
+let serveTimer = null;
+let serveStatus = null;
+
+async function refreshServeFormats() {
+  const runId = $("run-select").value;
+  const sel = $("serve-format");
+  if (!runId) { sel.innerHTML = ""; return; }
+  let exported = [];
+  try {
+    exported = (await api(`/train/runs/${runId}/exports`))
+      .filter((a) => a.kind === "model").map((a) => a.format);
+  } catch (e) { /* no exports listing: checkpoint only */ }
+  const options = [
+    ["onnx", "ONNX bundle — framework-free (onnxruntime), what a Jetson serves"],
+    ["pytorch", "PyTorch weights bundle"],
+    ["checkpoint", "training checkpoint (needs the training stack)"],
+  ].map(([fmt, label]) => {
+    const missing = fmt !== "checkpoint" && !exported.includes(fmt);
+    return `<option value="${fmt}" ${missing ? "disabled" : ""}>${label}${missing ? " — export it on the Training page first" : ""}</option>`;
+  });
+  sel.innerHTML = options.join("");
+  sel.value = exported.includes("onnx") ? "onnx" : "checkpoint";
+}
+
+function renderServeStatus(status) {
+  serveStatus = status;
+  const running = !!(status && status.running);
+  $("serve-start").classList.toggle("hidden", running);
+  $("serve-stop").classList.toggle("hidden", !running);
+  $("serve-curl").classList.toggle("hidden", !running);
+  $("serve-test").classList.toggle("hidden", !running);
+  $("serve-format").disabled = running;
+  $("serve-port").disabled = running;
+  if (running) {
+    const src = status.source || {};
+    $("serve-status").innerHTML = `Running — <a href="${status.url}/health" target="_blank"
+      style="color:var(--accent)">${status.url}</a> · ${src.kind} ${src.run_id || ""} · pid ${status.pid}`;
+    $("serve-curl").textContent =
+      `curl -F "file=@photo.jpg" "${status.url}/predict?threshold=0.5"
+`
+      + `curl -F "file=@photo.jpg" "${status.url}/predict?annotated=1" -o overlay.jpg
+`
+      + `curl ${status.url}/model_card`;
+    clearTimeout(serveTimer);
+    serveTimer = setTimeout(refreshServeStatus, 5000);
+  } else {
+    $("serve-status").textContent = status && status.error
+      ? `Stopped: ${status.error}` : "Not running.";
+    clearTimeout(serveTimer);
+  }
+}
+
+async function refreshServeStatus() {
+  try { renderServeStatus(await api("/serve")); }
+  catch (e) { $("serve-status").textContent = e.message; }
+}
+
+$("serve-start").onclick = async () => {
+  $("serve-start").disabled = true;
+  $("serve-status").textContent = "Starting — loading the model…";
+  try {
+    const status = await api("/serve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_id: $("run-select").value, format: $("serve-format").value,
+        port: Number($("serve-port").value) || 8080,
+      }),
+    });
+    renderServeStatus(status);
+  } catch (e) {
+    $("serve-status").textContent = "Start failed: " + e.message;
+  } finally { $("serve-start").disabled = false; }
+};
+$("serve-stop").onclick = async () => {
+  try { renderServeStatus(await api("/serve", { method: "DELETE" })); }
+  catch (e) { $("serve-status").textContent = "Stop failed: " + e.message; }
+};
+// E8-S7: post an image to the RUNNING SERVICE itself (not the project API) —
+// this is the deployed endpoint being exercised, exactly as a client would
+$("serve-file").onchange = async () => {
+  const file = $("serve-file").files[0];
+  if (!file || !serveStatus || !serveStatus.running) return;
+  $("serve-test-result").textContent = "posting…";
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const response = await fetch(`${serveStatus.url}/predict?threshold=0.5`, {
+      method: "POST", body: form,
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error((body.error && body.error.message) || response.statusText);
+    const names = {};
+    for (const inst of body.instances) names[inst.category_name || inst.category_id] =
+      (names[inst.category_name || inst.category_id] || 0) + 1;
+    $("serve-test-result").textContent = `${body.instances.length} detection(s) ≥ 0.5`
+      + (body.instances.length ? ": " + Object.entries(names).map(([k, v]) => `${k} ×${v}`).join(", ") : "");
+  } catch (e) {
+    $("serve-test-result").textContent = "failed: " + e.message;
+  }
+  $("serve-file").value = "";
+};
+
 async function init() {
   api("/project").then((p) => {
     $("project-name").textContent = p.name;
@@ -501,8 +629,10 @@ async function init() {
     closeViewer();
     return loadGallery();
   };
-  $("run-select").onchange = updateMeta;
+  $("run-select").onchange = () => { refreshServeFormats(); return updateMeta(); };
   await updateMeta();
+  await refreshServeFormats();
+  await refreshServeStatus();
   // #<media_id> deep-links straight into the viewer on that item
   const hashMedia = decodeURIComponent(location.hash.slice(1));
   if (hashMedia && galleryItems.some((m) => m.media_id === hashMedia)) {
