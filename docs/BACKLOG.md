@@ -151,3 +151,26 @@ Enter 一次寫入全部(單一 undo 步);Esc 兩段式清除;切工具/切圖�
 當前類別;取消則丟棄形狀。SAM 的 Enter / Space、相同規則;拖新框自動入列只在已有類別時發生。
 儲存路徑遇到空類別會明確報錯而不是建立類別。情境 `tests/ui_scenarios/E2-annotator.md` B/C/D。
 
+
+## 標記 QC：SAM polygon 只描最大 blob、validator 檢查 polygon 與 bbox 一致（2026-09-13 完成）
+
+對 demo_project（Roboflow「Box detection」，10,831 張、23,506 筆，全部經 SAM-T6 批次 box → polygon）做 QC
+時發現 4,489 筆 polygon 的範圍與 bbox 不一致，其中 1,024 筆 polygon 只是幾個像素的碎片。根因在
+`horos/backends/sam/polygonize.py`：只描「最上/最左那個前景像素所在的 blob」，而 bbox 用整張 mask 的邊界；
+Roboflow 的雜訊增強讓 SAM mask 常帶零星小島，小島在物體上方時就被當成 polygon。修法：
+
+- polygonizer 先以 row-run union-find 找出最大 8-連通 blob（不依賴 OpenCV/numpy），polygon、bbox、area
+  一律由同一個 blob 計算（`mask_to_shape`）；`TransformersPromptableMixin._result_from_mask` 走這條路。
+- validator 新增 `polygon_bbox_mismatch`（容差 2 px）：polygon 覆蓋 bbox 寬高各 ≥ 50% 視為 bbox 漂移，
+  `horos validate --fix` / Dataset 頁 Fix 以 polygon 重算 bbox（warning、fixable）；覆蓋更少即碎片，
+  只能重畫或移除 polygon 後再跑 boxes-to-polygons（error）。`invalid_polygon` 另外抓零面積（共線）polygon。
+- demo_project 修復：備份至 `~/research/demo_project_annotations_backup_20260913.tar.gz`；1,024 筆碎片改回
+  原始人工 box（1,010 筆比對到來源 IoU ≥ 0.5）後以修正後的 polygonizer 重跑，先前 SAM 略過的 1,326 個 box
+  一併重試（共 2,346 筆轉成 polygon，5 筆仍為 box）；3,110 筆漂移 bbox 以 `--fix` 重算；來源有、專案中
+  遺失的 12479 那筆 box 已還原（SAM 對它切到背景，保留人工 box）。`horos validate` 回到 0 issue。
+- 尚待人工複核：444 筆 SAM polygon 的外框與原始人工 box 的 IoU < 0.5（清單
+  `~/research/demo_project_qc_review_20260913.txt`）。抽樣目視兩種情況都有：人工 box 畫得鬆、SAM 反而更準
+  （不能自動退回），以及 SAM 切到相鄰物件或背景（該退回人工 box），所以不做自動處理。
+
+測試：`tests/unit/test_polygonize.py`、`tests/api/test_backend_sam2.py`、`tests/api/test_dataset_validate.py`、
+`tests/api/test_validate_fix.py`。

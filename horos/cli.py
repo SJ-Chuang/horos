@@ -166,8 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--fix",
         action="store_true",
-        help="Clamp auto-fixable out-of-bounds boxes (small annotation-tool "
-        "overshoots) back into their images, then re-validate",
+        help="Repair auto-fixable boxes: clamp small annotation-tool overshoots back "
+        "into the image and refit a drifted bbox to its polygons, then re-validate",
     )
 
     p = sub.add_parser(

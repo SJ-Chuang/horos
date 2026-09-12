@@ -23,7 +23,12 @@ from horos.core.formats import voc as voc_format
 from horos.core.formats import yolo as yolo_format
 from horos.core.project import Project
 from horos.core.stats import DatasetStats, compute_stats
-from horos.core.validate import ValidationReport, clamp_fix, validate_dataset
+from horos.core.validate import (
+    ValidationReport,
+    clamp_fix,
+    polygon_bbox_fix,
+    validate_dataset,
+)
 from horos.errors import (
     ClassNamesRequiredError,
     DatasetFormatError,
@@ -738,7 +743,7 @@ class ValidationFixResult(BaseModel):
 
 @capability(
     "dataset.validate_fix",
-    summary="Clamp auto-fixable out-of-bounds boxes back into their images",
+    summary="Repair auto-fixable boxes: clamp edge overshoots, refit boxes to their polygons",
     web_route="/api/v1/dataset/validation/fix",
     web_methods=("POST",),
     cli="validate",  # exposed as `horos validate --fix`
@@ -746,9 +751,11 @@ class ValidationFixResult(BaseModel):
 def fix_validation_issues(project: Project) -> ValidationFixResult:
     """Repair every issue the validator marked `fixable`: boxes past the image
     edge by at most FIXABLE_OVERSHOOT pixels are clamped back in (polygons
-    included). Uses exactly the validator's `clamp_fix` decision, so the set
-    of repairs equals the set of `fixable` issues in the report — larger
-    overshoots are left alone for a human (E1-S4: never a silent pass).
+    included), and a bbox that drifted from the polygons it belongs to is
+    recomputed from them. Uses exactly the validator's `clamp_fix` /
+    `polygon_bbox_fix` decisions, so the set of repairs equals the set of
+    `fixable` issues in the report — larger overshoots and fragment polygons
+    are left alone for a human (E1-S4: never a silent pass).
 
     Each change is reported with the before/after box; writes go through the
     project's optimistic-locked per-image annotation files.
@@ -759,17 +766,19 @@ def fix_validation_issues(project: Project) -> ValidationFixResult:
         updated: list = []
         changed = False
         for ann in stored.annotations:
+            before = ann.bbox
+            refit = polygon_bbox_fix(ann)
+            if refit is not None:
+                ann = refit
             clamped = clamp_fix(ann, record.width, record.height)
             if clamped is not None:
+                ann = clamped
+            if ann.bbox != before:
                 fixed.append(
                     FixedBox(
-                        image_id=record.id,
-                        annotation_id=ann.id,
-                        before=ann.bbox,
-                        after=clamped.bbox,
+                        image_id=record.id, annotation_id=ann.id, before=before, after=ann.bbox
                     )
                 )
-                ann = clamped
                 changed = True
             updated.append(ann)
         if changed:

@@ -89,3 +89,44 @@ def test_fix_is_idempotent(project):
     _set_bbox(project, record.id, (0.5, 4.0, 64.0, 12.0))
     assert fix_validation_issues(project).num_fixed == 1
     assert fix_validation_issues(project).num_fixed == 0
+
+
+def _set_shape(project, image_id, bbox, polygon):
+    stored = project.load_annotations(image_id)
+    target = stored.annotations[0]
+    updated = [
+        a.model_copy(update={"bbox": bbox, "segmentation": [polygon]}) if a.id == target.id else a
+        for a in stored.annotations
+    ]
+    project.save_annotations(image_id, updated, expected_version=stored.version)
+    return target.id
+
+
+def test_fix_refits_a_drifted_bbox_to_its_polygon(project):
+    images = project.list_images()
+    ann_id = _set_shape(
+        project, images[0].id, (10.0, 5.0, 40.0, 25.0), [10, 5, 40, 5, 40, 30, 10, 30]
+    )
+    report = validate_project(project)
+    assert [i.kind for i in report.issues if i.fixable] == ["polygon_bbox_mismatch"]
+
+    result = fix_validation_issues(project)
+    assert result.num_fixed == 1
+    assert result.fixed[0].annotation_id == ann_id
+    assert result.fixed[0].before == (10.0, 5.0, 40.0, 25.0)
+    assert result.fixed[0].after == (10.0, 5.0, 30.0, 25.0)
+    assert not any(i.kind == "polygon_bbox_mismatch" for i in result.report.issues)
+    saved = next(a for a in project.load_annotations(images[0].id).annotations if a.id == ann_id)
+    assert saved.bbox == (10.0, 5.0, 30.0, 25.0)
+    assert saved.segmentation == [[10, 5, 40, 5, 40, 30, 10, 30]]  # the polygon is kept
+
+
+def test_fix_leaves_fragment_polygons_alone(project):
+    images = project.list_images()
+    _set_shape(project, images[0].id, (10.0, 5.0, 40.0, 25.0), [12, 5, 17, 5, 17, 9, 12, 9])
+    result = fix_validation_issues(project)
+    assert result.num_fixed == 0
+    issue = next(i for i in result.report.issues if i.kind == "polygon_bbox_mismatch")
+    assert issue.level == "error" and not issue.fixable
+    saved = project.load_annotations(images[0].id).annotations[0]
+    assert saved.bbox == (10.0, 5.0, 40.0, 25.0)  # never shrunk onto a wrong polygon

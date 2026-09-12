@@ -115,3 +115,51 @@ def test_counts_summarize_issue_kinds(tmp_path):
     counts = report.counts()
     assert counts["unknown_category"] == 1
     assert counts["invalid_box_size"] == 1
+
+
+# --- polygon_bbox_mismatch (the polygon is the finer geometry; the box must agree)
+
+def _with_polygon(ds, bbox, polygon):
+    ds.annotations[0] = ds.annotations[0].model_copy(
+        update={"bbox": bbox, "segmentation": [polygon]}
+    )
+    return ds.annotations[0]
+
+
+def test_bbox_drifted_from_its_polygon_is_a_fixable_warning(tmp_path):
+    ds = _clean_dataset(tmp_path)
+    # polygon spans (10..40, 5..30); the bbox was widened by 10px on the right
+    ann = _with_polygon(ds, (10.0, 5.0, 40.0, 25.0), [10, 5, 40, 5, 40, 30, 10, 30])
+    report = validate_dataset(ds, images_root=tmp_path)
+    issue = next(i for i in report.issues if i.kind == "polygon_bbox_mismatch")
+    assert issue.level == "warning" and issue.fixable
+    assert issue.annotation_id == ann.id and issue.file_name == "a.png"
+    assert "10.0px" in issue.message and "auto-fixable" in issue.message
+    assert report.ok  # a drifted box alone does not fail validation
+
+
+def test_fragment_polygon_is_an_error_not_a_fix(tmp_path):
+    ds = _clean_dataset(tmp_path)
+    # a 5x4 sliver at the top-left of a 40x25 box: a stray blob traced instead of the mask
+    _with_polygon(ds, (10.0, 5.0, 40.0, 25.0), [12, 5, 17, 5, 17, 9, 12, 9])
+    report = validate_dataset(ds, images_root=tmp_path)
+    issue = next(i for i in report.issues if i.kind == "polygon_bbox_mismatch")
+    assert issue.level == "error" and not issue.fixable
+    assert "fragment" in issue.message and "boxes-to-polygons" in issue.message
+    assert not report.ok
+
+
+def test_one_pixel_disagreement_is_normal(tmp_path):
+    ds = _clean_dataset(tmp_path)
+    # mask-derived boxes count pixels; polygon vertices sit on pixel centres
+    _with_polygon(ds, (10.0, 5.0, 31.0, 26.0), [10, 5, 40, 5, 40, 30, 10, 30])
+    report = validate_dataset(ds, images_root=tmp_path)
+    assert not any(i.kind == "polygon_bbox_mismatch" for i in report.issues)
+
+
+def test_zero_area_polygon_is_invalid(tmp_path):
+    ds = _clean_dataset(tmp_path)
+    _with_polygon(ds, (10.0, 5.0, 20.0, 10.0), [10, 5, 20, 10, 30, 15])  # collinear
+    report = validate_dataset(ds, images_root=tmp_path)
+    issue = next(i for i in report.issues if i.kind == "invalid_polygon")
+    assert "no area" in issue.message and issue.level == "error"

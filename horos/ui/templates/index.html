@@ -354,7 +354,7 @@ $("fix-btn").onclick = async () => {
   status.textContent = "Fixing…";
   try {
     const r = await api("/dataset/validation/fix", { method: "POST" });
-    status.textContent = `Clamped ${r.num_fixed} box${r.num_fixed === 1 ? "" : "es"} back into bounds`;
+    status.textContent = `Repaired ${r.num_fixed} box${r.num_fixed === 1 ? "" : "es"} (clamped into bounds / refitted to their polygons)`;
     await refreshStats();
   } catch (e) {
     status.textContent = "Fix failed: " + e.message;
