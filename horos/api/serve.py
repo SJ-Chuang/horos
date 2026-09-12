@@ -5,11 +5,14 @@ Design decisions (confirmed 2026-09-12):
 - `horos serve` is its own lightweight Flask app (horos/web/serve_app.py)
   with /predict, /health and /model_card — no project, no UI. That is what
   gets deployed to a Jetson; the project Web API only starts and stops it.
-- The preferred source is an export bundle: an ONNX bundle runs through the
-  framework-free executor in horos/backends/runtime/ (E8-S6: the artifact
-  itself is what serves), a PyTorch weights bundle or the run's checkpoint
-  loads through the run's own backend. TensorRT engines and TFLite models
-  are refused explicitly for now, never silently substituted.
+- The preferred source is an export bundle: ONNX, TensorRT engines and
+  TFLite models run through the framework-free executor in
+  horos/backends/runtime/ (E8-S6: the artifact itself is what serves; a
+  Jetson serves the engine it built, a CPU box the TFLite or ONNX graph);
+  a PyTorch weights bundle or the run's checkpoint loads through the run's
+  own backend. A runtime that is missing or cannot honour the requested
+  device is an explicit error before anything is spawned, never a silent
+  substitution (Serve-T1/T2, 2026-09-12).
 - The model card travels with the service (/model_card): licence, classes
   and I/O contract are queryable wherever the model runs (R3).
 """
@@ -54,7 +57,9 @@ __all__ = [
 ]
 
 ServeKind = Literal["onnx", "pytorch", "checkpoint", "tensorrt", "tflite"]
-SERVE_FORMATS: tuple[str, ...] = ("onnx", "pytorch", "checkpoint")
+SERVE_FORMATS: tuple[str, ...] = ("onnx", "tensorrt", "tflite", "pytorch", "checkpoint")
+#: formats the framework-free executor runs (horos/backends/runtime/)
+ARTIFACT_FORMATS: tuple[str, ...] = ("onnx", "tensorrt", "tflite")
 _CHECKPOINT_SUFFIXES = (".pt", ".pth", ".ckpt")
 _STARTUP_TIMEOUT = 90.0
 
@@ -241,7 +246,10 @@ def resolve_source(
             return _source_from_bundle(path.parent)
         if path.suffix.lower() == ".zip":
             return _source_from_bundle(_unpack_bundle(path))
-        if path.suffix.lower() == ".onnx":
+        from horos.backends.runtime import SUFFIX_KINDS
+
+        kind = SUFFIX_KINDS.get(path.suffix.lower())
+        if kind is not None:  # a bare .onnx / .trt / .engine / .tflite file
             names = path.with_name("class_names.txt")
             classes = (
                 [n for n in names.read_text("utf-8").splitlines() if n.strip()]
@@ -249,10 +257,10 @@ def resolve_source(
             )
             card_path = path.with_name("model_card.json")
             card = json.loads(card_path.read_text("utf-8")) if card_path.is_file() else (
-                _minimal_card(run_id=None, model=model, classes=classes, fmt="onnx", artifact=path)
+                _minimal_card(run_id=None, model=model, classes=classes, fmt=kind, artifact=path)
             )
             return ServeSource(
-                kind="onnx", path=str(path), bundle_dir=str(path.parent),
+                kind=kind, path=str(path), bundle_dir=str(path.parent),  # type: ignore[arg-type]
                 run_id=card.get("run_id") or None, model=card.get("model") or model,
                 classes=classes or list(card.get("classes") or []), card=card,
             )
@@ -270,7 +278,8 @@ def resolve_source(
             )
         raise ProjectError(
             f"Cannot serve {path.name}: expected an export bundle directory or zip, a "
-            f"model_card.json, an .onnx file or a checkpoint (.pt/.pth/.ckpt)."
+            f"model_card.json, an .onnx / .trt / .engine / .tflite artifact or a "
+            f"checkpoint (.pt/.pth/.ckpt)."
         )
     if project is None or not run_id:
         raise ProjectError("resolve_source needs a project and run_id, or a path")
@@ -280,21 +289,36 @@ def resolve_source(
 # ------------------------------------------------------------------ server
 
 
+def check_runtime(source: ServeSource) -> None:
+    """Refuse, before spawning anything, what this machine cannot execute:
+    a TensorRT engine on a platform without TensorRT (macOS) or without the
+    tensorrt package, a TFLite model without an interpreter, ONNX without
+    onnxruntime. Import-free, so it is cheap enough for the project API."""
+    if source.kind not in ARTIFACT_FORMATS:
+        return
+    from horos.backends.runtime import INSTALL_HINTS, runtime_available
+
+    if source.kind == "tensorrt":
+        from horos.api.system import ensure_supported
+
+        ensure_supported("export_tensorrt")  # engines run where they are built: never macOS
+    if not runtime_available(source.kind):
+        raise ProjectError(
+            f"Cannot serve the {source.kind} artifact {Path(source.path).name}: "
+            f"{INSTALL_HINTS[source.kind]}"
+        )
+
+
 def load_source(source: ServeSource, *, device: str | None = None):
     """The object whose `infer_one` serves predictions."""
-    if source.kind == "onnx":
+    if source.kind in ARTIFACT_FORMATS:
         from horos.backends.runtime import ArtifactModel
 
+        check_runtime(source)
         model = ArtifactModel(source.path, card=source.card, classes=source.classes,
-                              device=device)
+                              device=device, kind=source.kind)
         model.load()  # fail at start-up, not on the first request
         return model
-    if source.kind in ("tensorrt", "tflite"):
-        raise ProjectError(
-            f"horos serve cannot execute a {source.kind} artifact in this version — serve "
-            f"the run's ONNX bundle (format='onnx') or its checkpoint "
-            f"(format='checkpoint') instead."
-        )
     checkpoint = Path(source.path)
     if source.entrypoint_override:
         import importlib
@@ -346,6 +370,7 @@ class InferenceServer:
             "run_id": self.source.run_id,
             "classes": len(self.source.classes),
             "device": self.device,
+            "runtime": getattr(self.model, "runtime", None) or self.source.kind,
             "default_threshold": self.default_threshold,
             "started_at": self.started_at,
             "requests": self.requests,
@@ -434,8 +459,7 @@ def start_server(
     a fresh interpreter, R7) and wait until /health answers. One service per
     project at a time; stop the running one first."""
     source = resolve_source(project, run_id=run_id, format=format)  # fail early
-    if source.kind in ("tensorrt", "tflite"):
-        load_source(source)  # raises the explicit refusal
+    check_runtime(source)  # ... and before spawning a process that cannot load it
     current = _status_of(_entry(project))
     if current.running:
         raise ProjectError(

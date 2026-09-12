@@ -35,7 +35,23 @@ E8-T7 完成(2026-09-12):`horos serve` 獨立服務、`horos/backends/runtime/` 
 執行器、Lab 頁 Serve 區塊;設計決定見 `horos/api/serve.py` 模組 docstring。
 E8-T3 完成(2026-09-12):ONNX → onnx2tf → TFLite(float32 + float16,輸入維持 NCHW),
 工具鏈為 `horos install --tflite` 選配,parity 以 ai-edge-litert 比對;見 `horos/backends/convert/tflite.py`。
-`horos serve` 目前仍不執行 TensorRT engine 與 TFLite(明確拒絕),可作後續項目。
+`horos serve` 自 Serve-T1(2026-09-12)起也執行 TensorRT engine 與 TFLite,見下節。
+
+## `horos serve` 執行 TensorRT engine 與 TFLite(Serve)
+
+**完成(2026-09-12)。** 設計決定見 `horos/backends/runtime/__init__.py` 與 `_graphs.py` 的
+模組 docstring:三種成品共用同一套前處理與 model card 輸出契約解碼,只有「graph runner」
+分格式(onnxruntime / tensorrt runtime + cuda-python 或 torch 的 device memory / LiteRT);
+engine 只能在 CUDA 執行、TFLite 只在 CPU 執行,要求做不到的裝置一律明確報錯(R7);
+啟動前以 import-free 探測拒絕缺少 runtime 或平台不支援(macOS + engine)的來源,不會先
+spawn 子行程再失敗。任務卡:
+
+| 卡 | 內容 | 完成定義 |
+|---|---|---|
+| Serve-T1 | runtime 執行器支援 TensorRT engine(.trt/.engine/.plan)與 TFLite;`resolve_source` 接受 engine / tflite bundle 與裸檔;`start_server` 啟動前檢查 runtime 與平台能力;`/health` 回報 runtime;CLI `--format` 補齊 | `tests/web/test_serve.py`(合成模型實跑 engine / tflite)、`tests/api/test_serve_artifacts_e2e.py`(真實 RF-DETR 三格式一致) |
+| Serve-T2 | Lab 頁 Source 下拉列出 TensorRT / TFLite,依 `/api/v1/capabilities` 灰掉;執行中顯示 runtime | 介面情境 `tests/ui_scenarios/E8-T7.md` A/C 節 |
+
+未做:TFLite int8 量化、`horos serve` 的多請求併發(仍一次一個請求)。
 
 ## 點/框 prompt 的互動式標註輔助(SAM 2.1)
 

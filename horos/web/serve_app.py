@@ -40,7 +40,7 @@ def create_serve_app(server) -> Flask:
         return jsonify({
             "service": "horos serve",
             "endpoints": {
-                "GET /health": "liveness, loaded model, device, request count",
+                "GET /health": "liveness, loaded model, device + runtime, request count",
                 "GET /model_card": "the model card shipped with the artifact "
                                    "(licence, classes, I/O contract)",
                 "POST /predict": "multipart field 'file' (or a raw image body); form/query "

@@ -376,14 +376,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "source", nargs="?",
-        help="Export bundle directory or zip, model_card.json, .onnx file, or checkpoint; "
-        "omit to serve --run from the project",
+        help="Export bundle directory or zip, model_card.json, a bare .onnx / .trt / .tflite "
+        "artifact, or a checkpoint; omit to serve --run from the project",
     )
     p.add_argument("--run", metavar="RUN_ID",
                    help="Serve this run of the project (default: the newest completed run)")
     p.add_argument(
-        "--format", default="onnx", choices=("onnx", "pytorch", "checkpoint"),
-        help="With --run: which export bundle to serve, or the raw checkpoint (default onnx)",
+        "--format", default="onnx", choices=("onnx", "tensorrt", "tflite", "pytorch", "checkpoint"),
+        help="With --run: which export bundle to serve (onnx / tensorrt engine / tflite / "
+        "pytorch weights), or the raw checkpoint (default onnx)",
     )
     p.add_argument("--project", help="Project directory (default: the enclosing project)")
     p.add_argument("--model", help="Model key when serving a bare checkpoint file")
@@ -391,7 +392,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--threshold", type=float, default=0.5,
                    help="Default confidence threshold (per-request 'threshold' overrides)")
-    p.add_argument("--device", help="cuda | cpu (default: auto, recorded in /health)")
+    p.add_argument("--device", help="cuda | cpu (default: auto — an engine needs cuda, "
+                   "TFLite runs on cpu; recorded in /health)")
 
     p = sub.add_parser(
         "runs",

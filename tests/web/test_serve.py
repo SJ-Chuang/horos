@@ -7,6 +7,7 @@ import json
 import socket
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import pytest
 from helpers.data import make_image
@@ -14,11 +15,12 @@ from helpers.runs import completed_fake_run
 
 from horos.api.serve import (
     _reset_servers,
+    check_runtime,
     create_inference_server,
     load_source,
     resolve_source,
 )
-from horos.errors import BackendError, ProjectError
+from horos.errors import BackendError, ProjectError, UnsupportedPlatformError
 from horos.web.app import create_app
 from horos.web.serve_app import create_serve_app
 
@@ -156,11 +158,47 @@ def _touch(path):
     return path
 
 
-def test_tensorrt_and_tflite_are_refused_explicitly(tmp_path):
-    for fmt, artifact in (("tensorrt", "model.engine"), ("tflite", "model.tflite")):
-        source = resolve_source(path=_write_bundle(tmp_path / fmt, fmt=fmt, artifact=artifact))
-        with pytest.raises(ProjectError, match=f"cannot execute a {fmt}"):
+def test_engine_and_tflite_sources_resolve_and_are_checked_first(tmp_path, monkeypatch):
+    """An engine or TFLite bundle is a first-class source (Serve-T2); what
+    this machine cannot execute is refused before a process is spawned."""
+    from horos.api import system as system_mod
+    from horos.backends.runtime import _graphs
+    from horos.core.platform_info import PlatformInfo
+
+    for fmt, artifact in (("tensorrt", "model.trt"), ("tflite", "model.tflite")):
+        bundle = _write_bundle(tmp_path / fmt, fmt=fmt, artifact=artifact)
+        source = resolve_source(path=bundle)
+        assert source.kind == fmt and source.classes == ["a", "b"]
+        # a bare artifact next to class_names.txt resolves by suffix, like .onnx
+        (bundle / "class_names.txt").write_text("x\ny\nz\n", "utf-8")
+        (bundle / "model_card.json").unlink()
+        bare = resolve_source(path=bundle / artifact)
+        assert bare.kind == fmt and bare.classes == ["x", "y", "z"]
+        assert bare.card["format"] == fmt and bare.card["weights_license"] == "unknown"
+        # the runtime is missing: the hint names the opt-in installer
+        monkeypatch.setattr(_graphs, "_find_spec", lambda name: False)
+        with pytest.raises(ProjectError, match=f"horos install --{fmt}"):
+            check_runtime(source)
+        with pytest.raises(ProjectError, match=f"horos install --{fmt}"):
             load_source(source)
+        monkeypatch.undo()
+
+    # an engine on macOS: refused by the capability list, whatever is installed
+    engine = resolve_source(path=tmp_path / "tensorrt" / "model.trt")
+    monkeypatch.setattr(
+        system_mod, "detect_platform",
+        lambda: PlatformInfo(os_family="macos", arch="arm64", is_jetson=False,
+                             python_version="3.12.0"),
+    )
+    with pytest.raises(UnsupportedPlatformError, match="not supported on macOS"):
+        check_runtime(engine)
+    monkeypatch.undo()
+    # .engine and .plan are engines too; anything else is not an artifact
+    from horos.backends.runtime import kind_for
+
+    assert kind_for(Path("m.engine")) == "tensorrt" and kind_for(Path("m.plan")) == "tensorrt"
+    with pytest.raises(BackendError, match="Cannot execute"):
+        kind_for(Path("m.bin"))
 
 
 # ------------------------------------------------------------- ONNX executor
@@ -248,6 +286,137 @@ def test_onnx_executor_never_falls_back_silently(tmp_path):
         ArtifactModel(path, device="tpu").load()
     with pytest.raises(BackendError, match="not found"):
         ArtifactModel(tmp_path / "missing.onnx", device="cpu").load()
+
+
+_CARD = {
+    "classes": ["a", "b", "c"], "input": {"shape": [1, 3, 32, 32]},
+    "outputs": [{"name": "dets"}, {"name": "labels"}],
+}
+_EXPECTED = {"names": ["b", "a"], "best": (16.0, 12.0, 32.0, 24.0), "second": (12.8, 9.6, 6.4, 4.8)}
+
+
+def _assert_contract(model, image):
+    """The same synthetic detector decodes identically whatever executes it."""
+    prediction = model.infer_one(image, threshold=0.4)
+    assert (prediction.width, prediction.height) == (64, 48)
+    assert [i.category_name for i in prediction.instances] == _EXPECTED["names"]
+    best, second = prediction.instances
+    assert best.score == pytest.approx(0.9526, abs=1e-3)
+    assert best.bbox == pytest.approx(_EXPECTED["best"], abs=1e-3)
+    assert second.bbox == pytest.approx(_EXPECTED["second"], abs=1e-3)
+    assert [i.category_name for i in model.infer_one(image, threshold=0.6).instances] == ["b"]
+
+
+# ------------------------------------------------------------- TFLite executor
+
+
+def _synthetic_tflite(path, *, classes=3):
+    """The synthetic detector as a .tflite with a SignatureDef, the way
+    onnx2tf writes it: the ONNX input/output names survive in the signature
+    even though the tensors themselves are called PartitionedCall:N."""
+    tf = pytest.importorskip("tensorflow")
+    import numpy as np
+
+    dets = np.array([[[0.5, 0.5, 0.5, 0.5], [0.25, 0.25, 0.1, 0.1]]], dtype=np.float32)
+    logits = np.full((1, 2, classes), -5.0, dtype=np.float32)
+    logits[0, 0, 1] = 3.0
+    logits[0, 1, 0] = 0.0
+
+    class Detector(tf.Module):
+        @tf.function(input_signature=[tf.TensorSpec([1, 3, 32, 32], tf.float32, name="input")])
+        def __call__(self, x):
+            zero = tf.reduce_sum(x) * 0.0
+            return {"dets": tf.constant(dets) + zero, "labels": tf.constant(logits) + zero}
+
+    module = Detector()
+    converter = tf.lite.TFLiteConverter.from_concrete_functions(
+        [module.__call__.get_concrete_function()], module
+    )
+    path.write_bytes(converter.convert())
+    return path
+
+
+def test_tflite_executor_decodes_the_exported_contract(tmp_path):
+    from horos.backends.runtime import ArtifactModel, runtime_available
+
+    if not runtime_available("tflite"):
+        pytest.skip("no TFLite interpreter installed")
+    bundle = tmp_path / "tflite"
+    bundle.mkdir()
+    artifact = _synthetic_tflite(bundle / "model_float32.tflite")
+    model = ArtifactModel(artifact, card=_CARD)
+    image = make_image(tmp_path / "img.png", 64, 48)
+    _assert_contract(model, image)
+    assert model.kind == "tflite" and model.device == "cpu"
+    assert model.runtime.startswith(("LiteRT", "tensorflow.lite"))
+    assert model.load().output_names == ["dets", "labels"]  # from the SignatureDef
+    # R7: TFLite runs on CPU here — asking for CUDA is an error, not a quiet CPU run
+    with pytest.raises(BackendError, match="runs on CPU"):
+        ArtifactModel(artifact, card=_CARD, device="cuda").load()
+
+    # end to end: a tflite bundle through resolve_source → the serve app
+    card = {**_CARD, "format": "tflite", "artifact": artifact.name}
+    (bundle / "model_card.json").write_text(json.dumps(card), "utf-8")
+    client = _client_for(resolve_source(path=bundle), threshold=0.4)
+    health = client.get("/health").get_json()
+    assert health["kind"] == "tflite" and health["device"] == "cpu"
+    assert health["runtime"].startswith(("LiteRT", "tensorflow.lite"))
+    body = _post_image(client, image).get_json()
+    assert [i["category_name"] for i in body["instances"]] == ["b", "a"]
+
+
+# ------------------------------------------------------------- TensorRT executor
+
+
+def _build_engine(onnx_path, engine_path):
+    trt = pytest.importorskip("tensorrt")
+    logger = trt.Logger(trt.Logger.ERROR)
+    builder = trt.Builder(logger)
+    network = builder.create_network(0)
+    parser = trt.OnnxParser(network, logger)
+    assert parser.parse(onnx_path.read_bytes()), [
+        parser.get_error(i) for i in range(parser.num_errors)
+    ]
+    try:
+        serialized = builder.build_serialized_network(network, builder.create_builder_config())
+    except Exception as exc:  # noqa: BLE001 — no usable CUDA device on this runner
+        pytest.skip(f"TensorRT cannot build here: {exc}")
+    if serialized is None:
+        pytest.skip("TensorRT cannot build an engine on this machine (no CUDA device?)")
+    engine_path.write_bytes(bytes(serialized))
+    return engine_path
+
+
+def test_tensorrt_executor_runs_a_real_engine(tmp_path):
+    pytest.importorskip("onnx")
+    from horos.backends.runtime import ArtifactModel, runtime_available
+
+    if not runtime_available("tensorrt"):
+        pytest.skip("tensorrt not installed")
+    bundle = tmp_path / "tensorrt"
+    bundle.mkdir()
+    engine = _build_engine(_synthetic_detector(bundle / "model.onnx"), bundle / "model.trt")
+    image = make_image(tmp_path / "img.png", 64, 48)
+    model = ArtifactModel(engine, card=_CARD)
+    _assert_contract(model, image)
+    assert model.kind == "tensorrt" and model.device == "cuda"
+    assert model.runtime.startswith("TensorRT ") and "memory" in model.runtime
+    # R7: an engine is CUDA-only — 'cpu' is refused, never emulated
+    with pytest.raises(BackendError, match="CUDA only"):
+        ArtifactModel(engine, card=_CARD, device="cpu").load()
+    # a corrupt / foreign engine says why instead of a low-level crash
+    (bundle / "broken.trt").write_bytes(b"not an engine")
+    with pytest.raises(BackendError, match="could not deserialize"):
+        ArtifactModel(bundle / "broken.trt", card=_CARD).load()
+
+    card = {**_CARD, "format": "tensorrt", "artifact": "model.trt"}
+    (bundle / "model_card.json").write_text(json.dumps(card), "utf-8")
+    client = _client_for(resolve_source(path=bundle), threshold=0.4)
+    health = client.get("/health").get_json()
+    assert health["kind"] == "tensorrt" and health["device"] == "cuda"
+    assert health["runtime"].startswith("TensorRT")
+    body = _post_image(client, image).get_json()
+    assert [i["category_name"] for i in body["instances"]] == ["b", "a"]
 
 
 # ------------------------------------------------------------- process control
