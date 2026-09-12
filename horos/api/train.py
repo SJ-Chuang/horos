@@ -32,6 +32,7 @@ from horos.api.dataset import dataset_stats, export_dataset, filter_dataset_cate
 from horos.api.hparams import DerivedValue, HyperparameterPlan, derive_plan
 from horos.api.manifest import capability
 from horos.api.system import ensure_supported
+from horos.core.fingerprint import DatasetFingerprint, fingerprint_dataset
 from horos.core.project import Project
 from horos.core.registry import get_model_info
 from horos.errors import LicenseError, ProjectError, UnknownModelError
@@ -131,6 +132,9 @@ class RunRecord(BaseModel):
     #: epochs this run actually finished — a resume's TOTAL epochs must exceed
     #: this or the trainer has nothing left to do
     epochs_completed: int | None = None
+    #: content fingerprint of the data this run trained on (E7-T2), fixed at
+    #: enqueue time; runs with different fingerprints are not comparable
+    dataset_fingerprint: DatasetFingerprint | None = None
 
 
 class TrainStatus(BaseModel):
@@ -606,8 +610,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
     run_dir.mkdir(parents=True, exist_ok=False)
 
     # The run keeps the exact data it trained on — reproducible by design,
-    # at the cost of copying images per run (dataset fingerprints in E7 will
-    # let identical exports be shared).
+    # at the cost of copying images per run.
     export_dataset(
         project,
         run_dir / "dataset",
@@ -641,6 +644,7 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
         dataset_images=len(dataset.images),
         dataset_splits=split_counts,
         dataset_classes=sorted({c.name for c in dataset.categories}),
+        dataset_fingerprint=fingerprint_dataset(dataset),
     )
     write_record(run_dir, record)
 

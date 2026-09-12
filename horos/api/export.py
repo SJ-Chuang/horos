@@ -10,7 +10,6 @@ the presence of the tensorrt package — never a silent fallback (E8-T2/T6).
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import logging
@@ -144,16 +143,21 @@ def export_training_report(
 
 
 def _dataset_fingerprint(run_dir: Path) -> dict[str, Any]:
-    """Content hash of the run's dataset snapshot annotations (an E7-T2
-    preview): identical data gives identical fingerprints across runs."""
-    digest = hashlib.sha256()
-    files = sorted((run_dir / "dataset").rglob("_annotations.coco.json"))
-    for path in files:
-        digest.update(path.relative_to(run_dir).as_posix().encode("utf-8"))
-        digest.update(path.read_bytes())
+    """The run's dataset fingerprint for the model card (E7-T2): the one
+    recorded at enqueue time, or — for runs older than that field — computed
+    from the snapshot with the same canonical method."""
+    from horos.api.train import read_record
+    from horos.core.fingerprint import METHOD, fingerprint_snapshot
+
+    fingerprint = None
+    if (run_dir / "run.json").is_file():
+        fingerprint = read_record(run_dir).dataset_fingerprint
+    if fingerprint is None:
+        fingerprint = fingerprint_snapshot(run_dir / "dataset")
     return {
-        "fingerprint": f"sha256:{digest.hexdigest()}" if files else None,
-        "method": "sha256 over the snapshot's COCO annotation files (path + bytes)",
+        "fingerprint": fingerprint.digest if fingerprint else None,
+        "split_fingerprints": fingerprint.splits if fingerprint else {},
+        "method": fingerprint.method if fingerprint else METHOD,
     }
 
 
