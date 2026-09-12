@@ -1827,24 +1827,30 @@ const Page = {
       .filter((i) => this.editorShapes[i] && this.editorShapes[i].shape_type === "rectangle");
     if (!list.length || !this.editorImage || this.currentIdx < 0) return;
     const image = this.queue[this.currentIdx].image;
-    const shapes = this.editorShapes;  // stop if the user switches image meanwhile
     const model = this._samModel();
+    // an autosave may rebuild editorShapes (same order) while we await the
+    // server, so re-read the shape by index each time and stop if the user
+    // switched image
+    const onImage = () => this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === image.id;
     this._pushHistory();
     let done = 0, kept = 0;
     if (list.length > 1) toast(`SAM: converting ${list.length} boxes…`, "", 1500);
     for (const i of list) {
-      if (this.editorShapes !== shapes) return;
-      const s = shapes[i];
+      if (!onImage()) return;
+      const s = this.editorShapes[i];
+      if (!s || s.shape_type !== "rectangle") continue;
       const [[x1, y1], [x2, y2]] = s.points;
       const box = [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
       try {
         const cand = await api(`/images/${image.id}/segment`,
           json("POST", { box, output: "polygon", model }));
-        if (this.editorShapes !== shapes) return;
+        if (!onImage()) return;
+        const target = this.editorShapes[i];
+        if (!target || target.shape_type !== "rectangle") continue;
         if (!cand.points.length) { kept++; continue; }
-        s.shape_type = "polygon";
-        s.points = cand.points.map((p) => this._clampPoint([p[0], p[1]]));
-        this._clampShapePoints(s);
+        target.shape_type = "polygon";
+        target.points = cand.points.map((p) => this._clampPoint([p[0], p[1]]));
+        this._clampShapePoints(target);
         done++;
         this._drawCanvas();
       } catch (e) { toast(e.message, "err", 4000); break; }
@@ -1933,12 +1939,15 @@ const Page = {
   // annotator keeps drawing the next one — and never gets a made-up class:
   // with Object Class empty, the class is asked for (and remembered).
   async _addShape(shape) {
-    const shapes = this.editorShapes;
+    // guard by image, not by array identity: an autosave finishing while the
+    // class prompt is open rebuilds editorShapes from the server response
+    const imageId = this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id;
     this.pendingShape = shape;  // drawn in grey while the class is being asked
     this._drawCanvas();
     const label = await this._labelFor();
     this.pendingShape = null;
-    if (this.editorShapes !== shapes) return;  // the image changed meanwhile
+    const still = this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === imageId;
+    if (!still) return;  // the image changed meanwhile
     if (!label) { toast("Shape discarded — no class given", "warn", 1500); this._drawCanvas(); return; }
     this._pushHistory();
     this.editorShapes.push({ label, ...shape });
