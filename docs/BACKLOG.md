@@ -144,3 +144,10 @@ Enter 一次寫入全部(單一 undo 步);Esc 兩段式清除;切工具/切圖�
 測試：`tests/api/test_segment_boxes.py`、`tests/web/test_segment_routes.py`、`tests/api/test_cli.py`；
 介面情境 `tests/ui_scenarios/SAM-T4.md` E 節、`E3-autolabel.md` D 節。
 
+## 標註流程調整：畫完不切回 Select、沒有預設 `object`（2026-09-12 完成）
+
+矩形 / 多邊形完成後停留在原工具（連續畫）。Object Class 留空時不再默默套上 `object`：
+形狀先灰色虛線顯示，跳「Which class is this?」對話框（輸入 / datalist / chips），確認後成為
+當前類別;取消則丟棄形狀。SAM 的 Enter / Space、相同規則;拖新框自動入列只在已有類別時發生。
+儲存路徑遇到空類別會明確報錯而不是建立類別。情境 `tests/ui_scenarios/E2-annotator.md` B/C/D。
+

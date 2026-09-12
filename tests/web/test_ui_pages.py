@@ -122,6 +122,9 @@ def test_annotator_has_the_sam_tool(client):
     # SAM-T5: several objects per Enter — a "Next object" control and the
     # queue in the tool's state
     assert 'id="sam-next"' in html and "queued: []" in html
+    # a finished shape never gets a made-up class: the page asks instead
+    assert 'id="label-modal"' in html and 'id="label-input"' in html
+    assert '|| "object"' not in html
     # SAM-T6: boxes are prompts — per shape (⬠ / P), per image, and per class
     # across the project from the Auto-label dialog
     assert 'data-poly="${i}"' in html and 'case "KeyP"' in html

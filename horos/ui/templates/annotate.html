@@ -488,6 +488,24 @@
   </div>
 </div>
 
+<!-- class prompt: a new shape drawn with an empty Object Class (no silent "object") -->
+<div class="modal" id="label-modal">
+  <div class="card" style="width:360px">
+    <h4 style="margin:0 0 6px">Which class is this?</h4>
+    <p style="color:var(--dim);font-size:12px;margin:0 0 8px">
+      Object Class was empty. Name the class of the shape you just drew — it also becomes
+      the current class for the next shapes.</p>
+    <input type="text" id="label-input" list="label-datalist" placeholder="e.g. car, person"
+           style="width:100%" autocomplete="off">
+    <datalist id="label-datalist"></datalist>
+    <div id="label-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <button class="btn primary" id="label-ok" style="flex:1">Use class (Enter)</button>
+      <button class="btn" id="label-cancel">Discard shape (Esc)</button>
+    </div>
+  </div>
+</div>
+
 <!-- shortcuts modal -->
 <div class="modal" id="help-modal">
   <div class="card">
@@ -918,7 +936,8 @@ const Page = {
     return anns;
   },
   async _resolveCategory(name) {
-    name = (name || "object").trim() || "object";
+    name = (name || "").trim();
+    if (!name) throw new Error("A shape has no class — select it and type one in Object Class");
     this.sessionNames.add(name);
     let cat = this.categories.find((c) => c.name === name);
     if (!cat) {
@@ -1042,6 +1061,7 @@ const Page = {
   _bindKeys() {
     window.addEventListener("keydown", (e) => {
       if ($("editor-view").style.display !== "block") return;
+      if (this._labelPrompt) return;  // naming a shape: the prompt owns the keyboard
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.isComposing) return;
       const code = e.code;
@@ -1169,7 +1189,8 @@ const Page = {
         if (!this._labelEditBase) {
           this._labelEditBase = JSON.stringify(this.editorShapes);
         }
-        this.editorShapes[this.selectedShapeIdx].label = e.target.value.trim() || "object";
+        const typed = e.target.value.trim();
+        if (typed) this.editorShapes[this.selectedShapeIdx].label = typed;
         this._drawCanvas();
       }
       this.renderChips();
@@ -1382,9 +1403,22 @@ const Page = {
 
     if (this.activeTool === "sam") this._samDraw(ctx, inv);
 
+    if (this.pendingShape) {  // finished, waiting for its class
+      const p = this.pendingShape;
+      ctx.strokeStyle = "#9aa0a6"; ctx.lineWidth = 2 * inv; ctx.setLineDash([6 * inv, 4 * inv]);
+      ctx.beginPath();
+      if (p.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = p.points;
+        ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      } else {
+        p.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+    }
     if (this.isDrawing && this.currentPoints.length) {
-      const cls = $("class-input").value.trim() || "object";
-      ctx.strokeStyle = this._getColor(cls);
+      const cls = $("class-input").value.trim();
+      ctx.strokeStyle = cls ? this._getColor(cls) : "#9aa0a6";
       ctx.lineWidth = 2 * inv;
       if (this.activeTool === "rect" && this.currentPoints.length === 2) {
         const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
@@ -1613,7 +1647,9 @@ const Page = {
           const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
           if (w > 2 && h > 2) {
             // a fresh box always means another object: park the current mask
-            if (this.sam.candidate && (this.sam.points.length || this.sam.box)) this._samQueue(false);
+            // (only with a class typed — asking mid-drag would lose the new box)
+            if (this.sam.candidate && (this.sam.points.length || this.sam.box)
+                && $("class-input").value.trim()) this._samQueue(false);
             this.sam.box = [Math.min(x1, x2), Math.min(y1, y2), w, h];
           }
         } else {
@@ -1624,20 +1660,16 @@ const Page = {
         this._drawCanvas();
       } else if (this.activeTool === "rect" && this.isDrawing) {
         this.isDrawing = false;
-        const cls = $("class-input").value.trim() || "object";
         const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
         const min = 5 / (this.baseScale * this.zoom);
+        this.currentPoints = [];
         if (Math.abs(x2 - x1) > min && Math.abs(y2 - y1) > min) {
-          this._pushHistory();
-          this.editorShapes.push({
-            label: cls, shape_type: "rectangle",
+          this._addShape({
+            shape_type: "rectangle",
             points: [[Math.min(x1, x2), Math.min(y1, y2)],
                      [Math.max(x1, x2), Math.max(y1, y2)]],
           });
-          this._triggerChange();
-          this.selectShape(this.editorShapes.length - 1);
         }
-        this.currentPoints = [];
         this._drawCanvas();
       }
     };
@@ -1685,7 +1717,7 @@ const Page = {
     $("sam-accept").textContent = total > 1 ? `Accept ${total} (Enter)` : "Accept (Enter)";
     $("sam-next").disabled = !live;
     $("sam-clear").disabled = !(has || this.sam.queued.length);
-    $("sam-class-echo").textContent = $("class-input").value.trim() || "object";
+    $("sam-class-echo").textContent = $("class-input").value.trim() || "the class you will be asked for";
   },
   _samReset(redraw, dropQueue = false) {
     this.sam.points = []; this.sam.labels = []; this.sam.box = null;
@@ -1709,10 +1741,12 @@ const Page = {
     if (n) this._samSetStatus(`${n} object${n > 1 ? "s" : ""} queued — prompt the next one, Enter accepts all`);
   },
   // Space / a new box: keep the current mask with its class, prompt the next object
-  _samQueue(redraw = true) {
+  async _samQueue(redraw = true) {
     const cand = this.sam.candidate;
     if (!cand || !cand.points.length) return;
-    const cls = $("class-input").value.trim() || "object";
+    const seq = this.sam.seq;
+    const cls = await this._labelFor();
+    if (!cls || seq !== this.sam.seq || this.sam.candidate !== cand) return;  // changed meanwhile
     this.sam.queued.push({ label: cls, shape_type: cand.shape_type,
                            points: cand.points.map((p) => [p[0], p[1]]) });
     this._samReset(redraw);
@@ -1758,12 +1792,14 @@ const Page = {
     this._samQuery();
     this._drawCanvas();
   },
-  _samAccept() {
+  async _samAccept() {
     const cand = this.sam.candidate;
     const items = [...this.sam.queued];
     if (cand && cand.points.length) {
-      items.push({ label: $("class-input").value.trim() || "object",
-                   shape_type: cand.shape_type, points: cand.points });
+      const seq = this.sam.seq;
+      const label = await this._labelFor();
+      if (!label || seq !== this.sam.seq) return;  // discarded, or the prompt changed
+      items.push({ label, shape_type: cand.shape_type, points: cand.points });
     }
     if (!items.length) return;
     this._pushHistory();  // one undo step for the whole batch
@@ -1820,6 +1856,7 @@ const Page = {
       + (kept ? ` · ${kept} kept as box (no mask)` : ""), done ? "ok" : "warn", 2500);
   },
   _samDraw(ctx, inv) {
+    const liveClass = $("class-input").value.trim();
     // parked objects: their own class colour, solid thin edge (not yet written)
     for (const q of this.sam.queued) {
       ctx.beginPath();
@@ -1833,8 +1870,7 @@ const Page = {
       ctx.fillStyle = this._getColor(q.label); ctx.globalAlpha = 0.22; ctx.fill();
       ctx.globalAlpha = 1; ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#ffffff"; ctx.stroke();
     }
-    const cls = $("class-input").value.trim() || "object";
-    const color = this._getColor(cls);
+    const color = liveClass ? this._getColor(liveClass) : "#9aa0a6";
     const cand = this.sam.candidate;
     if (cand && cand.points.length) {
       ctx.beginPath();
@@ -1888,18 +1924,69 @@ const Page = {
 
   _finishPolygon() {
     this.isDrawing = false;
-    const cls = $("class-input").value.trim() || "object";
-    if (this.currentPoints.length > 2) {
-      this._pushHistory();
-      this.editorShapes.push({
-        label: cls, shape_type: "polygon",
-        points: this.currentPoints.map((p) => this._clampPoint(p)),
-      });
-      this._triggerChange();
-      this.selectShape(this.editorShapes.length - 1);
-    }
+    const points = this.currentPoints.map((p) => this._clampPoint(p));
     this.currentPoints = [];
+    if (points.length > 2) this._addShape({ shape_type: "polygon", points });
     this._drawCanvas();
+  },
+  // A finished shape is added WITHOUT switching to the select tool — the
+  // annotator keeps drawing the next one — and never gets a made-up class:
+  // with Object Class empty, the class is asked for (and remembered).
+  async _addShape(shape) {
+    const shapes = this.editorShapes;
+    this.pendingShape = shape;  // drawn in grey while the class is being asked
+    this._drawCanvas();
+    const label = await this._labelFor();
+    this.pendingShape = null;
+    if (this.editorShapes !== shapes) return;  // the image changed meanwhile
+    if (!label) { toast("Shape discarded — no class given", "warn", 1500); this._drawCanvas(); return; }
+    this._pushHistory();
+    this.editorShapes.push({ label, ...shape });
+    this.sessionNames.add(label);
+    this._triggerChange();
+    this.renderShapesList();
+    this.renderChips();
+    this._drawCanvas();
+  },
+  // the class for a new shape: what is typed in Object Class, else ask
+  async _labelFor() {
+    const typed = $("class-input").value.trim();
+    if (typed) return typed;
+    const name = await this._askLabel();
+    if (name) {
+      $("class-input").value = name;
+      this.sessionNames.add(name);
+      this.renderChips();
+      this._samSyncButtons();
+    }
+    return name;
+  },
+  _askLabel() {
+    return new Promise((resolve) => {
+      const modal = $("label-modal"), input = $("label-input");
+      $("label-datalist").innerHTML = this.categories.map((c) => `<option value="${c.name}">`).join("");
+      $("label-chips").innerHTML = this._visibleCategories().map((c) => `
+        <span class="chip" data-name="${c.name}"><span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
+      const cleanup = () => {
+        input.removeEventListener("keydown", onKey);
+        $("label-ok").onclick = null; $("label-cancel").onclick = null;
+      };
+      const finish = (value) => { modal.style.display = "none"; this._labelPrompt = false; cleanup(); resolve(value); };
+      const ok = () => { const v = input.value.trim(); if (!v) { input.focus(); return; } finish(v); };
+      const onKey = (e) => {
+        e.stopPropagation();  // the editor's shortcuts must not fire while naming
+        if (e.key === "Enter") { e.preventDefault(); ok(); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(null); }
+      };
+      [...$("label-chips").children].forEach((el) => { el.onclick = () => finish(el.dataset.name); });
+      $("label-ok").onclick = ok;
+      $("label-cancel").onclick = () => finish(null);
+      input.addEventListener("keydown", onKey);
+      input.value = "";
+      this._labelPrompt = true;
+      modal.style.display = "flex";
+      input.focus();
+    });
   },
 
   // ------------------------------------------------------ review + assist
