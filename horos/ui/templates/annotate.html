@@ -299,12 +299,13 @@
           <button class="tool-btn ai" data-tool="ai-text"
             title="AI text prompt — type object names (e.g. helmet, vest), then Apply. OWLv2 pre-labels them on this image. (shortcut 4)">T</button>
           <button class="tool-btn ai" data-tool="sam"
-            title="SAM — click an object (Shift+click marks what is NOT it) or drag a rough box; a mask preview appears, Enter accepts it. (shortcut 5)">✦</button>
+            title="SAM — left-click an object, right-click (or Shift+click) what is NOT it, or drag a rough box; a mask preview appears, Enter accepts it. Right-drag still pans. (shortcut 5)">✦</button>
         </div>
         <div id="sam-panel" style="display:none;margin-top:10px">
           <div style="font-size:11px;color:var(--dim);line-height:1.5">
-            Click the object — <b>Shift+click</b> marks what is <i>not</i> it — or drag a
-            rough box. The preview updates after every click. <b>Enter</b> accepts it as
+            Left-click the object; <b>right-click</b> (or Shift+click) what is <i>not</i> it;
+            or drag a rough box. Right-drag still pans. The preview updates after every
+            click. <b>Enter</b> accepts it as
             <span id="sam-class-echo" style="color:var(--text)">object</span>,
             <b>Backspace</b> removes the last point, <b>Esc</b> clears.</div>
           <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
@@ -1417,6 +1418,8 @@ const Page = {
       if (!this.editorImage) return;
       if (e.button === 2) {
         e.preventDefault();
+        // right-DRAG pans; in the SAM tool a right-CLICK (no movement) is a
+        // negative point — decided on mouseup from how far the mouse moved
         this.panDragging = true;
         this.panDragStart = [e.clientX, e.clientY];
         this.panOrigin = [this.panX, this.panY];
@@ -1520,10 +1523,20 @@ const Page = {
       }
     };
 
-    canvas.onmouseup = () => {
+    canvas.onmouseup = (e) => {
       if (this.panDragging) {
+        const moved = this.panDragStart
+          ? Math.hypot(e.clientX - this.panDragStart[0], e.clientY - this.panDragStart[1]) : 99;
         this.panDragging = false; this.panDragStart = null; this.panOrigin = null;
-        this._updateCursor(); return;
+        this._updateCursor();
+        if (e.button === 2 && moved < 4 && this.activeTool === "sam" && this.editorImage) {
+          const [x, y] = this._getPos(e, canvas);
+          this.sam.points.push(this._clampPoint([x, y]));
+          this.sam.labels.push(0);
+          this._samQuery();
+          this._drawCanvas();
+        }
+        return;
       }
       if (this.activeTool === "select") {
         if (this.dragMode) {
