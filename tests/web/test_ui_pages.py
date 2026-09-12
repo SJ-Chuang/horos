@@ -14,6 +14,7 @@ PAGES = {
     "/annotate": "annotate",
     "/train": "train",
     "/evaluate": "evaluate",
+    "/experiments": "experiments",
     "/lab": "lab",
 }
 
@@ -57,3 +58,15 @@ def test_pages_only_call_the_web_api(client):
         html = client.get(path).get_data(as_text=True)
         for call in re.findall(r'fetch\(\s*"([^"]+)"', html):
             assert call.startswith("/api/v1"), f"{path} fetches {call} directly"
+
+
+def test_experiments_page_holds_the_comparison_table_and_editor(client):
+    # E7-T6: the run table, the side-by-side panel and the notes/tags editor
+    html = client.get("/experiments").get_data(as_text=True)
+    for element in ("runs-table", "sort-select", "ref-select", "compare-panel",
+                    "notes-input", "tags-input", "save-btn", "link-train"):
+        assert f'id="{element}"' in html, element
+    # E7-S2: the export flow is entered from the table via the Training page's deep link
+    assert "/train#" in html
+    # every endpoint the page talks to exists under /api/v1/experiments
+    assert "/experiments/runs" in html and "/experiments/compare" in html
