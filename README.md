@@ -4,6 +4,7 @@
 
 <br>
 
+[![CI][ci-shield]][ci-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![License][license-shield]][license-url]
@@ -296,6 +297,8 @@ shown in the UI, and stamped into every training run.
 [OWLv2](https://arxiv.org/abs/2306.09683) by Google Research ·
 [Segment Anything](https://segment-anything.com/) by Meta AI
 
+[ci-shield]: https://img.shields.io/github/actions/workflow/status/SJ-Chuang/horos/ci.yml?branch=main&style=for-the-badge&label=CI
+[ci-url]: https://github.com/SJ-Chuang/horos/actions/workflows/ci.yml
 [stars-shield]: https://img.shields.io/github/stars/SJ-Chuang/horos.svg?style=for-the-badge
 [stars-url]: https://github.com/SJ-Chuang/horos/stargazers
 [issues-shield]: https://img.shields.io/github/issues/SJ-Chuang/horos.svg?style=for-the-badge

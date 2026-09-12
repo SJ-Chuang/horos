@@ -92,3 +92,15 @@ FastSAM(AGPL)、EdgeSAM(S-Lab 僅研究用)、ultralytics 的 SAM 封裝(AGPL)�
 參考:
 - https://huggingface.co/docs/transformers/model_doc/sam2
 - https://huggingface.co/facebook/sam2.1-hiera-tiny
+
+## CI(R7:Ubuntu + Windows runner)
+
+**完成(2026-09-12)。** `.github/workflows/ci.yml`:
+
+| 卡 | 內容 | 完成定義 |
+|---|---|---|
+| CI-T1 | GitHub Actions:`invariants` job 先跑 `tests/test_invariants.py` 與 ruff;`core` 矩陣 Ubuntu × Windows × Python 3.10 / 3.12,torch-free 安裝(加 onnx / onnxruntime / matplotlib / openpyxl)跑整套測試;`ml` job(CPU torch 全棧)僅每週排程或手動觸發;`.gitattributes` 固定 LF | Actions 兩個 OS 綠燈;README 徽章 |
+
+設計決定:每次 push 的矩陣刻意不裝 torch —— 那正是 `pip install horos` 使用者(只標註)的環境,
+需要 ML stack 的測試自行 skip、假 backend 覆蓋訓練 / 匯出 / 服務流程;全棧測試太慢太大,留給排程。
+

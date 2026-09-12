@@ -1,0 +1,6 @@
+# R7: one line ending everywhere. Windows runners default to autocrlf=true,
+# which would rewrite fixtures and templates to CRLF on checkout.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.svg text

@@ -324,6 +324,11 @@ def test_infer_overlay_dir_writes_the_drawn_image(tmp_path, monkeypatch, capsys)
 
     project, record = completed_fake_run(tmp_path, epochs=1)
     monkeypatch.chdir(project.root)
+    import horos.cli as cli_mod
+
+    # the fake backend needs no ML stack: bypass the pre-flight like the
+    # other CLI tests do, so this runs on the torch-free CI matrix too
+    monkeypatch.setattr(cli_mod, "_ml_preflight", lambda command: None)
     probe = make_image(tmp_path / "probe.png", 64, 48)
     code = main(["infer", str(probe), "--overlay-dir", str(tmp_path / "out")])
     assert code == 0

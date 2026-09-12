@@ -1,0 +1,96 @@
+# CI (R7): every push and pull request runs on Ubuntu AND Windows.
+#
+# The per-push matrix is torch-free on purpose: `pip install horos` ships
+# without the ML stack, so this is exactly the environment an annotation-only
+# user has, and it keeps a run under ten minutes. Tests that need torch /
+# rfdetr / transformers skip themselves; the fake backend covers the
+# training, export and serving pipelines end to end without them.
+# tests/test_invariants.py (R1 / R1b / R2) runs first, as CLAUDE.md mandates.
+#
+# The `ml` job installs the real stack (CPU torch) and runs the whole suite
+# including the RF-DETR / OWLv2 / SAM tests on a schedule and on demand —
+# too slow (and too large a download) for every push.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"  # Mondays 03:17 UTC: the full ML stack
+  workflow_dispatch:
+    inputs:
+      ml:
+        description: "Also run the full ML-stack job"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  invariants:
+    name: invariants + lint (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - name: R1 / R1b / R2 invariants (first, as mandated)
+        run: python -m pytest tests/test_invariants.py -q
+      - run: ruff check horos tests
+
+  core:
+    name: core (${{ matrix.os }}, py${{ matrix.python }})
+    needs: invariants
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install horos (torch-free) + light optional deps the tests can use
+        # onnx/onnxruntime exercise the framework-free executor, matplotlib
+        # and openpyxl the training-report export — all small and Apache/MIT.
+        run: python -m pip install -e ".[dev]" onnx onnxruntime matplotlib openpyxl
+      - name: import horos is torch-free (R1b) and the CLI answers
+        run: |
+          python -c "import horos, sys; assert 'torch' not in sys.modules"
+          horos --help
+      - name: Test suite
+        run: python -m pytest tests -q -rs --durations=15
+
+  ml:
+    name: full ML stack (ubuntu, CPU torch)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.ml)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the CPU ML stack
+        run: |
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ".[ml,dev]"
+      - run: horos doctor || true
+      - name: Test suite (real backends on CPU)
+        run: python -m pytest tests -q -rs --durations=25
