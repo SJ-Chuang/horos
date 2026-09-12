@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from horos.backends import weights
 from horos.backends.base import (
+    MODEL_LOAD_LOCK,
     Event,
     ExportSpec,
     ImageEmbedding,
@@ -55,7 +56,9 @@ class SAMBackend(TransformersPromptableMixin, PromptableSegmenter):
     def _ensure_model(self):
         if self._model is not None:
             return
-        with translate_backend_errors(self.family):
+        with MODEL_LOAD_LOCK, translate_backend_errors(self.family):
+            if self._model is not None:  # another thread loaded it while we waited
+                return
             import torch  # noqa: F401 — resolved lazily on first use (R1b)
             from transformers import SamModel, SamProcessor
 

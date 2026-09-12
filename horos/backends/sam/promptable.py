@@ -10,6 +10,7 @@ serves both backends. Imports of torch/transformers stay inside methods (R1b).
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,21 @@ class TransformersPromptableMixin:
 
     _needs_reshaped_sizes: bool = False  # SAM v1's post_process_masks wants them
 
+    @property
+    def _infer_lock(self) -> threading.RLock:
+        # one prompt at a time per model instance: the processor and the
+        # CUDA graph are not reentrant, and request threads do overlap
+        lock = getattr(self, "_infer_lock_obj", None)
+        if lock is None:
+            lock = self._infer_lock_obj = threading.RLock()
+        return lock
+
     def embed(self, image: Path) -> ImageEmbedding:
         self._ensure_model()
+        with self._infer_lock:
+            return self._embed(image)
+
+    def _embed(self, image: Path) -> ImageEmbedding:
         import torch
         from PIL import Image
 
@@ -45,6 +59,10 @@ class TransformersPromptableMixin:
     def segment(self, embedding: ImageEmbedding, prompt: SegmentPrompt) -> SegmentResult:
         prompt = prompt.validated()
         self._ensure_model()
+        with self._infer_lock:
+            return self._segment(embedding, prompt)
+
+    def _segment(self, embedding: ImageEmbedding, prompt: SegmentPrompt) -> SegmentResult:
         import numpy as np
         import torch
         from PIL import Image

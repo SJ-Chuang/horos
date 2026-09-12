@@ -10,6 +10,7 @@ else. Backends must not invent their own reporting format.
 
 from __future__ import annotations
 
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
@@ -129,6 +130,14 @@ def parse_event(data: dict[str, Any] | str | bytes) -> Event:
 def dump_event(event: Event) -> str:
     """One-line JSON, suitable for JSONL streams and SSE data fields."""
     return event.model_dump_json()
+
+
+#: Serialises model construction across the process. transformers loads
+#: weights through process-global state (its lazy import machinery and the
+#: meta-device init context), so two request threads calling from_pretrained
+#: at once leave one model with meta tensors ("Cannot copy out of meta
+#: tensor") or a half-imported module. Every backend's _ensure_model takes it.
+MODEL_LOAD_LOCK = threading.RLock()
 
 
 # ------------------------------------------------------------------------- specs

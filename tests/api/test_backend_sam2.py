@@ -107,3 +107,44 @@ def test_real_click_box_and_negative_prompts(key, tmp_path):
         embedding, SegmentPrompt(points=[(160, 120), (20, 20)], labels=[1, 0])
     )
     assert mixed.bbox is not None and mixed.score > 0.5
+
+
+def test_concurrent_first_use_loads_the_model_once_and_safely(monkeypatch):
+    """Two request threads hitting a not-yet-loaded backend must serialise
+    the load (transformers' loader is not thread-safe) — asserted on a stub
+    that records overlapping from_pretrained calls."""
+    import threading
+    import time
+
+    from horos.backends import base as base_mod
+    from horos.backends.sam2 import SAM2Backend
+
+    backend = SAM2Backend(get_model_info("sam2.1-tiny"))
+    active, overlaps, loads = [], [], []
+    lock = threading.Lock()
+
+    class _Proc:
+        pass
+
+    def fake_ensure(self):
+        if self._model is not None:
+            return
+        with base_mod.MODEL_LOAD_LOCK:
+            if self._model is not None:
+                return
+            with lock:
+                if active:
+                    overlaps.append(1)
+                active.append(1)
+            time.sleep(0.05)  # a slow from_pretrained
+            loads.append(1)
+            with lock:
+                active.pop()
+            self._processor = _Proc()
+            self._model = object()
+
+    monkeypatch.setattr(SAM2Backend, "_ensure_model", fake_ensure)
+    threads = [threading.Thread(target=backend._ensure_model) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert loads == [1] and overlaps == []
