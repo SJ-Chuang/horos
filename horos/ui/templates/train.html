@@ -926,11 +926,19 @@ function updateModelFormatNote() {
   $("model-export-btn").disabled = exporting || (fmt === "tensorrt" && !!trtOpt.disabled);
 }
 
+// reports the browser can render (PNG/PDF) get "view" next to "download"
+function artifactLinks(a) {
+  const view = a.view_url
+    ? `<a href="${a.view_url}" target="_blank" rel="noopener" style="color:var(--accent)">view</a> · `
+    : "";
+  return `${view}<a href="${a.download_url}" style="color:var(--accent)">download</a>`;
+}
+
 async function loadExports(runId) {
   let items = [];
   try { items = await api(`/train/runs/${runId}/exports`); } catch (e) { return; }
   $("export-list").innerHTML = items.length ? items.map((a) =>
-    `<li><a href="${a.download_url}" style="color:var(--accent)">${a.name}</a>
+    `<li><span class="mono">${a.name}</span> ${artifactLinks(a)}
        <span class="note">· ${a.kind} · ${a.format} · ${fmtBytes(a.size_bytes)} ·
        ${new Date(a.created_at).toLocaleString()}</span></li>`).join("")
     : '<li class="note">nothing exported yet</li>';
@@ -944,7 +952,7 @@ $("report-export-btn").onclick = async () => {
   try {
     const r = await post(`/train/runs/${activeRun}/export/report`,
                          { format: $("report-format").value });
-    status.innerHTML = `ready — <a href="${r.download_url}" style="color:var(--accent)">download ${r.name}</a>`;
+    status.innerHTML = `ready — ${r.name}: ${artifactLinks(r)}`;
     await loadExports(activeRun);
   } catch (e) {
     status.textContent = "failed: " + e.message;

@@ -44,6 +44,11 @@
                           overflow-y: auto; align-content: start;
                           scrollbar-width: thin;
                           scrollbar-color: var(--line) transparent; }
+  /* a select's intrinsic width is its longest option: without min-width:0 a
+     long label widened the whole column past its 420px track and the column
+     clipped every panel (seen 2026-09-12) */
+  #left-col > .panel { min-width: 0; overflow-wrap: anywhere; }
+  #left-col select, #left-col pre { min-width: 0; max-width: 100%; }
   #left-col::-webkit-scrollbar, #right-col::-webkit-scrollbar { width: 8px; }
   #left-col::-webkit-scrollbar-thumb, #right-col::-webkit-scrollbar-thumb {
     background: var(--line); border-radius: 4px; }
@@ -181,11 +186,13 @@
     <h2>Serve</h2>
     <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
       Start a standalone inference service for the selected run — the same
-      <code>horos serve</code> that runs on the deployment machine. It answers
-      <code>POST /predict</code>, <code>GET /health</code> and <code>GET /model_card</code>.</p>
+      <code>horos serve</code> that runs on the deployment machine
+      (<code>POST /predict</code>, <code>GET /health</code>, <code>GET /model_card</code>).</p>
+    <div class="row" style="gap:8px;margin-bottom:8px">
+      <label for="serve-format" style="color:var(--dim);font-size:13px">Source</label>
+      <select id="serve-format" style="flex:1;min-width:0"></select>
+    </div>
     <div class="row" style="gap:10px">
-      <label style="display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px">
-        Source <select id="serve-format"></select></label>
       <label style="display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px">
         Port <input type="number" id="serve-port" value="8080" min="1" max="65535"
                     style="width:86px"></label>
@@ -513,12 +520,12 @@ async function refreshServeFormats() {
       .filter((a) => a.kind === "model").map((a) => a.format);
   } catch (e) { /* no exports listing: checkpoint only */ }
   const options = [
-    ["onnx", "ONNX bundle — framework-free (onnxruntime), what a Jetson serves"],
+    ["onnx", "ONNX bundle (onnxruntime, framework-free)"],
     ["pytorch", "PyTorch weights bundle"],
-    ["checkpoint", "training checkpoint (needs the training stack)"],
+    ["checkpoint", "training checkpoint (training stack)"],
   ].map(([fmt, label]) => {
     const missing = fmt !== "checkpoint" && !exported.includes(fmt);
-    return `<option value="${fmt}" ${missing ? "disabled" : ""}>${label}${missing ? " — export it on the Training page first" : ""}</option>`;
+    return `<option value="${fmt}" ${missing ? "disabled" : ""}>${label}${missing ? " — not exported yet" : ""}</option>`;
   });
   sel.innerHTML = options.join("");
   sel.value = exported.includes("onnx") ? "onnx" : "checkpoint";

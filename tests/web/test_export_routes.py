@@ -47,6 +47,14 @@ def test_report_export_and_download(client, run):
     assert response.status_code == 200
     assert response.data[:8] == b"\x89PNG\r\n\x1a\n"
     assert "attachment" in response.headers.get("Content-Disposition", "")
+    # a viewable report also offers an inline URL the browser renders in a tab
+    assert body["view_url"] == body["download_url"] + "?inline=1"
+    inline = client.get(body["view_url"])
+    assert inline.status_code == 200 and inline.mimetype == "image/png"
+    assert "attachment" not in inline.headers.get("Content-Disposition", "")
+    listed = client.get(f"/api/v1/train/runs/{record.run_id}/exports").get_json()
+    png = next(a for a in listed if a["name"] == "training_report.png")
+    assert png["view_url"].endswith("?inline=1")
 
 
 def test_model_export_job_and_bundle_download(client, run):
@@ -62,6 +70,9 @@ def test_model_export_job_and_bundle_download(client, run):
     listed = client.get(f"/api/v1/train/runs/{record.run_id}/exports").get_json()
     entry = next(a for a in listed if a["name"] == bundle)
     assert entry["kind"] == "model" and entry["download_url"].endswith(bundle)
+    assert "view_url" not in entry  # a zip only downloads, even with ?inline=1
+    forced = client.get(entry["download_url"] + "?inline=1")
+    assert "attachment" in forced.headers.get("Content-Disposition", "")
     response = client.get(entry["download_url"])
     assert response.status_code == 200
     with zipfile.ZipFile(BytesIO(response.data)) as zf:
