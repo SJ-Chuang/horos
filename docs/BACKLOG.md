@@ -29,10 +29,13 @@ UI 為獨立的 `/experiments` 頁;匯出流程由該頁深連結到 `/train#<ru
 | 任務 | 狀態 | 備註 |
 |---|---|---|
 | E8-T3 TFLite 匯出 | 未做 | `MODEL_FORMATS` 目前只有 pytorch / onnx / tensorrt |
-| E8-T7 本地推論服務 | 未做 | 已有 `/train/runs/<id>/infer` 端點,但沒有獨立的 serve 服務與 CLI 子命令;缺 `tests/web/test_serve.py` |
 
 已完成:E8-T1、T2、T4、T5、T6、T8(測試集中在 `tests/api/test_export_model.py`
 與 `tests/api/test_export_e2e.py`,未依 CLAUDE.md 逐卡命名)。
+
+E8-T7 完成(2026-09-12):`horos serve` 獨立服務、`horos/backends/runtime/` 免框架 ONNX
+執行器、Lab 頁 Serve 區塊;設計決定見 `horos/api/serve.py` 模組 docstring。
+TensorRT engine / TFLite 的執行明確拒絕,待 E8-T3 與後續。
 
 ## 點/框 prompt 的互動式標註輔助(SAM 2.1)
 
