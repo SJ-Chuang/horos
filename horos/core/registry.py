@@ -160,6 +160,38 @@ _MODELS: dict[str, ModelInfo] = {
             entrypoint="horos.backends.sam:SAMBackend",
             hf_id="facebook/sam-vit-base",
         ),
+        # SAM 2.1 (code + weights Apache 2.0): the interactive click/box
+        # assist in the annotator. tiny is the Jetson-friendly default.
+        # Deliberately absent: SAM 3 (custom SAM license), FastSAM (AGPL),
+        # EdgeSAM (research only), ultralytics wrappers (AGPL) — §9.
+        ModelInfo(
+            key="sam2.1-tiny",
+            family="sam2",
+            display_name="SAM 2.1 Hiera-Tiny (interactive segmenter)",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url="https://huggingface.co/facebook/sam2.1-hiera-tiny",
+            input_resolution=1024,
+            params_millions=38.9,
+            latency_hint="click/box to mask; encoder once per image, ms per click",
+            entrypoint="horos.backends.sam2:SAM2Backend",
+            hf_id="facebook/sam2.1-hiera-tiny",
+        ),
+        ModelInfo(
+            key="sam2.1-small",
+            family="sam2",
+            display_name="SAM 2.1 Hiera-Small (interactive segmenter)",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url="https://huggingface.co/facebook/sam2.1-hiera-small",
+            input_resolution=1024,
+            params_millions=46.0,
+            latency_hint="slightly better masks than tiny at a modest cost",
+            entrypoint="horos.backends.sam2:SAM2Backend",
+            hf_id="facebook/sam2.1-hiera-small",
+        ),
     ]
 }
 

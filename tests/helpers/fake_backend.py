@@ -163,6 +163,62 @@ class FakeRefinerBackend:
         return out
 
 
+class FakePromptableSegmenter:
+    """Deterministic interactive segmenter (SAM-T1/T2 tests): the mask is the
+    prompt's box, or the bounding box of the positive points padded by 10 px;
+    a negative point inside that box shaves its bottom half off. Counts
+    encoder runs so the embedding cache can be asserted."""
+
+    family = "fake-segmenter"
+
+    def __init__(self):
+        self.embed_calls: list[str] = []
+        self.segment_calls = 0
+
+    def embed(self, image):
+        from PIL import Image
+
+        from horos.backends.base import ImageEmbedding
+
+        self.embed_calls.append(str(image))
+        with Image.open(image) as im:
+            width, height = im.size
+        return ImageEmbedding(width, height, {"image": str(image)}, "fake-segmenter")
+
+    def segment(self, embedding, prompt):
+        from horos.backends.base import SegmentResult
+
+        prompt = prompt.validated()
+        self.segment_calls += 1
+        if prompt.box is not None:
+            x, y, w, h = prompt.box
+        else:
+            pos = [p for p, label in zip(prompt.points, prompt.labels, strict=True) if label == 1]
+            if not pos:
+                return SegmentResult(polygon=None, bbox=None, score=0.0, area=0)
+            xs, ys = [p[0] for p in pos], [p[1] for p in pos]
+            x, y = max(0.0, min(xs) - 10), max(0.0, min(ys) - 10)
+            w = min(embedding.width, max(xs) + 10) - x
+            h = min(embedding.height, max(ys) + 10) - y
+        neg_inside = any(
+            label == 0 and x <= px <= x + w and y <= py <= y + h
+            for (px, py), label in zip(prompt.points, prompt.labels, strict=True)
+        )
+        if neg_inside:
+            h = h / 2
+        polygon = [x, y, x + w, y, x + w, y + h, x, y + h]
+        return SegmentResult(
+            polygon=polygon, bbox=(x, y, w, h), score=0.9 if not neg_inside else 0.8,
+            area=int(w * h),
+        )
+
+    def polygons_for_boxes(self, image, boxes):
+        embedding = self.embed(image)
+        from horos.backends.base import SegmentPrompt
+
+        return [self.segment(embedding, SegmentPrompt(box=b)).polygon for b in boxes]
+
+
 def _spawn_probe_child(marker_path: str) -> None:
     """Runs in a spawn-context child process — must be module-level picklable."""
     Path(marker_path).write_text("spawned-child-ran", encoding="utf-8")

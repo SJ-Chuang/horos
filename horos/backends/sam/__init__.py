@@ -14,14 +14,18 @@ from typing import TYPE_CHECKING
 
 from horos.backends import weights
 from horos.backends.base import (
-    BoxToMaskBackend,
     Event,
     ExportSpec,
+    ImageEmbedding,
     ImagePrediction,
+    PromptableSegmenter,
+    SegmentPrompt,
+    SegmentResult,
     TrainSpec,
     translate_backend_errors,
 )
 from horos.backends.sam.polygonize import mask_to_polygon
+from horos.backends.sam.promptable import TransformersPromptableMixin
 from horos.errors import BackendError
 
 if TYPE_CHECKING:
@@ -33,8 +37,9 @@ _NOT_A_DETECTOR = (
 )
 
 
-class SAMBackend(BoxToMaskBackend):
+class SAMBackend(TransformersPromptableMixin, PromptableSegmenter):
     family = "sam"
+    _needs_reshaped_sizes = True
 
     def __init__(
         self,
@@ -96,6 +101,15 @@ class SAMBackend(BoxToMaskBackend):
                 mask = masks[i, 0].numpy()
                 polygons.append(mask_to_polygon(mask))
             return polygons
+
+    # -- interactive prompts (SAM-T1) ------------------------------------------
+    def embed(self, image: Path) -> ImageEmbedding:
+        with translate_backend_errors(self.family):
+            return TransformersPromptableMixin.embed(self, image)
+
+    def segment(self, embedding: ImageEmbedding, prompt: SegmentPrompt) -> SegmentResult:
+        with translate_backend_errors(self.family):
+            return TransformersPromptableMixin.segment(self, embedding, prompt)
 
     # -- not a detector -------------------------------------------------------
     def train(self, spec: TrainSpec) -> Iterator[Event]:

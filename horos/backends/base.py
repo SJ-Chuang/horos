@@ -254,6 +254,76 @@ class BoxToMaskBackend(ModelBackend):
         same order; None where no usable mask came back."""
 
 
+class SegmentPrompt(BaseModel):
+    """One interactive prompt on an image (pixel coordinates): positive /
+    negative clicks and/or a rough COCO-xywh box (SAM-T1)."""
+
+    points: list[tuple[float, float]] = Field(default_factory=list)
+    #: 1 = this is the object, 0 = this is not; one per point
+    labels: list[int] = Field(default_factory=list)
+    box: tuple[float, float, float, float] | None = None
+
+    def validated(self) -> SegmentPrompt:
+        if len(self.points) != len(self.labels):
+            raise ValueError(
+                f"points ({len(self.points)}) and labels ({len(self.labels)}) differ in length"
+            )
+        if any(label not in (0, 1) for label in self.labels):
+            raise ValueError("labels must be 1 (positive) or 0 (negative)")
+        if not self.points and self.box is None:
+            raise ValueError("a prompt needs at least one point or a box")
+        if self.box is not None and (self.box[2] <= 0 or self.box[3] <= 0):
+            raise ValueError("box width and height must be positive")
+        return self
+
+
+class SegmentResult(BaseModel):
+    """What one prompt produced: the mask as a polygon, its box and the
+    model's own confidence (predicted IoU)."""
+
+    polygon: list[float] | None = None  # flat [x1, y1, x2, y2, ...], image pixels
+    bbox: tuple[float, float, float, float] | None = None  # COCO xywh of the mask
+    score: float = 0.0
+    area: int = 0
+
+
+class ImageEmbedding:
+    """Opaque handle for one image's encoder output (SAM-T2 caches these).
+    `data` is whatever the backend needs to run its prompt decoder again."""
+
+    __slots__ = ("width", "height", "data", "model_key")
+
+    def __init__(self, width: int, height: int, data: Any, model_key: str):
+        self.width = width
+        self.height = height
+        self.data = data
+        self.model_key = model_key
+
+
+class PromptableSegmenter(BoxToMaskBackend):
+    """Interactive segmenters (SAM 2.1, SAM): the image encoder runs ONCE per
+    image (`embed`), every click then runs only the light prompt decoder
+    (`segment`). Box-batch refinement comes for free through the same path."""
+
+    @abstractmethod
+    def embed(self, image: Path) -> ImageEmbedding:
+        """Run the image encoder; the handle is reusable across prompts."""
+
+    @abstractmethod
+    def segment(self, embedding: ImageEmbedding, prompt: SegmentPrompt) -> SegmentResult:
+        """Decode one prompt against a cached embedding."""
+
+    def polygons_for_boxes(
+        self, image: Path, boxes: list[tuple[float, float, float, float]]
+    ) -> list[list[float] | None]:
+        if not boxes:
+            return []
+        embedding = self.embed(image)
+        return [
+            self.segment(embedding, SegmentPrompt(box=box)).polygon for box in boxes
+        ]
+
+
 # ------------------------------------------------------------------ error bridge
 
 

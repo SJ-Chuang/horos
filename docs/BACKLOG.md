@@ -39,6 +39,16 @@ E8-T3 完成(2026-09-12):ONNX → onnx2tf → TFLite(float32 + float16,輸入維
 
 ## 點/框 prompt 的互動式標註輔助(SAM 2.1)
 
+**進行中(2026-09-12,設計選項已確認「照建議」)。任務卡:**
+
+| 卡 | 內容 | 完成定義 |
+|---|---|---|
+| SAM-T1 | `PromptableSegmenter` 介面(embed 一次、segment 多次)、SAM 2.1 backend、SAM v1 補實作、registry | `tests/api/test_backend_sam2.py` |
+| SAM-T2 | embedding LRU 快取、`segment_image` / `prefetch_embedding` API(只回候選、不寫入) | `tests/api/test_segment_cache.py`、`tests/api/test_segment_interactive.py` |
+| SAM-T3 | Web API `POST /images/<id>/segment`、`/segment/prefetch`;能力清單 `assist_interactive` | `tests/web/test_segment_routes.py` |
+| SAM-T4 | 標註頁「SAM」工具:點/負點/框、即時預覽、Enter 接受、輸出 polygon/bbox | 介面情境 `tests/ui_scenarios/SAM-T4.md` |
+
+
 **現況(2026-09-10)**:`horos/backends/sam/` 已有 SAM v1(`facebook/sam-vit-base`,
 Apache 2.0)作為**框轉 polygon 的精修器**,供 E3 autolabel 的 polygon 輸出與標註頁的
 `POST /images/<id>/assist` 使用。這是批次式、以框為 prompt 的單次呼叫,每次都重跑
