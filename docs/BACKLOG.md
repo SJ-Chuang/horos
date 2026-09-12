@@ -104,6 +104,27 @@ FastSAM(AGPL)、EdgeSAM(S-Lab 僅研究用)、ultralytics 的 SAM 封裝(AGPL)�
 設計決定:每次 push 的矩陣刻意不裝 torch —— 那正是 `pip install horos` 使用者(只標註)的環境,
 需要 ML stack 的測試自行 skip、假 backend 覆蓋訓練 / 匯出 / 服務流程;全棧測試太慢太大,留給排程。
 
+## E8-T3b — TFLite int8(2026-09-12 完成:int8 權重的 dynamic-range 變體)
+
+`start_model_export(..., format="tflite", options={"int8": True})` 在 float32 / float16 之外多產出
+`<model>_int8.tflite`:**dynamic-range 量化(int8 權重、float32 activation 與 I/O,不需校準)**,
+檔案約為 float32 的 1/4(nano:106 MB → 29 MB)。走 onnx2tf 的 legacy `tf_converter` 後端、
+Erf 以 tanh 近似取代(TFLite 沒有內建 Erf,否則會變成需要 TF runtime 的 Flex op;近似後 float32
+與原圖差 ~4e-5),多花約 4 分鐘,輸入為 NHWC(執行器兩種版面都吃,model card `variants.int8`
+記錄 `input_layout`)。float32 仍是主成品;int8 變體有獨立 parity(容差 0.1),失敗只警告不阻擋。
+Train 頁 Model 下拉多一項「TFLite + int8 weights」。測試:`tests/api/test_tflite_convert.py`(合成模型,
+靜態 int8 與 dynamic-range 兩條路)、`tests/api/test_export_tflite.py`(真實 RF-DETR)、
+`tests/api/test_export_model.py`(選項傳遞與 card 記錄)。
+
+**已驗證不可行(2026-09-12,onnx2tf 2.6.8 / TF 2.21 / LiteRT 2.1.2)— 靜態 int8(權重+activation)for RF-DETR:**
+- `flatbuffer_direct` 後端 `-oiqt`:轉換直接失敗(`flatbuffer_direct fast path failed`),加 pseudo-Erf 亦同
+- `tf_converter` 後端 `-oiqt` + pseudo-Erf:能產出 `_integer_quant.tflite`,但 LiteRT 執行時
+  `tflite/kernels/div.cc:242 data[i] != 0 was not true`(LayerNorm 的分母被量化為 0),隨機與真實校準資料皆同
+- 不加 pseudo-Erf:校準器無法執行 Flex Erf
+轉換器層保留了靜態 int8 的支援(`precisions=("int8",)` + `calibration`,小圖有測試),日後 onnx2tf /
+TFLite 修好 transformer 的量化再開給 RF-DETR。未做:full-integer(int8 I/O)、`horos serve --format tflite`
+直接選 int8 變體(裸檔路徑可以)。
+
 ## SAM-T5 — SAM 工具多物體批次接受(2026-09-12 完成)
 
 Space(或「Next object」)把目前候選連同當時的類別入列,prompt 清空繼續點下一個;拖新框自動入列;

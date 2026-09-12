@@ -82,14 +82,25 @@ class FakeBackend(ModelBackend):
         yield RunCompleted(result={"count": len(images)})
 
     def export(self, checkpoint: Path, spec: ExportSpec) -> Iterator[Event]:
-        yield RunStarted(config={"format": spec.format})
+        yield RunStarted(config={"format": spec.format, "options": dict(spec.options)})
         yield ProgressUpdated(current=1, total=2, phase="exporting")
         spec.output_dir.mkdir(parents=True, exist_ok=True)
         suffix = {"pytorch": "pt", "onnx": "onnx", "tensorrt": "trt"}.get(spec.format, spec.format)
         artifact = spec.output_dir / f"model.{suffix}"
         artifact.write_bytes(b"fake-export:" + checkpoint.read_bytes()[:16])
+        result = {"artifact": str(artifact), "files": [artifact.name]}
+        if spec.format == "tflite" and spec.options.get("int8"):
+            # E8-T3b: a quantised variant next to the primary artifact, with
+            # the metadata the real backend records
+            int8 = spec.output_dir / "model_int8.tflite"
+            int8.write_bytes(b"fake-int8")
+            result["variants"] = {
+                "int8": {"artifact": str(int8), "method": "dynamic_range", "weights": "int8",
+                         "activations": "float32", "input_layout": "NHWC"},
+            }
+            result["files"].append(int8.name)
         yield ProgressUpdated(current=2, total=2, phase="exporting")
-        yield RunCompleted(result={"artifact": str(artifact), "files": [artifact.name]})
+        yield RunCompleted(result=result)
 
 
 class ExplodingBackend(FakeBackend):

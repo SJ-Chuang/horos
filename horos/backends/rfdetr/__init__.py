@@ -11,6 +11,7 @@ All ML imports happen lazily on first use (R1b).
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -555,6 +556,7 @@ class RFDETRBackend(ModelBackend):
                 out = Path(spec.output_dir)
                 out.mkdir(parents=True, exist_ok=True)
                 resolution = int(model.model.resolution)
+                variants: dict[str, dict[str, str]] = {}  # precision/quantisation variants
                 if spec.format == "pytorch":
                     yield ProgressUpdated(current=0, total=None, phase="writing weights bundle")
                     model.export_for_roboflow(str(out))
@@ -607,8 +609,38 @@ class RFDETRBackend(ModelBackend):
                         produced = convert_onnx_to_tflite(
                             artifact, out, input_names=["input"], stem=self.info.key
                         )
+                        if spec.options.get("int8"):
+                            # E8-T3b: int8 WEIGHTS (dynamic-range). Static int8 is
+                            # not viable for this architecture (docs/BACKLOG.md):
+                            # TFLite's quantised LayerNorm divides by zero at run
+                            # time. The legacy converter is the one whose dynamic
+                            # range covers the transformer's weights; it needs Erf
+                            # approximated (no builtin) and hands out NHWC input.
+                            yield ProgressUpdated(
+                                current=0, total=None,
+                                phase="quantising weights to int8 through the TensorFlow "
+                                      "converter (several minutes)",
+                            )
+                            work = out / "_int8"
+                            quant = convert_onnx_to_tflite(
+                                artifact, work, stem=self.info.key, precisions=("int8_dynamic",),
+                                backend="tf_converter", pseudo_operators=["Erf"],
+                            )
+                            int8_path = out / f"{self.info.key}_int8.tflite"
+                            shutil.move(str(quant["int8_dynamic"]), int8_path)
+                            shutil.rmtree(work, ignore_errors=True)
+                            variants["int8"] = {
+                                "artifact": str(int8_path),
+                                "method": "dynamic_range",
+                                "weights": "int8",
+                                "activations": "float32",
+                                "input_layout": "NHWC",
+                                "erf": "tanh approximation (TFLite has no builtin Erf)",
+                            }
                         artifact.unlink()  # the bundle ships TFLite only
                         artifact = produced["float32"]
+                        variants["float16"] = {"artifact": str(produced["float16"]),
+                                               "method": "float16 cast"}
                     if spec.format == "tensorrt":
                         # rfdetr builds the engine from an intermediate ONNX graph;
                         # the bundle ships the engine only (export onnx separately)
@@ -627,7 +659,7 @@ class RFDETRBackend(ModelBackend):
                         "utf-8",
                     )
                 files = sorted(p.name for p in out.iterdir() if p.is_file())
-                result = {"artifact": str(artifact), "files": files,
+                result = {"artifact": str(artifact), "files": files, "variants": variants,
                           **self._export_io_spec(model, resolution)}
         except Exception as exc:  # noqa: BLE001 — R4: the stream terminates itself
             code = getattr(exc, "code", "backend_error")

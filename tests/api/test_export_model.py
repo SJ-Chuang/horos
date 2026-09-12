@@ -116,6 +116,28 @@ def test_tflite_is_refused_without_the_toolchain_and_exports_with_it(run, monkey
     assert card["format"] == "tflite" and card["artifact"] == "model.tflite"
     assert card["weights_license"] == "Apache-2.0"  # R3 on every format
     assert "Portable" in card["portability"]
+    assert card["variants"] == {}
+
+    # int8 (E8-T3b): the option reaches the backend and the variant it writes
+    # is recorded next to the primary artifact, with its metadata
+    status = _wait(project, start_model_export(
+        project, record.run_id, format="tflite", options={"int8": True}
+    ))
+    assert status.state == "completed", status.events[-1]
+    started = next(e for e in status.events if e["type"] == "started")
+    assert started["config"]["options"] == {"int8": True}
+    card = json.loads(
+        (project.root / "runs" / record.run_id / "exports" / "tflite" / "model_card.json")
+        .read_text("utf-8")
+    )
+    assert card["artifact"] == "model.tflite"  # float32 stays primary
+    int8 = card["variants"]["int8"]
+    assert int8["artifact"] == "model_int8.tflite" and int8["method"] == "dynamic_range"
+    assert int8["weights"] == "int8" and int8["input_layout"] == "NHWC"
+    assert "parity" not in int8  # the fake backend has no parity check
+    assert "model_int8.tflite" in card["files"]
+    result = status.events[-1]["result"]
+    assert result["variants"]["int8"]["artifact"] == "model_int8.tflite"
 
 
 def test_tensorrt_is_refused_on_macos_and_without_the_package(run, monkeypatch):

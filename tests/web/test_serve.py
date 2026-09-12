@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from helpers.data import make_image
 from helpers.runs import completed_fake_run
+from helpers.synthetic import synthetic_detector
 
 from horos.api.serve import (
     _reset_servers,
@@ -205,41 +206,8 @@ def test_engine_and_tflite_sources_resolve_and_are_checked_first(tmp_path, monke
 
 
 def _synthetic_detector(path, *, resolution=32, classes=3):
-    """A graph with the exported RF-DETR contract: input [1,3,H,W] → dets
-    [1,Q,4] (normalised cxcywh) and labels [1,Q,C] logits. Two fixed queries:
-    a confident centre box of class 1 and a 50/50 small box of class 0."""
-    onnx = pytest.importorskip("onnx")
-    import numpy as np
-    from onnx import TensorProto, helper, numpy_helper
-
-    dets = np.array([[[0.5, 0.5, 0.5, 0.5], [0.25, 0.25, 0.1, 0.1]]], dtype=np.float32)
-    logits = np.full((1, 2, classes), -5.0, dtype=np.float32)
-    logits[0, 0, 1] = 3.0   # sigmoid ≈ 0.953
-    logits[0, 1, 0] = 0.0   # sigmoid = 0.5
-    zero = helper.make_node("ReduceSum", ["input"], ["summed"], keepdims=0)
-    scale = helper.make_node("Mul", ["summed", "zero_c"], ["zero"])
-    graph = helper.make_graph(
-        [
-            zero, scale,
-            helper.make_node("Add", ["dets_c", "zero"], ["dets"]),
-            helper.make_node("Add", ["labels_c", "zero"], ["labels"]),
-        ],
-        "synthetic",
-        [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, resolution, resolution])],
-        [
-            helper.make_tensor_value_info("dets", TensorProto.FLOAT, [1, 2, 4]),
-            helper.make_tensor_value_info("labels", TensorProto.FLOAT, [1, 2, classes]),
-        ],
-        initializer=[
-            numpy_helper.from_array(dets, "dets_c"),
-            numpy_helper.from_array(logits, "labels_c"),
-            numpy_helper.from_array(np.array(0.0, dtype=np.float32), "zero_c"),
-        ],
-    )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
-    model.ir_version = 8
-    onnx.save(model, str(path))
-    return path
+    pytest.importorskip("onnx")
+    return synthetic_detector(path, resolution=resolution, classes=classes)
 
 
 def test_onnx_executor_decodes_the_exported_contract(tmp_path):

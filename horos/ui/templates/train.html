@@ -335,6 +335,7 @@
           <option value="onnx">ONNX (opset 17, batch 1)</option>
           <option value="tensorrt">TensorRT engine (this GPU only)</option>
           <option value="tflite">TFLite (float32 + float16, via ONNX)</option>
+          <option value="tflite-int8">TFLite + int8 weights (dynamic-range, ~4× smaller)</option>
         </select>
         <button id="model-export-btn">Export model</button>
         <span class="note" id="model-status"></span>
@@ -889,6 +890,11 @@ const MODEL_FORMAT_NOTES = {
     + "with onnx2tf; the input stays NCHW so the model card's I/O contract is unchanged. "
     + "horos re-runs sample images through the original weights and the TFLite "
     + "interpreter and records the difference. Needs the toolchain: horos install --tflite.",
+  "tflite-int8": "Everything the TFLite export does, plus a dynamic-range quantised model: "
+    + "int8 weights, float32 activations and I/O, no calibration, about a quarter of the size. "
+    + "It is built through TensorFlow's converter (several extra minutes) with an NHWC input "
+    + "and a tanh approximation of Erf, gets its own parity check with a looser tolerance, and "
+    + "is recorded under model_card.json → variants. float32 stays the primary artifact.",
 };
 
 function fmtBytes(n) {
@@ -967,7 +973,9 @@ function pollExportJob(jobId, onEvent) {
 
 $("model-export-btn").onclick = async () => {
   if (!activeRun || exporting) return;
-  const runId = activeRun, fmt = $("model-format").value;
+  const runId = activeRun;
+  // "tflite-int8" is the tflite format plus an option, not a format of its own
+  const [fmt, variant] = $("model-format").value.split("-");
   const status = $("model-status");
   exporting = true;
   updateModelFormatNote();
@@ -976,7 +984,9 @@ $("model-export-btn").onclick = async () => {
   $("export-phase").textContent = "starting…";
   status.textContent = "";
   try {
-    const { job_id } = await post(`/train/runs/${runId}/export/model`, { format: fmt });
+    const { job_id } = await post(`/train/runs/${runId}/export/model`, {
+      format: fmt, options: variant === "int8" ? { int8: true } : {},
+    });
     const warnings = [];
     const result = await pollExportJob(job_id, (ev) => {
       if (ev.type === "progress") {
@@ -988,11 +998,19 @@ $("model-export-btn").onclick = async () => {
     });
     $("export-bar").style.width = "100%";
     const parity = result.parity || {};
-    const parityText = parity.status === "passed"
+    let parityText = parity.status === "passed"
       ? ` · parity OK (${parity.detections_compared ?? 0} detections matched, `
         + `max score diff ${Number(parity.max_score_diff ?? 0).toFixed(4)})`
       : parity.status === "failed" ? " · ⚠ parity FAILED — see model_card.json"
       : "";
+    const int8 = (result.variants || {}).int8;
+    if (int8) {
+      const p8 = int8.parity || {};
+      parityText += p8.status === "passed"
+        ? ` · int8 weights parity OK (${p8.detections_compared ?? 0} detections matched)`
+        : p8.status === "failed" ? " · ⚠ int8 parity FAILED — float32 stays the artifact"
+        : " · int8 weights written";
+    }
     status.innerHTML = `ready — <a href="/api/v1/train/runs/${runId}/exports/${result.bundle}"
       style="color:var(--accent)">download ${result.bundle}</a>${parityText}`;
     if (warnings.length) setStatus(warnings.join(" "), "");

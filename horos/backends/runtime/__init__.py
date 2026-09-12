@@ -107,6 +107,10 @@ class ArtifactModel:
         for candidate in (shape, graph_shape):
             if candidate and len(candidate) == 4:
                 h, w = candidate[2], candidate[3]
+                if isinstance(candidate[3], int) and candidate[3] in (1, 3) and (
+                    isinstance(candidate[1], int) and candidate[1] > 3
+                ):
+                    h, w = candidate[1], candidate[2]  # an NHWC graph (TFLite converter path)
                 if isinstance(h, int) and isinstance(w, int) and h > 0 and w > 0:
                     return h, w
         res = (self.card.get("hyperparameters") or {}).get("resolution")

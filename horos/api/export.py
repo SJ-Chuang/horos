@@ -60,6 +60,10 @@ PARITY_IMAGES = 3
 #: largest allowed score difference between matched detections (see the
 #: backend's export_parity for the matching rule)
 PARITY_TOLERANCE = 0.02
+#: int8 (E8-T3b): how far the quantised variant's matched detections may
+#: drift — int8 weights move scores more than a float16 cast, so the bar is
+#: deliberately lower than the primary artifact's
+INT8_PARITY_TOLERANCE = 0.1
 
 TENSORRT_PORTABILITY_WARNING = (
     "A TensorRT engine is compiled for THIS machine's GPU architecture and "
@@ -98,6 +102,10 @@ class ModelCard(BaseModel):
     hyperparameters: dict[str, Any] = Field(default_factory=dict)
     parity: dict[str, Any] = Field(default_factory=dict)
     portability: str = ""
+    #: extra precision / quantisation files in the bundle, e.g. TFLite
+    #: {"float16": {"artifact", "method"}, "int8": {"artifact", "method",
+    #: "weights", "activations", "input_layout", "parity"}}
+    variants: dict[str, Any] = Field(default_factory=dict)
 
 
 def exports_dir(project: Project, run_id: str) -> Path:
@@ -301,6 +309,37 @@ def model_export_events(
                     f"reproduce the original weights' detections"
                 )
 
+        # precision / quantisation variants (E8-T3b): each is verified like the
+        # primary artifact; the float32 model stays what the card points at
+        variants: dict[str, Any] = {}
+        for name, meta in (result.get("variants") or {}).items():
+            meta = dict(meta) if isinstance(meta, dict) else {"artifact": str(meta)}
+            vpath = Path(meta.pop("artifact"))
+            entry: dict[str, Any] = {"artifact": vpath.name, **meta}
+            if name == "int8":
+                yield ProgressUpdated(
+                    current=0, total=None,
+                    phase="verifying the int8 model against the original weights",
+                )
+                int8_tolerance = float(options.get("int8_parity_tolerance", INT8_PARITY_TOLERANCE))
+                try:
+                    vcheck = backend.export_parity(vpath, spec, images, tolerance=int8_tolerance)
+                except HorosError as exc:
+                    vcheck = {"status": "error", "message": str(exc)}
+                if vcheck is not None:
+                    entry["parity"] = {
+                        "status": "passed" if vcheck.get("passed", True) else "failed", **vcheck,
+                    }
+                    if entry["parity"]["status"] == "failed":
+                        unmatched = vcheck.get("unmatched_detections", 0)
+                        yield WarningRaised(
+                            message=f"int8 parity check FAILED ({unmatched} unmatched "
+                                    f"detection(s), max score difference "
+                                    f"{vcheck.get('max_score_diff')} > {int8_tolerance}) — the "
+                                    f"int8 file is kept for inspection; the float32 model "
+                                    f"remains the bundle's artifact"
+                        )
+            variants[name] = entry
         # model card (E8-T4)
         yield ProgressUpdated(current=0, total=None, phase="writing model card")
         try:
@@ -350,6 +389,7 @@ def model_export_events(
             parity=parity,
             portability=TENSORRT_PORTABILITY_WARNING if format == "tensorrt" else
             "Portable: this artifact runs on any machine with the matching runtime.",
+            variants=variants,
         )
         (out_dir / MODEL_CARD_NAME).write_text(card.model_dump_json(indent=2), "utf-8")
 
@@ -376,6 +416,7 @@ def model_export_events(
             "bundle": bundle.name,
             "model_card": card.model_dump(),
             "parity": parity,
+            "variants": variants,
         }
     )
 
